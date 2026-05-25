@@ -1,13 +1,14 @@
-from sqlalchemy import String, Boolean, Integer
 from typing import TYPE_CHECKING
+
+from sqlalchemy import Boolean, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
 
 if TYPE_CHECKING:
-    from .subscription import SubscriptionServer
-    from .user import User
     from .server_access import ServerAccessGrant
+    from .subscription import SubscriptionServer
+
 
 class Server(Base):
     __tablename__ = "servers"
@@ -30,5 +31,9 @@ class Server(Base):
     subscription_group: Mapped[str] = mapped_column(String(16), default="safe")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    subscription_servers: Mapped[list["SubscriptionServer"]] = relationship(back_populates="server", cascade="all, delete-orphan")
-    access_grants: Mapped[list["ServerAccessGrant"]] = relationship(back_populates="server", cascade="all, delete-orphan")
+    subscription_servers: Mapped[list["SubscriptionServer"]] = relationship(
+        back_populates="server", cascade="all, delete-orphan"
+    )
+    access_grants: Mapped[list["ServerAccessGrant"]] = relationship(
+        back_populates="server", cascade="all, delete-orphan"
+    )

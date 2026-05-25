@@ -1,16 +1,28 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from aiogram import F, Bot, Router, html
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, Message, PreCheckoutQuery
+from aiogram import Bot, F, Router, html
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    LabeledPrice,
+    Message,
+    PreCheckoutQuery,
+)
 from sqlalchemy import select
 
 from src.core.config import settings
 from src.core.database import async_session_maker
 from src.core.logger import logger
 from src.models import Payment, Plan, Subscription, User
-from src.services import ServerAccessService, SubscriptionService, get_user_language, t
-from src.handlers.user import is_privacy_accepted
+from src.services import (
+    ServerAccessService,
+    SubscriptionService,
+    UserService,
+    get_user_language,
+    t,
+)
 
 router = Router()
 
@@ -31,31 +43,13 @@ def no_plans_keyboard(language: str) -> InlineKeyboardMarkup:
     )
 
 
-async def user_has_active_subscription(tg_id: int) -> bool:
-    async with async_session_maker() as session:
-        user_result = await session.execute(select(User).where(User.tg_id == tg_id))
-        user = user_result.scalar_one_or_none()
-        if not user or user.is_banned:
-            return False
-
-        now = datetime.now(UTC).replace(tzinfo=None)
-        sub_result = await session.execute(
-            select(Subscription).where(
-                Subscription.user_id == user.id,
-                Subscription.is_active == True,
-                Subscription.expires_at > now,
-            )
-        )
-        return sub_result.scalar_one_or_none() is not None
-
-
 @router.callback_query(F.data == "buy_plan")
 async def show_plans(call: CallbackQuery):
     language = await get_user_language(call.from_user.id)
-    if not await is_privacy_accepted(call.from_user.id):
+    if not await UserService.is_privacy_accepted(call.from_user.id):
         await call.answer(t(language, "privacy_required"), show_alert=True)
         return
-    has_active_subscription = await user_has_active_subscription(call.from_user.id)
+    has_active_subscription = await UserService.has_active_subscription(call.from_user.id)
 
     async with async_session_maker() as session:
         result = await session.execute(select(Plan).where(Plan.is_active == True).order_by(Plan.id))
@@ -78,7 +72,7 @@ async def show_plans(call: CallbackQuery):
 async def create_invoice(call: CallbackQuery):
     plan_id = int(call.data.split("_")[1])  # type: ignore[index]
     language = await get_user_language(call.from_user.id)
-    has_active_subscription = await user_has_active_subscription(call.from_user.id)
+    has_active_subscription = await UserService.has_active_subscription(call.from_user.id)
 
     async with async_session_maker() as session:
         plan = await session.get(Plan, plan_id)

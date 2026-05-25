@@ -2,11 +2,12 @@ import asyncio
 import json
 from pathlib import Path
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from src.core.config import settings
 from src.core.database import async_session_maker, init_db
 from src.core.logger import logger
+from src.core.migrations import run_migrations
 from src.models import Plan, Server
 
 
@@ -78,191 +79,15 @@ async def bootstrap_plans() -> None:
             await session.commit()
 
 
-async def ensure_user_columns() -> None:
-    async with async_session_maker() as session:
-        if settings.db_url.startswith("sqlite+aiosqlite"):
-            result = await session.execute(text("PRAGMA table_info(users)"))
-            columns = {row[1] for row in result.fetchall()}
-            if "language" not in columns:
-                await session.execute(text("ALTER TABLE users ADD COLUMN language VARCHAR(8) DEFAULT 'ru'"))
-            if "trial_used" not in columns:
-                await session.execute(text("ALTER TABLE users ADD COLUMN trial_used BOOLEAN DEFAULT 0"))
-            if "privacy_accepted" not in columns:
-                await session.execute(text("ALTER TABLE users ADD COLUMN privacy_accepted BOOLEAN DEFAULT 0"))
-            await session.commit()
-            return
-
-        result = await session.execute(
-            text(
-                """
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_name = 'users'
-            """
-            )
-        )
-        columns = {row[0] for row in result.fetchall()}
-        if "language" not in columns:
-            await session.execute(text("ALTER TABLE users ADD COLUMN language VARCHAR(8) DEFAULT 'ru'"))
-        if "trial_used" not in columns:
-            await session.execute(text("ALTER TABLE users ADD COLUMN trial_used BOOLEAN DEFAULT FALSE"))
-        if "privacy_accepted" not in columns:
-            await session.execute(text("ALTER TABLE users ADD COLUMN privacy_accepted BOOLEAN DEFAULT FALSE"))
-        await session.commit()
-
-
-async def ensure_subscription_columns() -> None:
-    async with async_session_maker() as session:
-        if settings.db_url.startswith("sqlite+aiosqlite"):
-            result = await session.execute(text("PRAGMA table_info(subscriptions)"))
-            columns = {row[1] for row in result.fetchall()}
-            if "legacy_sub_token" not in columns:
-                await session.execute(text("ALTER TABLE subscriptions ADD COLUMN legacy_sub_token VARCHAR(255)"))
-            if "amnezia_private_key" not in columns:
-                await session.execute(text("ALTER TABLE subscriptions ADD COLUMN amnezia_private_key VARCHAR(255)"))
-            if "amnezia_public_key" not in columns:
-                await session.execute(text("ALTER TABLE subscriptions ADD COLUMN amnezia_public_key VARCHAR(255)"))
-            if "amnezia_ipv4" not in columns:
-                await session.execute(text("ALTER TABLE subscriptions ADD COLUMN amnezia_ipv4 VARCHAR(64)"))
-            if "traffic_up_bytes" not in columns:
-                await session.execute(text("ALTER TABLE subscriptions ADD COLUMN traffic_up_bytes BIGINT DEFAULT 0"))
-            if "traffic_down_bytes" not in columns:
-                await session.execute(text("ALTER TABLE subscriptions ADD COLUMN traffic_down_bytes BIGINT DEFAULT 0"))
-            await session.commit()
-            return
-
-        result = await session.execute(
-            text(
-                """
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_name = 'subscriptions'
-            """
-            )
-        )
-        columns = {row[0] for row in result.fetchall()}
-        if "legacy_sub_token" not in columns:
-            await session.execute(text("ALTER TABLE subscriptions ADD COLUMN legacy_sub_token VARCHAR(255)"))
-        if "amnezia_private_key" not in columns:
-            await session.execute(text("ALTER TABLE subscriptions ADD COLUMN amnezia_private_key VARCHAR(255)"))
-        if "amnezia_public_key" not in columns:
-            await session.execute(text("ALTER TABLE subscriptions ADD COLUMN amnezia_public_key VARCHAR(255)"))
-        if "amnezia_ipv4" not in columns:
-            await session.execute(text("ALTER TABLE subscriptions ADD COLUMN amnezia_ipv4 VARCHAR(64)"))
-        if "traffic_up_bytes" not in columns:
-            await session.execute(text("ALTER TABLE subscriptions ADD COLUMN traffic_up_bytes BIGINT DEFAULT 0"))
-        if "traffic_down_bytes" not in columns:
-            await session.execute(text("ALTER TABLE subscriptions ADD COLUMN traffic_down_bytes BIGINT DEFAULT 0"))
-        await session.commit()
-
-
-async def ensure_subscription_server_columns() -> None:
-    async with async_session_maker() as session:
-        if settings.db_url.startswith("sqlite+aiosqlite"):
-            result = await session.execute(text("PRAGMA table_info(subscription_servers)"))
-            columns = {row[1] for row in result.fetchall()}
-            if "amnezia_private_key" not in columns:
-                await session.execute(text("ALTER TABLE subscription_servers ADD COLUMN amnezia_private_key VARCHAR(255)"))
-            if "amnezia_public_key" not in columns:
-                await session.execute(text("ALTER TABLE subscription_servers ADD COLUMN amnezia_public_key VARCHAR(255)"))
-            if "amnezia_ipv4" not in columns:
-                await session.execute(text("ALTER TABLE subscription_servers ADD COLUMN amnezia_ipv4 VARCHAR(64)"))
-            if "traffic_last_up" not in columns:
-                await session.execute(text("ALTER TABLE subscription_servers ADD COLUMN traffic_last_up BIGINT DEFAULT 0"))
-            if "traffic_last_down" not in columns:
-                await session.execute(text("ALTER TABLE subscription_servers ADD COLUMN traffic_last_down BIGINT DEFAULT 0"))
-            if "traffic_up_bytes" not in columns:
-                await session.execute(text("ALTER TABLE subscription_servers ADD COLUMN traffic_up_bytes BIGINT DEFAULT 0"))
-            if "traffic_down_bytes" not in columns:
-                await session.execute(text("ALTER TABLE subscription_servers ADD COLUMN traffic_down_bytes BIGINT DEFAULT 0"))
-            await session.commit()
-            return
-
-        result = await session.execute(
-            text(
-                """
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_name = 'subscription_servers'
-            """
-            )
-        )
-        columns = {row[0] for row in result.fetchall()}
-        if "amnezia_private_key" not in columns:
-            await session.execute(text("ALTER TABLE subscription_servers ADD COLUMN amnezia_private_key VARCHAR(255)"))
-        if "amnezia_public_key" not in columns:
-            await session.execute(text("ALTER TABLE subscription_servers ADD COLUMN amnezia_public_key VARCHAR(255)"))
-        if "amnezia_ipv4" not in columns:
-            await session.execute(text("ALTER TABLE subscription_servers ADD COLUMN amnezia_ipv4 VARCHAR(64)"))
-        if "traffic_last_up" not in columns:
-            await session.execute(text("ALTER TABLE subscription_servers ADD COLUMN traffic_last_up BIGINT DEFAULT 0"))
-        if "traffic_last_down" not in columns:
-            await session.execute(text("ALTER TABLE subscription_servers ADD COLUMN traffic_last_down BIGINT DEFAULT 0"))
-        if "traffic_up_bytes" not in columns:
-            await session.execute(text("ALTER TABLE subscription_servers ADD COLUMN traffic_up_bytes BIGINT DEFAULT 0"))
-        if "traffic_down_bytes" not in columns:
-            await session.execute(text("ALTER TABLE subscription_servers ADD COLUMN traffic_down_bytes BIGINT DEFAULT 0"))
-        await session.commit()
-
-
-async def ensure_server_columns() -> None:
-    async with async_session_maker() as session:
-        if settings.db_url.startswith("sqlite+aiosqlite"):
-            result = await session.execute(text("PRAGMA table_info(servers)"))
-            columns = {row[1] for row in result.fetchall()}
-            if "subscription_group" not in columns:
-                await session.execute(
-                    text("ALTER TABLE servers ADD COLUMN subscription_group VARCHAR(16) DEFAULT 'safe'")
-                )
-                await session.execute(
-                    text("UPDATE servers SET subscription_group = 'safe' WHERE subscription_group IS NULL")
-                )
-            if "amnezia_enabled" not in columns:
-                await session.execute(text("ALTER TABLE servers ADD COLUMN amnezia_enabled BOOLEAN DEFAULT 0"))
-            if "amnezia_name" not in columns:
-                await session.execute(text("ALTER TABLE servers ADD COLUMN amnezia_name VARCHAR(255)"))
-            if "amnezia_endpoint_host" not in columns:
-                await session.execute(text("ALTER TABLE servers ADD COLUMN amnezia_endpoint_host VARCHAR(255)"))
-            if "amnezia_port" not in columns:
-                await session.execute(text("ALTER TABLE servers ADD COLUMN amnezia_port INTEGER"))
-            if "amnezia_public_key" not in columns:
-                await session.execute(text("ALTER TABLE servers ADD COLUMN amnezia_public_key VARCHAR(255)"))
-            await session.commit()
-            return
-
-        result = await session.execute(
-            text(
-                """
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_name = 'servers'
-            """
-            )
-        )
-        columns = {row[0] for row in result.fetchall()}
-        if "subscription_group" not in columns:
-            await session.execute(
-                text("ALTER TABLE servers ADD COLUMN subscription_group VARCHAR(16) DEFAULT 'safe'")
-            )
-            await session.execute(
-                text("UPDATE servers SET subscription_group = 'safe' WHERE subscription_group IS NULL")
-            )
-        if "amnezia_enabled" not in columns:
-            await session.execute(text("ALTER TABLE servers ADD COLUMN amnezia_enabled BOOLEAN DEFAULT FALSE"))
-        if "amnezia_name" not in columns:
-            await session.execute(text("ALTER TABLE servers ADD COLUMN amnezia_name VARCHAR(255)"))
-        if "amnezia_endpoint_host" not in columns:
-            await session.execute(text("ALTER TABLE servers ADD COLUMN amnezia_endpoint_host VARCHAR(255)"))
-        if "amnezia_port" not in columns:
-            await session.execute(text("ALTER TABLE servers ADD COLUMN amnezia_port INTEGER"))
-        if "amnezia_public_key" not in columns:
-            await session.execute(text("ALTER TABLE servers ADD COLUMN amnezia_public_key VARCHAR(255)"))
-        await session.commit()
-
-
 async def ensure_default_plan_exists() -> None:
     async with async_session_maker() as session:
-        existing = (await session.execute(select(Plan).where(Plan.is_active == True))).scalars().first()
+        existing = (
+            (
+                await session.execute(select(Plan).where(Plan.is_active == True))  # noqa: E712
+            )
+            .scalars()
+            .first()
+        )
         if existing is not None:
             return
 
@@ -297,9 +122,7 @@ async def bootstrap_server() -> None:
 
         if server is None:
             fallback = await session.execute(
-                select(Server)
-                .where(Server.agent_url == settings.bootstrap_server_agent_url)
-                .order_by(Server.id)
+                select(Server).where(Server.agent_url == settings.bootstrap_server_agent_url).order_by(Server.id)
             )
             server = fallback.scalars().first()
 
@@ -313,9 +136,7 @@ async def bootstrap_server() -> None:
             "agent_url": settings.bootstrap_server_agent_url,
             "agent_token": agent_env["AGENT_TOKEN"],
             "amnezia_enabled": bool(
-                settings.amnezia_enabled
-                and settings.amnezia_server_host
-                and settings.amnezia_server_public_key
+                settings.amnezia_enabled and settings.amnezia_server_host and settings.amnezia_server_public_key
             ),
             "amnezia_name": f"{settings.bootstrap_server_name} Amnezia",
             "amnezia_endpoint_host": settings.amnezia_server_host,
@@ -338,10 +159,7 @@ async def bootstrap_application() -> None:
     if settings.auto_init_db:
         await init_db()
 
-    await ensure_user_columns()
-    await ensure_subscription_columns()
-    await ensure_subscription_server_columns()
-    await ensure_server_columns()
+    await run_migrations()
     await bootstrap_plans()
     await ensure_default_plan_exists()
     await bootstrap_server()

@@ -9,7 +9,6 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.38",
     "asyncpg>=0.30.0",
     "aiosqlite>=0.21.0",
-    "alembic>=1.14.1",
     "apscheduler>=3.11.0",
     "pydantic-settings>=2.8.0",
     "pydantic>=2.10.6",
@@ -18,12 +17,33 @@ dependencies = [
     "cryptography>=45.0.0"
 ]
 
+[dependency-groups]
+dev = [
+    "ruff>=0.9.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "C4"]
+# E712/E711: SQLAlchemy filters require `== True` / `== None`, not `is`.
+# B008: FastAPI dependency injection puts callables in argument defaults.
+ignore = ["E501", "E712", "E711", "B008"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
 
 [tool.mypy]
 python_version = "3.14"

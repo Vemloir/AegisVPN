@@ -1,6 +1,6 @@
-import os
-from pydantic_settings import BaseSettings
 from pydantic import ConfigDict
+from pydantic_settings import BaseSettings
+
 
 class Settings(BaseSettings):
     agent_token: str
@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     xray_network: str = "tcp"
     reality_dest: str = "gateway.icloud.com:443"
     reality_server_name: str = "gateway.icloud.com"
-    host_ip: str # Used for sub links
+    host_ip: str  # Used for sub links
     fast_host_ip: str | None = None
     packet_encoding: str | None = "xudp"
     xhttp_path: str = "/"
@@ -35,4 +35,5 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-settings = Settings() # type: ignore
+
+settings = Settings()  # type: ignore

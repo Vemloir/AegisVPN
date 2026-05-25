@@ -1,13 +1,15 @@
 from datetime import datetime
-from sqlalchemy import BigInteger, String, Integer, Boolean, ForeignKey
 from typing import TYPE_CHECKING
+
+from sqlalchemy import BigInteger, Boolean, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, utcnow
 
 if TYPE_CHECKING:
-    from .user import User
     from .server import Server
+    from .user import User
+
 
 class Subscription(Base):
     __tablename__ = "subscriptions"
@@ -30,7 +32,10 @@ class Subscription(Base):
     traffic_down_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
 
     user: Mapped["User"] = relationship(back_populates="subscriptions")
-    servers: Mapped[list["SubscriptionServer"]] = relationship(back_populates="subscription", cascade="all, delete-orphan")
+    servers: Mapped[list["SubscriptionServer"]] = relationship(
+        back_populates="subscription", cascade="all, delete-orphan"
+    )
+
 
 class SubscriptionServer(Base):
     __tablename__ = "subscription_servers"

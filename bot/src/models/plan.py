@@ -1,7 +1,8 @@
-from sqlalchemy import Integer, Boolean
+from sqlalchemy import Boolean, Integer
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
+
 
 class Plan(Base):
     __tablename__ = "plans"

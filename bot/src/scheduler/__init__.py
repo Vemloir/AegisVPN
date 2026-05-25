@@ -1,15 +1,17 @@
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from aiogram import Bot
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from src.core.config import settings
+
 from .tasks import (
+    backup_database,
     check_expired_subscriptions,
-    remind_expiring_subscriptions,
-    retry_unsynced_servers,
     check_servers_health,
     poll_traffic,
-    backup_database,
+    remind_expiring_subscriptions,
+    retry_unsynced_servers,
 )
+
 
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()

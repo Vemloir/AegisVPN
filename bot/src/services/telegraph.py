@@ -1,5 +1,6 @@
 """Publish the privacy policy as a Telegraph page so it opens as a clean
 in-app page (Instant View) via a URL button instead of a chat message."""
+
 import hashlib
 import json
 import re
@@ -51,7 +52,7 @@ def _to_nodes(text: str) -> list:
         pos = 0
         for m in re.finditer(r"<b>(.*?)</b>", line):
             if m.start() > pos:
-                children.append(line[pos:m.start()])
+                children.append(line[pos : m.start()])
             children.append({"tag": "strong", "children": [m.group(1)]})
             pos = m.end()
         if pos < len(line):

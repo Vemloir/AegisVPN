@@ -136,9 +136,7 @@ async def poll_traffic():
     """
     logger.info("Running task: poll_traffic")
     async with async_session_maker() as session:
-        servers = (
-            await session.execute(select(Server).where(Server.is_active == True))
-        ).scalars().all()
+        servers = (await session.execute(select(Server).where(Server.is_active == True))).scalars().all()
 
         changed = False
         for server in servers:
@@ -152,12 +150,16 @@ async def poll_traffic():
                 continue
 
             links = (
-                await session.execute(
-                    select(SubscriptionServer)
-                    .options(joinedload(SubscriptionServer.subscription))
-                    .where(SubscriptionServer.server_id == server.id)
+                (
+                    await session.execute(
+                        select(SubscriptionServer)
+                        .options(joinedload(SubscriptionServer.subscription))
+                        .where(SubscriptionServer.server_id == server.id)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
 
             for link in links:
                 sub = link.subscription

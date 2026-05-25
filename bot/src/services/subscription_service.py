@@ -3,7 +3,6 @@ import base64
 import secrets
 from collections import Counter
 from datetime import UTC, datetime
-from typing import List
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import and_, or_, select
@@ -13,7 +12,6 @@ from src.core.config import settings
 from src.core.logger import logger
 from src.models import Server, Subscription, SubscriptionServer
 from src.services.agent_client import AgentClient
-from src.services.server_access_service import ServerAccessService
 
 
 class SubscriptionService:
@@ -24,13 +22,20 @@ class SubscriptionService:
 
     @staticmethod
     def normalize_profile(profile: str | None) -> str:
-        return SubscriptionService.FAST_PROFILE if profile == SubscriptionService.FAST_PROFILE else SubscriptionService.SAFE_PROFILE
+        return (
+            SubscriptionService.FAST_PROFILE
+            if profile == SubscriptionService.FAST_PROFILE
+            else SubscriptionService.SAFE_PROFILE
+        )
 
     @staticmethod
     def is_lifetime_subscription(sub: Subscription | None) -> bool:
         if sub is None:
             return False
-        return sub.plan_days == SubscriptionService.LIFETIME_PLAN_DAYS or sub.expires_at >= SubscriptionService.LIFETIME_EXPIRES_AT
+        return (
+            sub.plan_days == SubscriptionService.LIFETIME_PLAN_DAYS
+            or sub.expires_at >= SubscriptionService.LIFETIME_EXPIRES_AT
+        )
 
     @staticmethod
     def generate_sub_token_value(existing_tokens: set[str] | None = None) -> str:
@@ -55,10 +60,10 @@ class SubscriptionService:
         return f"{settings.subscription_base_url}/{path}/{sub_token}"
 
     @staticmethod
-    async def get_subscription_by_token(session: AsyncSession, token: str, active_only: bool = True) -> Subscription | None:
-        stmt = select(Subscription).where(
-            or_(Subscription.sub_token == token, Subscription.legacy_sub_token == token)
-        )
+    async def get_subscription_by_token(
+        session: AsyncSession, token: str, active_only: bool = True
+    ) -> Subscription | None:
+        stmt = select(Subscription).where(or_(Subscription.sub_token == token, Subscription.legacy_sub_token == token))
         if active_only:
             stmt = stmt.where(Subscription.is_active == True)
         result = await session.execute(stmt)
@@ -128,7 +133,7 @@ class SubscriptionService:
     async def sync_subscription_to_servers(
         session: AsyncSession,
         sub: Subscription,
-        servers: List[Server],
+        servers: list[Server],
     ) -> None:
         if not servers:
             return
@@ -200,7 +205,9 @@ class SubscriptionService:
                 ),
             )
         result = await session.execute(
-            select(Server).join(SubscriptionServer).where(
+            select(Server)
+            .join(SubscriptionServer)
+            .where(
                 SubscriptionServer.subscription_id == sub.id,
                 SubscriptionServer.is_synced == True,
                 server_filter,
@@ -240,7 +247,9 @@ class SubscriptionService:
     @staticmethod
     async def remove_subscription_from_servers(session: AsyncSession, sub: Subscription) -> None:
         result = await session.execute(
-            select(Server).join(SubscriptionServer).where(
+            select(Server)
+            .join(SubscriptionServer)
+            .where(
                 SubscriptionServer.subscription_id == sub.id,
             )
         )

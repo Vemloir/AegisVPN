@@ -90,9 +90,7 @@ class ServerAccessService:
     @staticmethod
     async def reconcile_server_subscriptions(session: AsyncSession, server_id: int) -> None:
         result = await session.execute(
-            select(Subscription)
-            .join(User, User.id == Subscription.user_id)
-            .where(Subscription.is_active == True)
+            select(Subscription).join(User, User.id == Subscription.user_id).where(Subscription.is_active == True)
         )
         subscriptions = result.scalars().all()
         for subscription in subscriptions:
@@ -133,8 +131,7 @@ class ServerAccessService:
                 continue
 
             shared_agent_still_allowed = any(
-                server.agent_url == link.server.agent_url
-                and server.agent_token == link.server.agent_token
+                server.agent_url == link.server.agent_url and server.agent_token == link.server.agent_token
                 for server in allowed_servers
             )
 

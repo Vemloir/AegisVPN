@@ -4,7 +4,6 @@ from sqlalchemy import select
 from src.core.database import async_session_maker
 from src.models import User
 
-
 SUPPORTED_LANGUAGES = ("ru", "en")
 
 
@@ -73,9 +72,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "delete_account_done": "Аккаунт удалён. Чтобы пользоваться ботом снова, отправьте /start.",
         "language_select": "Выберите язык интерфейса.",
         "language_updated": "Язык обновлён.",
-        "setup_text": (
-            "Откройте /subscription, выберите нужный формат подписки и используйте инструкцию внутри него."
-        ),
+        "setup_text": ("Откройте /subscription, выберите нужный формат подписки и используйте инструкцию внутри него."),
         "setup_text_v2ray": (
             "Инструкция для V2Ray:\n\n"
             "1. Установите V2Ray-клиент: Happ, Hiddify, v2rayTun, v2rayNG или другой совместимый.\n\n"

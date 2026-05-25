@@ -1,5 +1,7 @@
-version: "3.8"
-
+# Local development stack (bot + PostgreSQL).
+#
+# Production runs from deploy/vps/docker-compose.yml, where Caddy terminates
+# HTTPS for the subscription endpoint. See deploy/vps/README.md.
 services:
   bot:
     build: .
@@ -31,26 +33,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-
-  nginx:
-    image: nginx:alpine
-    restart: always
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
-      - /var/www/certbot:/var/www/certbot:ro
-    depends_on:
-      - bot
-
-  certbot:
-    image: certbot/certbot
-    volumes:
-      - /etc/letsencrypt:/etc/letsencrypt
-      - /var/www/certbot:/var/www/certbot
-    command: renew --quiet
 
 volumes:
   pgdata:

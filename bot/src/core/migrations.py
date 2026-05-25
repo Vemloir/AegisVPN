@@ -1,0 +1,94 @@
+"""Lightweight, idempotent schema migrations applied on startup.
+
+The project deliberately does not use Alembic: the schema only ever grows by
+nullable/defaulted columns, which both SQLite and PostgreSQL can add in place.
+Each :class:`Column` is added only if it is missing, so this is safe to run on
+every boot and against a database at any prior version.
+"""
+
+from dataclasses import dataclass
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.core.config import settings
+from src.core.database import async_session_maker
+
+
+@dataclass(frozen=True, slots=True)
+class Column:
+    name: str
+    sqlite_ddl: str
+    pg_ddl: str
+    post_sql: str | None = None  # extra statement run right after the column is added
+
+
+# Ordered table -> columns that may be missing on older databases.
+MIGRATIONS: dict[str, list[Column]] = {
+    "users": [
+        Column("language", "VARCHAR(8) DEFAULT 'ru'", "VARCHAR(8) DEFAULT 'ru'"),
+        Column("trial_used", "BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE"),
+        Column("privacy_accepted", "BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE"),
+    ],
+    "subscriptions": [
+        Column("legacy_sub_token", "VARCHAR(255)", "VARCHAR(255)"),
+        Column("amnezia_private_key", "VARCHAR(255)", "VARCHAR(255)"),
+        Column("amnezia_public_key", "VARCHAR(255)", "VARCHAR(255)"),
+        Column("amnezia_ipv4", "VARCHAR(64)", "VARCHAR(64)"),
+        Column("traffic_up_bytes", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
+        Column("traffic_down_bytes", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
+    ],
+    "subscription_servers": [
+        Column("amnezia_private_key", "VARCHAR(255)", "VARCHAR(255)"),
+        Column("amnezia_public_key", "VARCHAR(255)", "VARCHAR(255)"),
+        Column("amnezia_ipv4", "VARCHAR(64)", "VARCHAR(64)"),
+        Column("traffic_last_up", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
+        Column("traffic_last_down", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
+        Column("traffic_up_bytes", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
+        Column("traffic_down_bytes", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
+    ],
+    "servers": [
+        Column(
+            "subscription_group",
+            "VARCHAR(16) DEFAULT 'safe'",
+            "VARCHAR(16) DEFAULT 'safe'",
+            post_sql="UPDATE servers SET subscription_group = 'safe' WHERE subscription_group IS NULL",
+        ),
+        Column("amnezia_enabled", "BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE"),
+        Column("amnezia_name", "VARCHAR(255)", "VARCHAR(255)"),
+        Column("amnezia_endpoint_host", "VARCHAR(255)", "VARCHAR(255)"),
+        Column("amnezia_port", "INTEGER", "INTEGER"),
+        Column("amnezia_public_key", "VARCHAR(255)", "VARCHAR(255)"),
+    ],
+}
+
+
+def _is_sqlite() -> bool:
+    return settings.db_url.startswith("sqlite+aiosqlite")
+
+
+async def _existing_columns(session: AsyncSession, table: str, is_sqlite: bool) -> set[str]:
+    if is_sqlite:
+        result = await session.execute(text(f"PRAGMA table_info({table})"))
+        return {row[1] for row in result.fetchall()}
+    result = await session.execute(
+        text("SELECT column_name FROM information_schema.columns WHERE table_name = :table"),
+        {"table": table},
+    )
+    return {row[0] for row in result.fetchall()}
+
+
+async def run_migrations() -> None:
+    """Add any columns missing from the live schema. Idempotent."""
+    is_sqlite = _is_sqlite()
+    async with async_session_maker() as session:
+        for table, columns in MIGRATIONS.items():
+            existing = await _existing_columns(session, table, is_sqlite)
+            for column in columns:
+                if column.name in existing:
+                    continue
+                ddl = column.sqlite_ddl if is_sqlite else column.pg_ddl
+                await session.execute(text(f"ALTER TABLE {table} ADD COLUMN {column.name} {ddl}"))
+                if column.post_sql:
+                    await session.execute(text(column.post_sql))
+        await session.commit()

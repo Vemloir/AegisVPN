@@ -3,11 +3,11 @@ import contextlib
 import signal
 from datetime import UTC
 
-from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiohttp import web
 from sqlalchemy import select
 
 from src.core.bootstrap import bootstrap_application
@@ -16,7 +16,7 @@ from src.core.database import async_session_maker
 from src.core.logger import setup_logger
 from src.handlers import setup_routers
 from src.middlewares.identity import IdentitySyncMiddleware
-from src.models import Plan, Server, Subscription
+from src.models import Plan, Server
 from src.scheduler import setup_scheduler
 from src.services import SubscriptionService
 from src.services.agent_client import close_session as close_agent_session
@@ -56,12 +56,8 @@ async def configure_bot_commands(bot: Bot) -> None:
 
 async def get_public_info() -> dict:
     async with async_session_maker() as session:
-        plans_result = await session.execute(
-            select(Plan).where(Plan.is_active == True).order_by(Plan.days)
-        )
-        servers_result = await session.execute(
-            select(Server).where(Server.is_active == True).order_by(Server.name)
-        )
+        plans_result = await session.execute(select(Plan).where(Plan.is_active == True).order_by(Plan.days))
+        servers_result = await session.execute(select(Server).where(Server.is_active == True).order_by(Server.name))
 
         plans = [
             {
@@ -153,10 +149,7 @@ async def subscription_response(request: web.Request, profile: str) -> web.Respo
 
 
 def create_bot() -> Bot:
-    return Bot(
-        token=settings.bot_token.get_secret_value(),
-        default=DefaultBotProperties(parse_mode="HTML")
-    )
+    return Bot(token=settings.bot_token.get_secret_value(), default=DefaultBotProperties(parse_mode="HTML"))
 
 
 def create_dispatcher() -> Dispatcher:
