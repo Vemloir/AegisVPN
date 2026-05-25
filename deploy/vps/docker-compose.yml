@@ -1,0 +1,47 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "5m"
+    max-file: "2"
+
+services:
+  vpn:
+    build:
+      context: ../../agent
+    container_name: aegis-vpn
+    restart: unless-stopped
+    env_file:
+      - ./vpn.env
+    network_mode: host
+    logging: *default-logging
+    volumes:
+      - ./data/vpn:/data
+
+  bot:
+    build:
+      context: ../../bot
+      dockerfile: Dockerfile.deploy
+    container_name: aegis-bot
+    restart: unless-stopped
+    env_file:
+      - ./bot.env
+    network_mode: host
+    logging: *default-logging
+    depends_on:
+      - vpn
+    volumes:
+      - ./data/bot:/data
+      - ./data/vpn:/vpn-data:ro
+
+  caddy:
+    image: caddy:2
+    container_name: aegis-caddy
+    restart: unless-stopped
+    network_mode: host
+    logging: *default-logging
+    depends_on:
+      - bot
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy:/data
+      - ./config/caddy:/config

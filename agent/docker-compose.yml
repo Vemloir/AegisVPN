@@ -1,0 +1,24 @@
+version: "3.8"
+
+services:
+  xray:
+    image: teddysun/xray:latest
+    restart: always
+    network_mode: "host"
+    volumes:
+      - /etc/xray:/etc/xray
+
+  agent:
+    build: .
+    restart: always
+    network_mode: "host" # Needs host network for public IP
+    pid: "service:xray"  # Share PID namespace to allow pkill xray
+    volumes:
+      - /data/agent.env:/data/agent.env
+      - /etc/xray:/etc/xray
+    environment:
+      - XRAY_PORT=443
+      - REALITY_DEST=consumer.huawei.com:443
+      - REALITY_SERVER_NAME=consumer.huawei.com
+    depends_on:
+      - xray

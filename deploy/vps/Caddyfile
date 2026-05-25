@@ -1,0 +1,12 @@
+# Replace the email and domains below with your own before deploying.
+{
+    email you@example.com
+}
+
+http://vpn.example.com {
+    redir https://vpn.example.com:8443{uri}
+}
+
+https://vpn.example.com:8443 {
+    reverse_proxy 127.0.0.1:8080
+}
