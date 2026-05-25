@@ -1,9 +1,12 @@
 name: CI
 
 on:
-  push:
-    branches: [main, master]
-  pull_request:
+  # Auto-triggers (push / pull_request) are disabled because GitHub Actions is
+  # locked on this account pending billing. The pipeline is kept ready and can
+  # be run manually from the Actions tab; re-enable the triggers below once
+  # billing is active. Checks also run locally: `uv run ruff check .` and
+  # `uv run pytest` in bot/ and agent/.
+  workflow_dispatch:
 
 jobs:
   lint-test:
