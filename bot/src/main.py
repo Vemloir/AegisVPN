@@ -143,7 +143,9 @@ async def subscription_response(request: web.Request, profile: str) -> web.Respo
     if settings.subscription_update_interval_hours > 0:
         response.headers["Profile-Update-Interval"] = str(settings.subscription_update_interval_hours)
     if bot_public_url:
-        response.headers["Support-Url"] = bot_public_url
+        # Link the subscription to our Telegram bot. We intentionally do NOT set
+        # Support-Url — we don't run a support desk; the bot itself is the only
+        # contact point. Clients fall back to Profile-Web-Page-Url for the link.
         response.headers["Profile-Web-Page-Url"] = bot_public_url
     return response
 
