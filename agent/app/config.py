@@ -8,8 +8,8 @@ class Settings(BaseSettings):
     public_key: str
     short_id_tcp: str | None = None
     public_key_tcp: str | None = None
-    fingerprint: str = "chrome"
-    tcp_fingerprint: str | None = None
+    fingerprint: str = "firefox"
+    tcp_fingerprint: str | None = "firefox"
     xray_port: int = 443
     xray_tcp_port: int | None = None
     xray_network: str = "tcp"

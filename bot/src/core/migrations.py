@@ -59,6 +59,8 @@ MIGRATIONS: dict[str, list[Column]] = {
         Column("amnezia_endpoint_host", "VARCHAR(255)", "VARCHAR(255)"),
         Column("amnezia_port", "INTEGER", "INTEGER"),
         Column("amnezia_public_key", "VARCHAR(255)", "VARCHAR(255)"),
+        Column("display_order", "INTEGER DEFAULT 0", "INTEGER DEFAULT 0"),
+        Column("static_uri", "VARCHAR(512)", "VARCHAR(512)"),
     ],
 }
 

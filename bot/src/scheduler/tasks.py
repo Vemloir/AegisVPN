@@ -254,9 +254,14 @@ async def backup_database(bot: Bot):
         logger.info("DB backup written: %s", gz)
 
 
-# Remembers which servers are currently considered down, so admins get a
-# message only on state change (down once, recovered once) — not every cycle.
+# Per-server consecutive-failure counters. A node is only declared DOWN after
+# HEALTH_FAIL_THRESHOLD failures in a row, so a single transient blip (sshd
+# rate-limit, a momentary network hiccup) doesn't page admins. Servers we've
+# already alerted on live in `_down_servers`, so the message fires once on the
+# down edge and once on recovery — not every cycle.
 _down_servers: set[int] = set()
+_fail_counts: dict[int, int] = {}
+HEALTH_FAIL_THRESHOLD = 2  # at the 5-min job interval → ~10 min before alerting
 
 
 async def _alert_admins(bot: Bot, text: str) -> None:
@@ -267,34 +272,77 @@ async def _alert_admins(bot: Bot, text: str) -> None:
             logger.error("alert to %s failed: %s", admin_id, exc)
 
 
+async def _probe_xray_port(host: str, port: int, timeout: float = 4.0) -> bool:
+    """True iff a TCP connection to the node's VLESS port completes. The agent
+    API (:8444) answering doesn't prove xray (the port users connect to) is
+    actually serving — so a closed VLESS port means the node is down for users
+    even while the agent is alive. We check both."""
+    try:
+        fut = asyncio.open_connection(host, port)
+        _, writer = await asyncio.wait_for(fut, timeout=timeout)
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
+
+
 async def check_servers_health(bot: Bot):
     logger.info("Running task: check_servers_health")
     async with async_session_maker() as session:
         result = await session.execute(select(Server).where(Server.is_active == True))
         servers = result.scalars().all()
 
-    newly_down: list[str] = []
-    recovered: list[str] = []
     for server in servers:
         client = AgentClient(server.agent_url, server.agent_token)
-        ok = False
+        agent_ok = False
+        clients = None
+        reason = ""
         try:
             health = await client.get_health()
-            ok = health.get("status") == "ok"
-        except Exception:
-            ok = False
+            agent_ok = health.get("status") == "ok"
+            clients = health.get("clients")
+            if not agent_ok:
+                reason = f"agent status={health.get('status')!r}"
+        except Exception as exc:
+            reason = f"agent unreachable ({type(exc).__name__})"
+
+        xray_ok = await _probe_xray_port(server.host, server.port)
+        if not xray_ok:
+            reason = (reason + "; " if reason else "") + f"xray port {server.port} closed"
+        ok = agent_ok and xray_ok
 
         was_down = server.id in _down_servers
-        if not ok and not was_down:
-            _down_servers.add(server.id)
-            newly_down.append(server.name)
-        elif ok and was_down:
-            _down_servers.discard(server.id)
-            recovered.append(server.name)
+        if ok:
+            _fail_counts.pop(server.id, None)
+            if was_down:
+                _down_servers.discard(server.id)
+                logger.info("Server %s (%s) recovered", server.id, server.name)
+                await _alert_admins(
+                    bot,
+                    f"Нода снова в строю: {server.name}\n"
+                    f"{server.host}:{server.port}",
+                )
+            continue
 
-    if newly_down:
-        logger.warning("Servers went DOWN: %s", ", ".join(newly_down))
-        await _alert_admins(bot, "Node DOWN: " + ", ".join(newly_down))
-    if recovered:
-        logger.info("Servers recovered: %s", ", ".join(recovered))
-        await _alert_admins(bot, "Node recovered: " + ", ".join(recovered))
+        # Failing this cycle — bump the streak, alert only once we cross the
+        # threshold (and haven't alerted already).
+        fails = _fail_counts.get(server.id, 0) + 1
+        _fail_counts[server.id] = fails
+        logger.warning(
+            "health: %s (%s) failing %d/%d — %s",
+            server.name, server.host, fails, HEALTH_FAIL_THRESHOLD, reason,
+        )
+        if fails >= HEALTH_FAIL_THRESHOLD and not was_down:
+            _down_servers.add(server.id)
+            clients_line = f"\nКлиентов было: {clients}" if clients is not None else ""
+            await _alert_admins(
+                bot,
+                f"Нода НЕ отвечает: {server.name}\n"
+                f"{server.host}:{server.port}\n"
+                f"Причина: {reason}\n"
+                f"Неудачных проверок подряд: {fails}{clients_line}",
+            )

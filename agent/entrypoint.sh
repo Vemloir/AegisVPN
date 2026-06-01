@@ -179,6 +179,78 @@ if tcp_port:
 
 config["inbounds"] = new_inbounds + other_inbounds
 
+
+def ensure_warp(cfg: dict) -> None:
+    """Idempotently wire a Cloudflare WARP (WireGuard) outbound + an AI-domain
+    routing rule into the config when WARP_SECRET_KEY is present in the env.
+
+    Lives here (not in template.json) so the creds never touch the repo and so
+    it re-applies on every restart: the inbounds are rebuilt each boot while
+    outbounds/routing are otherwise preserved as-is, which would silently drop
+    a WARP block added out-of-band.
+
+    Scope is deliberately narrow — ONLY Google Gemini. Other AI services
+    (OpenAI, Anthropic, …) work fine directly from our VPS ranges, so sending
+    them through WARP would only add a needless hop. Gemini is the one that
+    refuses our egress IPs, so just its domains go through Cloudflare's WARP.
+    """
+    secret = os.environ.get("WARP_SECRET_KEY", "").strip()
+    if not secret:
+        return
+
+    addresses = [
+        a for a in (
+            os.environ.get("WARP_ADDR_V4", "").strip(),
+            os.environ.get("WARP_ADDR_V6", "").strip(),
+        ) if a
+    ]
+    reserved_raw = os.environ.get("WARP_RESERVED", "").strip()
+    reserved = [int(x) for x in reserved_raw.split(",") if x.strip().lstrip("-").isdigit()]
+    warp_outbound = {
+        "tag": "warp",
+        "protocol": "wireguard",
+        "settings": {
+            "secretKey": secret,
+            "address": addresses,
+            "peers": [{
+                "publicKey": os.environ.get("WARP_PEER_PUBKEY", "").strip(),
+                "endpoint": os.environ.get("WARP_ENDPOINT", "").strip() or "162.159.192.1:2408",
+            }],
+            "mtu": int(os.environ.get("WARP_MTU", "1280") or "1280"),
+        },
+    }
+    if reserved:
+        warp_outbound["settings"]["reserved"] = reserved
+
+    outbounds = cfg.setdefault("outbounds", [])
+    # Replace any prior warp block so creds/endpoint stay current, else insert
+    # just before the trailing blackhole/last outbound.
+    outbounds[:] = [o for o in outbounds if o.get("tag") != "warp"]
+    insert_at = len(outbounds) - 1 if outbounds else 0
+    outbounds.insert(max(insert_at, 0), warp_outbound)
+
+    rules = cfg.setdefault("routing", {}).setdefault("rules", [])
+    # Drop any prior warp rule and re-add, so a narrowed/updated domain set
+    # takes effect on restart instead of being frozen at first-write.
+    rules[:] = [r for r in rules if r.get("outboundTag") != "warp"]
+    gemini_rule = {
+        "type": "field",
+        "domain": [
+            "geosite:google-gemini",
+            "domain:gemini.google.com",
+            "domain:generativelanguage.googleapis.com",
+            "domain:aistudio.google.com",
+            "domain:alkalimakersuite-pa.clients6.google.com",
+            "domain:labs.google",
+        ],
+        "outboundTag": "warp",
+    }
+    api_idx = next((i for i, r in enumerate(rules) if r.get("inboundTag") == ["api"]), -1)
+    rules.insert(api_idx + 1, gemini_rule)
+
+
+ensure_warp(config)
+
 with open(config_path, "w", encoding="utf-8") as fh:
     json.dump(config, fh, indent=2)
 PY

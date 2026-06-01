@@ -148,6 +148,15 @@ async def subscription_response(request: web.Request, profile: str) -> web.Respo
         # We deliberately do NOT set Profile-Web-Page-Url, which would add a
         # separate info ("i") icon for a website we don't have.
         response.headers["Support-Url"] = bot_public_url
+    # Auto-ping all locations the moment the subscription opens, so users see
+    # fresh latencies instead of "н/д" until they tap each one.
+    #
+    # NOTE: do NOT advertise Mux here. Our inbounds use flow=xtls-rprx-vision,
+    # and VLESS mux is incompatible with the vision flow — turning it on (as we
+    # briefly did) makes clients multiplex over a vision connection and traffic
+    # silently dies ("connects but nothing loads"). Vision already coalesces
+    # sub-streams itself, so mux buys nothing here anyway.
+    response.headers["Subscription-Ping-Onopen-Enabled"] = "1"
     return response
 
 

@@ -3,7 +3,7 @@ import base64
 import secrets
 from collections import Counter
 from datetime import UTC, datetime
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -70,12 +70,17 @@ class SubscriptionService:
         return result.scalar_one_or_none()
 
     @staticmethod
-    def server_sort_key(server: Server) -> tuple[str, int, int]:
+    def server_sort_key(server: Server) -> tuple[int, int, str, int]:
+        # Explicit display_order (>0) takes priority; ties or unset fall back to
+        # alphabetical name, with "Exp" servers winning their base-name group.
         name = server.name.strip() or f"server {server.id}"
         folded = name.casefold()
         is_exp = folded.endswith(" exp")
         base_name = folded[:-4] if is_exp else folded
-        return base_name, 0 if is_exp else 1, server.id
+        explicit_order = getattr(server, "display_order", 0) or 0
+        if explicit_order > 0:
+            return (0, explicit_order, "", server.id)
+        return (1, 0 if is_exp else 1, base_name, server.id)
 
     @staticmethod
     def format_server_label(server: Server, duplicate_name_keys: set[str] | None = None) -> str:
@@ -124,7 +129,12 @@ class SubscriptionService:
         # Happ expects raw emoji in subscription headers; percent-encoding them
         # makes the server name degrade to n/a there.
         fragment = SubscriptionService.format_server_label(server, duplicate_name_keys)
-        target_host = parts.hostname or server.host
+        # server.host (from the bot DB) is authoritative for the address the
+        # client connects to — we deliberately override whatever hostname the
+        # agent baked into its own URL. This lets us pin bare IPs in the DB and
+        # drop the sslip.io dependency (a third-party DNS that, when it hiccups,
+        # takes down every location except the one already on a bare IP).
+        target_host = server.host or parts.hostname
         target_port = parts.port or server.port
         netloc = f"{userinfo}@{target_host}:{target_port}" if userinfo else f"{target_host}:{target_port}"
         return urlunsplit((parts.scheme, netloc, parts.path, normalized_query, fragment))
@@ -220,6 +230,15 @@ class SubscriptionService:
         duplicate_name_keys = {name for name, count in server_name_counts.items() if count > 1}
 
         async def fetch_link(server: Server) -> str:
+            # Static-URI servers (e.g. a standalone Hysteria2 node) aren't backed
+            # by an agent — serve their ready-made URI verbatim, substituting
+            # {uuid}/{host} and setting the flagged label as the #fragment.
+            static_uri = getattr(server, "static_uri", None)
+            if static_uri:
+                uri = static_uri.replace("{uuid}", sub.client_uuid).replace("{host}", server.host)
+                base = uri.split("#", 1)[0]
+                label = SubscriptionService.format_server_label(server, duplicate_name_keys)
+                return f"{base}#{quote(label, safe='')}"
             client = AgentClient(server.agent_url, server.agent_token)
             target_profile = (
                 SubscriptionService.FAST_PROFILE
