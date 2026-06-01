@@ -35,13 +35,14 @@ def subscription_detail_keyboard(language: str, kind: str) -> InlineKeyboardMark
     )
 
 
-def settings_keyboard(language: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=t(language, "change_language"), callback_data="settings_language")],
-            [InlineKeyboardButton(text=t(language, "delete_account"), callback_data="account_delete")],
-        ]
-    )
+def settings_keyboard(language: str, has_active_subscription: bool = False) -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text=t(language, "change_language"), callback_data="settings_language")],
+    ]
+    if has_active_subscription:
+        buttons.append([InlineKeyboardButton(text=t(language, "reissue_subscription"), callback_data="reissue_subscription")])
+    buttons.append([InlineKeyboardButton(text=t(language, "delete_account"), callback_data="account_delete")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def delete_account_keyboard(language: str) -> InlineKeyboardMarkup:

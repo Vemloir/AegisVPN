@@ -153,6 +153,9 @@ async def process_successful_payment(message: Message, bot: Bot):
         )
         session.add(payment)
 
+        now = datetime.now(UTC).replace(tzinfo=None)
+
+        # Try to find an active subscription first
         sub_result = await session.execute(
             select(Subscription).where(
                 Subscription.user_id == user.id,
@@ -161,24 +164,45 @@ async def process_successful_payment(message: Message, bot: Bot):
         )
         active_sub = sub_result.scalar_one_or_none()
 
-        now = datetime.now(UTC).replace(tzinfo=None)
         if active_sub:
+            # Renew existing active subscription (same URL)
             active_sub.expires_at = max(active_sub.expires_at, now) + timedelta(days=plan.days)
             sub_token = active_sub.sub_token
+            is_renewal = True
         else:
-            sub_token = await SubscriptionService.generate_sub_token(session)
-            client_uuid = str(uuid.uuid4())
-            active_sub = Subscription(
-                user_id=user.id,
-                sub_token=sub_token,
-                client_uuid=client_uuid,
-                plan_days=plan.days,
-                started_at=now,
-                expires_at=now + timedelta(days=plan.days),
-                is_active=True,
+            # No active subscription — try to restore the most recent expired one
+            # (same client_uuid, same sub_token) so the URL stays the same
+            expired_result = await session.execute(
+                select(Subscription)
+                .where(Subscription.user_id == user.id)
+                .order_by(Subscription.expires_at.desc())
+                .limit(1)
             )
-            session.add(active_sub)
-            is_renewal = False
+            expired_sub = expired_result.scalar_one_or_none()
+
+            if expired_sub and expired_sub.expires_at < now:
+                # Restore the expired subscription: reactivate it with the same UUID/token
+                expired_sub.is_active = True
+                expired_sub.plan_days = plan.days
+                expired_sub.expires_at = now + timedelta(days=plan.days)
+                active_sub = expired_sub
+                sub_token = expired_sub.sub_token
+                is_renewal = True
+            else:
+                # No expired subscription to restore — create a brand new one
+                sub_token = await SubscriptionService.generate_sub_token(session)
+                client_uuid = str(uuid.uuid4())
+                active_sub = Subscription(
+                    user_id=user.id,
+                    sub_token=sub_token,
+                    client_uuid=client_uuid,
+                    plan_days=plan.days,
+                    started_at=now,
+                    expires_at=now + timedelta(days=plan.days),
+                    is_active=True,
+                )
+                session.add(active_sub)
+                is_renewal = False
 
         await session.flush()
         active_servers = await ServerAccessService.get_accessible_servers_for_user(session, user.id)

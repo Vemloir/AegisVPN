@@ -2,7 +2,7 @@ import asyncio
 import base64
 import secrets
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import and_, or_, select
@@ -12,6 +12,7 @@ from src.core.config import settings
 from src.core.logger import logger
 from src.models import Server, Subscription, SubscriptionServer
 from src.services.agent_client import AgentClient
+from src.services.server_access_service import ServerAccessService
 
 
 class SubscriptionService:
@@ -282,3 +283,52 @@ class SubscriptionService:
                 logger.error(f"Failed to remove client {sub.client_uuid} from server {server.id}: {exc}")
 
         await asyncio.gather(*(remove_from_server(server) for server in servers))
+
+    @staticmethod
+    async def reissue_subscription(
+        session: AsyncSession,
+        user_id: int,
+        plan_days: int,
+    ) -> tuple[str | None, str | None]:
+        """Reissue a subscription for a user.
+
+        Deactivates the old active subscription and creates a new one with the
+        same client_uuid (so the agent on servers still knows the client).
+        Returns (new_sub_token, new_client_uuid) or (None, error_key).
+        """
+        # Find the active subscription
+        result = await session.execute(
+            select(Subscription).where(
+                Subscription.user_id == user_id,
+                Subscription.is_active == True,
+            )
+        )
+        old_sub = result.scalar_one_or_none()
+
+        if not old_sub:
+            return None, "no_active"
+
+        # Deactivate old subscription
+        old_sub.is_active = False
+        await SubscriptionService.remove_subscription_from_servers(session, old_sub)
+
+        # Create new subscription with the SAME client_uuid
+        new_token = await SubscriptionService.generate_sub_token(session)
+        new_sub = Subscription(
+            user_id=user_id,
+            sub_token=new_token,
+            client_uuid=old_sub.client_uuid,  # same UUID → servers already know this client
+            plan_days=plan_days,
+            started_at=datetime.now(UTC).replace(tzinfo=None),
+            expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=plan_days),
+            is_active=True,
+        )
+        session.add(new_sub)
+        await session.flush()
+
+        # Sync to servers
+        servers = await ServerAccessService.get_accessible_servers_for_user(session, user_id)
+        await SubscriptionService.sync_subscription_to_servers(session, new_sub, servers)
+        await session.commit()
+
+        return new_token, old_sub.client_uuid
