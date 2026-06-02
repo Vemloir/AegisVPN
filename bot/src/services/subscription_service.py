@@ -71,6 +71,13 @@ class SubscriptionService:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def find_latest_subscription(session: AsyncSession, user_id: int) -> "Subscription | None":
+        result = await session.execute(
+            select(Subscription).where(Subscription.user_id == user_id).order_by(Subscription.id.desc()).limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
     def server_sort_key(server: Server) -> tuple[int, int, str, int]:
         # Explicit display_order (>0) takes priority; ties or unset fall back to
         # alphabetical name, with "Exp" servers winning their base-name group.
@@ -152,6 +159,8 @@ class SubscriptionService:
         email = f"user_{sub.user_id}_sub_{sub.id}"
 
         async def sync_to_server(server: Server) -> tuple[int, bool]:
+            if getattr(server, "static_uri", None):
+                return server.id, True
             client = AgentClient(server.agent_url, server.agent_token)
 
             try:

@@ -45,6 +45,15 @@ def settings_keyboard(language: str, has_active_subscription: bool = False) -> I
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def reissue_subscription_keyboard(language: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=t(language, "reissue_subscription_confirm_btn"), callback_data="reissue_subscription_confirm")],
+            [InlineKeyboardButton(text=t(language, "back_to_settings"), callback_data="settings_open")],
+        ]
+    )
+
+
 def delete_account_keyboard(language: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[

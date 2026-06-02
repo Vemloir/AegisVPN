@@ -135,6 +135,46 @@ class UserService:
             return language
 
     @staticmethod
+    async def reissue_subscription(tg_id: int) -> tuple[str, str, str | None]:
+        """Rotate sub_token + client_uuid so old URL and VLESS credentials stop working.
+
+        Returns (language, status, new_sub_token) where status is one of:
+        no_user, no_active, failed, done.
+        """
+        async with async_session_maker() as session:
+            user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
+            if user is None:
+                return "ru", "no_user", None
+            language = user.language
+            if user.is_banned:
+                return language, "no_active", None
+            now = _now()
+            sub = (
+                await session.execute(
+                    select(Subscription).where(
+                        Subscription.user_id == user.id,
+                        Subscription.is_active == True,  # noqa: E712
+                        Subscription.expires_at > now,
+                    )
+                )
+            ).scalar_one_or_none()
+            if sub is None:
+                return language, "no_active", None
+            try:
+                await SubscriptionService.remove_subscription_from_servers(session, sub)
+                sub.sub_token = await SubscriptionService.generate_sub_token(session)
+                sub.client_uuid = str(uuid.uuid4())
+                await session.flush()
+                active_servers = await ServerAccessService.get_accessible_servers_for_user(session, user.id)
+                await SubscriptionService.sync_subscription_to_servers(session, sub, active_servers)
+                await session.commit()
+            except Exception as exc:
+                await session.rollback()
+                logger.error("Failed to reissue subscription for %s: %s", tg_id, exc)
+                return language, "failed", None
+            return language, "done", sub.sub_token
+
+    @staticmethod
     async def activate_trial(tg_id: int, username: str | None, language_code: str | None) -> tuple[str, str]:
         """Activate the free trial. Returns ``(language, status)`` where status is
         one of: banned, already_used, active_exists, failed, started."""
@@ -171,16 +211,28 @@ class UserService:
             if active_sub is not None:
                 return language, "active_exists"
 
-            sub = Subscription(
-                user_id=user.id,
-                sub_token=await SubscriptionService.generate_sub_token(session),
-                client_uuid=str(uuid.uuid4()),
-                plan_days=TRIAL_DAYS,
-                started_at=now,
-                expires_at=now + timedelta(days=TRIAL_DAYS),
-                is_active=True,
-            )
-            session.add(sub)
+            # Reuse the user's latest subscription row so the URL is stable.
+            sub = await SubscriptionService.find_latest_subscription(session, user.id)
+            if sub is not None:
+                sub.is_active = True
+                sub.started_at = now
+                sub.expires_at = now + timedelta(days=TRIAL_DAYS)
+                sub.plan_days = TRIAL_DAYS
+                if not sub.sub_token:
+                    sub.sub_token = await SubscriptionService.generate_sub_token(session)
+                if not sub.client_uuid:
+                    sub.client_uuid = str(uuid.uuid4())
+            else:
+                sub = Subscription(
+                    user_id=user.id,
+                    sub_token=await SubscriptionService.generate_sub_token(session),
+                    client_uuid=str(uuid.uuid4()),
+                    plan_days=TRIAL_DAYS,
+                    started_at=now,
+                    expires_at=now + timedelta(days=TRIAL_DAYS),
+                    is_active=True,
+                )
+                session.add(sub)
             user.trial_used = True
 
             try:

@@ -116,10 +116,15 @@ TEXTS: dict[str, dict[str, str]] = {
         "trial_active_subscription_exists": "Сначала дождитесь окончания текущей подписки или продлите её.",
         "trial_activation_failed": "Не удалось активировать пробный период. Попробуйте ещё раз.",
         "reissue_subscription": "Перевыпустить подписку",
-        "reissue_subscription_confirm": "Перевыпустить подписку?\n\nСтарая подписка будет деактивирована и больше не будет работать. Вам будет выдана новая подписка с новым URL. Старую ссылку нужно будет обновить в клиенте.",
-        "reissue_subscription_success": "Подписка перевыпущена. Старая ссылка больше не работает.\n\nНовая ссылка:\n{link}\n\nОбновите её в вашем V2Ray-клиенте.",
+        "reissue_subscription_warning": (
+            "Перевыпустить подписку?\n\n"
+            "Будет сгенерирована новая ссылка и новый UUID клиента. "
+            "Старая ссылка и все добавленные подключения перестанут работать."
+        ),
+        "reissue_subscription_confirm_btn": "Да, перевыпустить",
+        "reissue_subscription_success": "Подписка перевыпущена.\n\nНовая ссылка:\n{link}\n\nОбновите её в вашем клиенте.",
         "reissue_subscription_no_active": "У вас нет активной подписки для перевыпуска.",
-        "reissue_subscription_in_progress": "Перевыпуск подписки...",
+        "reissue_subscription_failed": "Не удалось перевыпустить подписку. Попробуйте ещё раз.",
     },
     "en": {
         "buy_vpn": "Buy VPN",
@@ -230,11 +235,16 @@ TEXTS: dict[str, dict[str, str]] = {
         "trial_already_used": "Your trial has already been used.",
         "trial_active_subscription_exists": "Wait until the current subscription ends or renew it instead.",
         "trial_activation_failed": "Failed to activate the trial. Please try again.",
-        "reissue_subscription": "Renew subscription",
-        "reissue_subscription_confirm": "Renew your subscription?\n\nYour old subscription will be deactivated and will no longer work. You will receive a new subscription with a new URL. You will need to update the link in your client.",
-        "reissue_subscription_success": "Subscription renewed. The old link no longer works.\n\nNew link:\n{link}\n\nUpdate it in your V2Ray client.",
-        "reissue_subscription_no_active": "You do not have an active subscription to renew.",
-        "reissue_subscription_in_progress": "Renewing subscription...",
+        "reissue_subscription": "Reissue subscription",
+        "reissue_subscription_warning": (
+            "Reissue subscription?\n\n"
+            "A new link and client UUID will be generated. "
+            "The old link and all added connections will stop working."
+        ),
+        "reissue_subscription_confirm_btn": "Yes, reissue",
+        "reissue_subscription_success": "Subscription reissued.\n\nNew link:\n{link}\n\nUpdate it in your client.",
+        "reissue_subscription_no_active": "You do not have an active subscription to reissue.",
+        "reissue_subscription_failed": "Failed to reissue the subscription. Please try again.",
     },
 }
 

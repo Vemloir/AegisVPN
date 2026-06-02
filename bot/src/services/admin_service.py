@@ -106,15 +106,9 @@ class AdminService:
                 return None
 
             now = datetime.now(UTC).replace(tzinfo=None)
-            sub_result = await session.execute(
-                select(Subscription).where(
-                    Subscription.user_id == user.id,
-                    Subscription.is_active == True,  # noqa: E712
-                )
-            )
-            sub = sub_result.scalar_one_or_none()
+            sub = await SubscriptionService.find_latest_subscription(session, user.id)
 
-            if sub and sub.expires_at > now:
+            if sub and sub.is_active and sub.expires_at > now:
                 sub.expires_at = max(sub.expires_at, now) + timedelta(days=days)
                 sub.plan_days = days
             elif sub:
@@ -154,13 +148,7 @@ class AdminService:
                 return None
 
             now = datetime.now(UTC).replace(tzinfo=None)
-            sub_result = await session.execute(
-                select(Subscription).where(
-                    Subscription.user_id == user.id,
-                    Subscription.is_active == True,  # noqa: E712
-                )
-            )
-            sub = sub_result.scalar_one_or_none()
+            sub = await SubscriptionService.find_latest_subscription(session, user.id)
 
             if sub:
                 sub.is_active = True
