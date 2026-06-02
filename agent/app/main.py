@@ -19,6 +19,7 @@ from .xray import (
     build_subscription_query,
     config_lock,
     find_vless_inbound,
+    get_online_count,
     get_xray_config,
     list_vless_inbounds,
     query_traffic_stats,
@@ -49,6 +50,11 @@ async def health():
             if client_id:
                 unique_clients.add(client_id)
     return {"status": "ok", "clients": len(unique_clients)}
+
+
+@app.get("/online", dependencies=[Depends(verify_token)])
+async def online():
+    return {"online": await get_online_count()}
 
 
 @app.post("/client/add", dependencies=[Depends(verify_token)])

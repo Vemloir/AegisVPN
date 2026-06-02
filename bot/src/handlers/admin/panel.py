@@ -51,12 +51,21 @@ async def cq_admin_stats(call: CallbackQuery):
         return
 
     stats = await AdminService.get_stats()
+    nodes_text = ""
+    if stats.nodes_online:
+        lines = []
+        for flag, name, count in stats.nodes_online:
+            label = f"{flag} {name}"
+            value = str(count) if count >= 0 else "н/д"
+            lines.append(f"  {label}: {value}")
+        nodes_text = "\n\nОнлайн по нодам:\n" + "\n".join(lines)
     text = (
         f"{html.bold('Статистика')}\n\n"
         f"Пользователей: {stats.users}\n"
         f"Активных подписок: {stats.active_subscriptions}\n"
         f"Забаненных: {stats.banned_users}\n"
         f"Выручка (Stars): {stats.revenue_stars}"
+        f"{nodes_text}"
     )
     await call.message.edit_text(text, parse_mode="HTML", reply_markup=admin_back_keyboard())  # type: ignore
     await call.answer()

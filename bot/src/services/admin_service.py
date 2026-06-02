@@ -5,14 +5,16 @@ Handlers in ``src.handlers.admin`` call into this layer and only build the
 Telegram UI (text + keyboards) on top of the returned values.
 """
 
+import asyncio
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 
 from src.core.database import async_session_maker
-from src.models import Payment, Subscription, User
+from src.models import Payment, Server, Subscription, User
+from src.services.agent_client import AgentClient
 from src.services.server_access_service import ServerAccessService
 from src.services.subscription_service import SubscriptionService
 
@@ -23,6 +25,7 @@ class AdminStats:
     active_subscriptions: int
     banned_users: int
     revenue_stars: int
+    nodes_online: list[tuple[str, str, int]] = field(default_factory=list)
 
 
 class AdminService:
@@ -43,7 +46,27 @@ class AdminService:
                 or 0
             )
             revenue = await session.scalar(select(func.sum(Payment.stars_amount))) or 0
-        return AdminStats(users_count, active_subs, banned_users, revenue)
+
+            servers = (
+                await session.execute(
+                    select(Server).where(
+                        Server.is_active == True,  # noqa: E712
+                        Server.static_uri.is_(None),
+                    )
+                )
+            ).scalars().all()
+
+        async def fetch_online(server: Server) -> tuple[str, str, int]:
+            try:
+                count = await AgentClient(server.agent_url, server.agent_token).get_online()
+            except Exception:
+                count = -1
+            return server.flag, server.name, count
+
+        nodes_online = list(await asyncio.gather(*(fetch_online(s) for s in servers)))
+        nodes_online.sort(key=lambda x: x[1])
+
+        return AdminStats(users_count, active_subs, banned_users, revenue, nodes_online)
 
     @staticmethod
     async def count_active_non_lifetime_subscriptions() -> int:

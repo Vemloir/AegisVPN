@@ -185,6 +185,24 @@ async def xray_api_remove(tag: str, email: str) -> bool:
     return ok
 
 
+async def get_online_count() -> int:
+    """Number of active inbound connections right now (from xray sysinfo)."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "xray", "api", "sysinfo", f"--server={api_server()}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+    except (TimeoutError, Exception):
+        return 0
+    try:
+        data = json.loads(out.decode("utf-8") or "{}")
+        return int(data.get("NumInbound") or 0)
+    except (ValueError, TypeError):
+        return 0
+
+
 async def query_traffic_stats() -> dict[str, dict[str, int]]:
     """Per-client cumulative byte counters keyed by email (since last Xray start).
 
