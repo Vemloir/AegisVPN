@@ -14,6 +14,7 @@ from .common import is_admin
 from .keyboards import (
     admin_back_keyboard,
     admin_panel_keyboard,
+    admin_stats_keyboard,
     cancel_keyboard,
     confirmation_keyboard,
 )
@@ -66,7 +67,7 @@ async def cq_admin_stats(call: CallbackQuery):
         f"Забаненных: {stats.banned_users}"
         f"{nodes_text}"
     )
-    await call.message.edit_text(text, parse_mode="HTML", reply_markup=admin_back_keyboard())  # type: ignore
+    await call.message.edit_text(text, parse_mode="HTML", reply_markup=admin_stats_keyboard())  # type: ignore
     await call.answer()
 
 

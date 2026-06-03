@@ -66,6 +66,19 @@ class AgentClient:
             resp.raise_for_status()
             return {}
 
+    async def get_hy2_online(self) -> int:
+        try:
+            async with get_session().get(
+                f"{self.base_url}/hy2-online",
+                headers=self.headers,
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as resp:
+                if resp.status == 200:
+                    return (await resp.json()).get("online", 0)
+        except Exception:
+            pass
+        return 0
+
     async def get_online(self) -> int:
         try:
             async with get_session().get(

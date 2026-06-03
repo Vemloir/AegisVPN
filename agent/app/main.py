@@ -57,6 +57,21 @@ async def online():
     return {"online": await get_online_count()}
 
 
+@app.get("/hy2-online", dependencies=[Depends(verify_token)])
+async def hy2_online():
+    """Active Hysteria2 connections on this node (0 if no local Hysteria2)."""
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get("http://127.0.0.1:8088/traffic", timeout=aiohttp.ClientTimeout(total=3)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return {"online": len(data)}
+    except Exception:
+        pass
+    return {"online": 0}
+
+
 @app.post("/client/add", dependencies=[Depends(verify_token)])
 async def add_client(req: ClientAddRequest):
     async with config_lock:

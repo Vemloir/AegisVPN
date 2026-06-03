@@ -27,6 +27,15 @@ def admin_back_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def admin_stats_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Обновить", callback_data="admin_stats")],
+            [InlineKeyboardButton(text="Назад в админку", callback_data="admin_back")],
+        ]
+    )
+
+
 def build_duplicate_name_keys(servers: list[Server]) -> set[str]:
     counts = Counter(server.name.strip().casefold() for server in servers if server.name.strip())
     return {name for name, count in counts.items() if count > 1}
