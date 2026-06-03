@@ -10,6 +10,8 @@ from urllib.parse import quote, urlencode
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
 
+from pydantic import BaseModel
+
 from .config import settings
 from .connlimit import conn_limit_loop
 from .models import ClientAddRequest, ClientRemoveRequest
@@ -63,13 +65,27 @@ async def hy2_online():
     try:
         import aiohttp
         async with aiohttp.ClientSession() as sess:
-            async with sess.get("http://127.0.0.1:8088/traffic", timeout=aiohttp.ClientTimeout(total=3)) as resp:
+            async with sess.get(settings.hy2_traffic_url, timeout=aiohttp.ClientTimeout(total=3)) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     return {"online": len(data)}
     except Exception:
         pass
     return {"online": 0}
+
+
+class Hy2AuthRequest(BaseModel):
+    addr: str
+    auth: str
+    tx: int = 0
+
+
+@app.post("/hy2-auth")
+async def hy2_auth(req: Hy2AuthRequest):
+    """Hysteria2 HTTP auth callback — validates password, assigns unique ID per connection."""
+    if not settings.hy2_password or req.auth != settings.hy2_password:
+        return {"ok": False, "msg": "invalid password"}
+    return {"ok": True, "id": req.addr}
 
 
 @app.post("/client/add", dependencies=[Depends(verify_token)])
