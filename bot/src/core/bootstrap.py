@@ -135,13 +135,6 @@ async def bootstrap_server() -> None:
             "short_id": agent_env["SHORT_ID"],
             "agent_url": settings.bootstrap_server_agent_url,
             "agent_token": agent_env["AGENT_TOKEN"],
-            "amnezia_enabled": bool(
-                settings.amnezia_enabled and settings.amnezia_server_host and settings.amnezia_server_public_key
-            ),
-            "amnezia_name": f"{settings.bootstrap_server_name} Amnezia",
-            "amnezia_endpoint_host": settings.amnezia_server_host,
-            "amnezia_port": settings.amnezia_server_port if settings.amnezia_enabled else None,
-            "amnezia_public_key": settings.amnezia_server_public_key,
             "subscription_group": settings.bootstrap_server_subscription_group,
             "is_active": True,
         }

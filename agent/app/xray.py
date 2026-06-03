@@ -186,10 +186,10 @@ async def xray_api_remove(tag: str, email: str) -> bool:
 
 
 async def get_online_count() -> int:
-    """Number of active inbound connections right now (from xray sysinfo)."""
+    """Number of users with active sessions right now (xray statsgetallonlineusers)."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            "xray", "api", "sysinfo", f"--server={api_server()}",
+            "xray", "api", "statsgetallonlineusers", f"--server={api_server()}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -198,7 +198,7 @@ async def get_online_count() -> int:
         return 0
     try:
         data = json.loads(out.decode("utf-8") or "{}")
-        return int(data.get("NumInbound") or 0)
+        return len(data.get("users") or [])
     except (ValueError, TypeError):
         return 0
 

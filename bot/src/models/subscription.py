@@ -19,9 +19,6 @@ class Subscription(Base):
     sub_token: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     legacy_sub_token: Mapped[str | None] = mapped_column(String(255), nullable=True)
     client_uuid: Mapped[str] = mapped_column(String(36), unique=True, index=True)
-    amnezia_private_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    amnezia_public_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    amnezia_ipv4: Mapped[str | None] = mapped_column(String(64), nullable=True)
     plan_days: Mapped[int] = mapped_column(Integer)
     started_at: Mapped[datetime] = mapped_column(default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(index=True)
@@ -43,9 +40,6 @@ class SubscriptionServer(Base):
     subscription_id: Mapped[int] = mapped_column(ForeignKey("subscriptions.id", ondelete="CASCADE"), primary_key=True)
     server_id: Mapped[int] = mapped_column(ForeignKey("servers.id", ondelete="CASCADE"), primary_key=True)
     is_synced: Mapped[bool] = mapped_column(Boolean, default=False)
-    amnezia_private_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    amnezia_public_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    amnezia_ipv4: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Last raw Xray counter seen on this node, for delta accounting. Xray
     # resets to 0 on restart; a drop below the stored value means restart.
     traffic_last_up: Mapped[int] = mapped_column(BigInteger, default=0)

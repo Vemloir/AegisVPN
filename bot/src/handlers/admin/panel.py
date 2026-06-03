@@ -63,8 +63,7 @@ async def cq_admin_stats(call: CallbackQuery):
         f"{html.bold('Статистика')}\n\n"
         f"Пользователей: {stats.users}\n"
         f"Активных подписок: {stats.active_subscriptions}\n"
-        f"Забаненных: {stats.banned_users}\n"
-        f"Выручка (Stars): {stats.revenue_stars}"
+        f"Забаненных: {stats.banned_users}"
         f"{nodes_text}"
     )
     await call.message.edit_text(text, parse_mode="HTML", reply_markup=admin_back_keyboard())  # type: ignore

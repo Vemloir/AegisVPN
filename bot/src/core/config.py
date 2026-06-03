@@ -8,7 +8,6 @@ class Settings(BaseSettings):
     bot_public_url: str | None = None
     premium_bot_url: str = "https://t.me/PremiumBot"
     subscription_public_base_url: str | None = None
-    amnezia_public_base_url: str | None = None
 
     bot_domain: str | None = None
     public_base_url: str | None = None
@@ -32,21 +31,6 @@ class Settings(BaseSettings):
     site_description: str = "Simple VPN landing page and subscription endpoint"
     subscription_title: str = "AegisVPN"
     subscription_update_interval_hours: int = 1
-
-    amnezia_enabled: bool = False
-    amnezia_server_host: str | None = None
-    amnezia_server_port: int = 51820
-    amnezia_server_public_key: str | None = None
-    amnezia_client_dns: str = "1.1.1.1,1.0.0.1"
-    amnezia_jc: int = 5
-    amnezia_jmin: int = 64
-    amnezia_jmax: int = 256
-    amnezia_s1: int = 32
-    amnezia_s2: int = 64
-    amnezia_h1: int = 12452345
-    amnezia_h2: int = 24563456
-    amnezia_h3: int = 35674567
-    amnezia_h4: int = 46785678
 
     bootstrap_plans_json: str = ""
     bootstrap_server_name: str = "Main"
@@ -91,12 +75,6 @@ class Settings(BaseSettings):
         if self.subscription_public_base_url:
             return self.subscription_public_base_url.rstrip("/")
         return self.base_url
-
-    @property
-    def amnezia_base_url(self) -> str:
-        if self.amnezia_public_base_url:
-            return self.amnezia_public_base_url.rstrip("/")
-        return self.subscription_base_url
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
