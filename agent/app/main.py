@@ -61,14 +61,12 @@ async def online():
 
 @app.get("/hy2-online", dependencies=[Depends(verify_token)])
 async def hy2_online():
-    """Active Hysteria2 connections on this node (0 if no local Hysteria2)."""
+    """Active Hysteria2 connections — read from counter file maintained by hy2-counter.service."""
     try:
-        import aiohttp
-        async with aiohttp.ClientSession() as sess:
-            async with sess.get(settings.hy2_traffic_url, timeout=aiohttp.ClientTimeout(total=3)) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    return {"online": len(data)}
+        import aiofiles
+        async with aiofiles.open("/data/hy2_online") as f:
+            val = (await f.read()).strip()
+            return {"online": max(0, int(val))}
     except Exception:
         pass
     return {"online": 0}
