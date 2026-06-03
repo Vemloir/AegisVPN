@@ -261,29 +261,32 @@ if [ "$XRAY_RUN_MODE" = "internal" ]; then
             echo "Starting Xray..."
             set +e
             xray run -c "$XRAY_CONFIG"
-            EXIT_CODE=$?
             set -e
-            echo "Xray exited with code $EXIT_CODE, restarting in 1s..."
+            echo "Xray exited, restarting in 1s..."
+            sleep 1
+        done
+    }
+
+    run_uvicorn_loop() {
+        while true; do
+            echo "Starting Agent API..."
+            set +e
+            uvicorn app.main:app --host 0.0.0.0 --port 8444
+            set -e
+            echo "uvicorn exited, restarting in 1s..."
             sleep 1
         done
     }
 
     run_xray_loop &
     XRAY_LOOP_PID=$!
+    run_uvicorn_loop &
+    API_LOOP_PID=$!
 
-    echo "Starting Agent API..."
-    uvicorn app.main:app --host 0.0.0.0 --port 8444 &
-    API_PID=$!
+    trap 'kill "$XRAY_LOOP_PID" "$API_LOOP_PID" 2>/dev/null; pkill -TERM xray uvicorn 2>/dev/null; exit 0' INT TERM
 
-    trap 'kill $API_PID $XRAY_LOOP_PID 2>/dev/null || true; pkill -TERM xray 2>/dev/null || true' INT TERM
-
-    wait "$API_PID"
-    API_EXIT_CODE=$?
-
-    kill "$XRAY_LOOP_PID" 2>/dev/null || true
-    pkill -TERM xray 2>/dev/null || true
-    wait "$XRAY_LOOP_PID" 2>/dev/null || true
-    exit "$API_EXIT_CODE"
+    # Wait indefinitely; SIGTERM from docker stop will trigger the trap.
+    while true; do sleep 60; done
 fi
 
 pkill -HUP xray || true
