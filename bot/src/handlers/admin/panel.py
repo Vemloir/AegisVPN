@@ -4,6 +4,7 @@ import asyncio
 from datetime import UTC, datetime
 
 from aiogram import F, Router, html
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
@@ -67,7 +68,10 @@ async def cq_admin_stats(call: CallbackQuery):
         f"Забаненных: {stats.banned_users}"
         f"{nodes_text}"
     )
-    await call.message.edit_text(text, parse_mode="HTML", reply_markup=admin_stats_keyboard())  # type: ignore
+    try:
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=admin_stats_keyboard())  # type: ignore
+    except TelegramBadRequest:
+        pass
     await call.answer()
 
 
