@@ -54,6 +54,10 @@
         "clients": [],
         "decryption": "none"
       },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls"]
+      },
       "streamSettings": {
         "network": "tcp",
         "security": "reality",
@@ -97,6 +101,11 @@
         "protocol": [
           "bittorrent"
         ],
+        "outboundTag": "block"
+      },
+      {
+        "type": "field",
+        "port": "25",
         "outboundTag": "block"
       },
       {

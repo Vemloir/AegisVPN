@@ -167,6 +167,8 @@ def build_inbound(port: int, transport: str, tag: str) -> dict:
     else:
         stream.pop("xhttpSettings", None)
 
+    inbound["sniffing"] = {"enabled": True, "destOverride": ["http", "tls"]}
+
     return inbound
 
 

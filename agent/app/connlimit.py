@@ -11,6 +11,10 @@ import json
 from .config import settings
 from .xray import api_server, run_xray_api
 
+# Whether any IPs were blocked in the previous cycle. Used to avoid
+# calling sib (which reads stdin and spams errors) when there's nothing to do.
+_prev_had_excess: bool = False
+
 
 async def online_users() -> list[str]:
     """Emails of users with at least one live session right now."""
@@ -48,6 +52,7 @@ async def enforce_conn_limit_once() -> int:
     rebuilt every cycle with `sib -reset`, so an IP that stops being excess is
     automatically unblocked next cycle. Returns the count of blocked IPs.
     """
+    global _prev_had_excess
     limit = settings.conn_limit
     if limit <= 0:
         return 0
@@ -60,6 +65,11 @@ async def enforce_conn_limit_once() -> int:
         ordered = sorted(ips.items(), key=lambda kv: kv[1], reverse=True)
         excess.extend(ip for ip, _ in ordered[limit:])
 
+    # Skip sib entirely when nothing was blocked and nothing needs clearing —
+    # calling sib with no IPs causes xray to read from stdin and log errors.
+    if not excess and not _prev_had_excess:
+        return 0
+
     # rebuild the conn-limit block rule with the full current overflow set
     args = ["sib", f"--server={api_server()}", "-outbound=block", "-ruletag=conn-limit", "-reset", *excess]
     rc, out = await run_xray_api(args)
@@ -67,6 +77,8 @@ async def enforce_conn_limit_once() -> int:
         print(f"sib failed: {out.strip()}")
     elif excess:
         print(f"conn-limit: blocked {len(excess)} excess IP(s): {excess}")
+
+    _prev_had_excess = bool(excess)
     return len(excess)
 
 
