@@ -1,7 +1,7 @@
 import asyncio
-import gzip
-import shutil
+import json
 import sqlite3
+import tarfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -197,38 +197,74 @@ async def poll_traffic():
             await session.commit()
 
 
-def _make_sqlite_backup() -> Path | None:
-    """Consistent gzip snapshot of the SQLite DB via the online backup API
-    (does not block or corrupt while the bot writes). Returns the .gz path."""
+def _make_full_backup() -> Path | None:
+    """Create AegisVPN-BACKUP-DD.MM.YYYY-HH:MM.tar.gz containing:
+      - aegis.db  (consistent SQLite snapshot via online backup API)
+      - agent.env (Finland Reality keys + agent token)
+      - bot.env   (bot token, admin IDs and other critical settings)
+    Returns the archive path, or None if the DB is not SQLite."""
     if not settings.db_url.startswith("sqlite+aiosqlite"):
-        return None  # postgres handled separately if ever used
+        return None
+
     src = settings.sqlite_path
     if not Path(src).exists():
         logger.warning("backup: db file %s missing", src)
         return None
+
     out_dir = Path("/data/backups")
     out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-    snap = out_dir / f"aegis-{stamp}.db"
-    gz = out_dir / f"aegis-{stamp}.db.gz"
 
-    # consistent snapshot
-    dst = sqlite3.connect(snap)
+    stamp = datetime.now(UTC).strftime("%d.%m.%Y-%H:%M")
+    archive = out_dir / f"AegisVPN-BACKUP-{stamp}.tar.gz"
+    db_snap = out_dir / "_aegis_snap.db"
+    bot_env_tmp = out_dir / "_bot.env"
+
+    # 1. Consistent DB snapshot
+    dst = sqlite3.connect(db_snap)
     try:
         with sqlite3.connect(f"file:{src}?mode=ro", uri=True) as live:
             live.backup(dst)
     finally:
         dst.close()
 
-    with open(snap, "rb") as f_in, gzip.open(gz, "wb") as f_out:
-        shutil.copyfileobj(f_in, f_out)
-    snap.unlink(missing_ok=True)
+    # 2. Reconstruct bot.env from live settings
+    lines = [
+        f"BOT_TOKEN={settings.bot_token.get_secret_value()}",
+        f"ADMIN_IDS={json.dumps(settings.admin_ids)}",
+    ]
+    for key, val in [
+        ("BOT_DOMAIN", settings.bot_domain),
+        ("PUBLIC_BASE_URL", settings.public_base_url),
+        ("SUBSCRIPTION_PUBLIC_BASE_URL", settings.subscription_public_base_url),
+        ("BOT_PUBLIC_URL", settings.bot_public_url),
+        ("TELEGRAM_MODE", settings.telegram_mode),
+        ("WEBAPP_PORT", settings.webapp_port),
+        ("SITE_TITLE", settings.site_title),
+        ("SUBSCRIPTION_TITLE", settings.subscription_title),
+    ]:
+        if val is not None:
+            lines.append(f"{key}={val}")
+    bot_env_tmp.write_text("\n".join(lines) + "\n")
 
-    # rotate local copies
-    backups = sorted(out_dir.glob("aegis-*.db.gz"))
+    # 3. Pack everything
+    agent_env = Path(settings.bootstrap_server_agent_env)  # /vpn-data/agent.env
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(db_snap, arcname="aegis.db")
+        tar.add(bot_env_tmp, arcname="bot.env")
+        if agent_env.exists():
+            tar.add(agent_env, arcname="agent.env")
+        else:
+            logger.warning("backup: agent.env not found at %s", agent_env)
+
+    db_snap.unlink(missing_ok=True)
+    bot_env_tmp.unlink(missing_ok=True)
+
+    # Rotate local copies
+    backups = sorted(out_dir.glob("AegisVPN-BACKUP-*.tar.gz"))
     for old in backups[: max(0, len(backups) - settings.backup_keep)]:
         old.unlink(missing_ok=True)
-    return gz
+
+    return archive
 
 
 # message_id of the last backup document sent to each admin (for editing in place)
@@ -241,7 +277,7 @@ async def send_backup_to_admins(bot: Bot):
         return
     logger.info("Running task: send_backup_to_admins")
     try:
-        gz = await asyncio.to_thread(_make_sqlite_backup)
+        gz = await asyncio.to_thread(_make_full_backup)
     except Exception as exc:
         logger.error("backup failed: %s", exc)
         return
@@ -287,7 +323,7 @@ async def backup_database(bot: Bot):
         return
     logger.info("Running task: backup_database")
     try:
-        gz = await asyncio.to_thread(_make_sqlite_backup)
+        gz = await asyncio.to_thread(_make_full_backup)
     except Exception as exc:
         logger.error("backup failed: %s", exc)
         for admin_id in settings.admin_ids:

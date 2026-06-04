@@ -80,21 +80,21 @@ async def cq_admin_download_db(call: CallbackQuery):
     if not is_admin(call.from_user.id):
         await call.answer("Доступ запрещён", show_alert=True)
         return
-    await call.answer("Готовлю снапшот…")
-    from src.scheduler.tasks import _make_sqlite_backup
+    await call.answer("Готовлю бекапп…")
+    from src.scheduler.tasks import _make_full_backup
 
     try:
-        gz = await asyncio.to_thread(_make_sqlite_backup)
+        archive = await asyncio.to_thread(_make_full_backup)
     except Exception as exc:
         await call.message.answer(f"Не удалось сделать бэкап: {exc}")  # type: ignore
         return
-    if gz is None:
+    if archive is None:
         await call.message.answer("Бэкап недоступен (БД не SQLite или файл отсутствует).")  # type: ignore
         return
-    data = gz.read_bytes()
+    data = archive.read_bytes()
     await call.message.answer_document(  # type: ignore
-        BufferedInputFile(data, filename=gz.name),
-        caption=f"Снапшот БД {datetime.now(UTC):%Y-%m-%d %H:%M} UTC ({len(data) // 1024} KiB)",
+        BufferedInputFile(data, filename=archive.name),
+        caption=f"Бекапп {datetime.now(UTC):%d.%m.%Y %H:%M} UTC ({len(data) // 1024} KiB)",
     )
 
 
