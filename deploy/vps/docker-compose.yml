@@ -27,8 +27,6 @@ services:
       - ./bot.env
     network_mode: host
     logging: *default-logging
-    depends_on:
-      - vpn
     volumes:
       - ./data/bot:/data
       - ./data/vpn:/vpn-data:ro
@@ -39,8 +37,6 @@ services:
     restart: unless-stopped
     network_mode: host
     logging: *default-logging
-    depends_on:
-      - bot
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./data/caddy:/data
