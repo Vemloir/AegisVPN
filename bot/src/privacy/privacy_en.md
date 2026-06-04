@@ -5,7 +5,8 @@ By using this bot and the AegisVPN service you agree to this policy.
 <b>1. What we store</b>
 • your Telegram ID and username — to link a subscription to your account;
 • subscription history (expiry, plan);
-• payment history via Telegram Stars (charge id, amount).
+• payment history via Telegram Stars (charge id, amount);
+• aggregated traffic statistics — the total volume of inbound and outbound data on your subscription (in bytes). We do not know what specific traffic was transmitted.
 
 <b>2. What we do NOT collect</b>
 We follow a no-logs policy. We do NOT record or store:
@@ -16,13 +17,13 @@ We follow a no-logs policy. We do NOT record or store:
 Connection logging is disabled on the servers.
 
 <b>3. Why we need this data</b>
-Solely to run the service: issuing and renewing subscriptions, support, and payment processing.
+Solely to run the service: issuing and renewing subscriptions, displaying statistics, support, and payment processing.
 
 <b>4. Sharing with third parties</b>
 We do not sell or share your data. The only exception is Telegram's payment infrastructure (Stars), required to process payments.
 
 <b>5. Routing to AI services</b>
-Some AI services (e.g. Google Gemini, OpenAI) block access from data centers. To keep them working, traffic to those services' domains ONLY is routed through Cloudflare WARP; all other traffic goes directly through our own servers. For those domains the exit node is Cloudflare's infrastructure, which is governed by Cloudflare's privacy policy.
+Some AI services (in particular Google Gemini) block access from data centers. To keep them working, traffic to Google Gemini domains ONLY is routed through Cloudflare WARP; all other traffic goes directly through our own servers. For those domains the exit node is Cloudflare's infrastructure, which is governed by Cloudflare's privacy policy.
 
 <b>6. Open source</b>
 The server and bot code is open source (MIT license) and published on GitHub: github.com/demented484/AegisVPN. You can verify for yourself how the service works and that we genuinely keep no logs.

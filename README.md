@@ -1,5 +1,7 @@
 # Aegis VPN
 
+**Telegram bot:** [@AegisEcoVPN_bot](https://t.me/AegisEcoVPN_bot)
+
 Aegis VPN is a Telegram bot for selling and managing VPN subscriptions backed by Xray (`VLESS + Reality`) on one or more VPS nodes.
 
 The project now uses a split architecture:
@@ -239,10 +241,11 @@ python deploy/vps/add_server.py \
   --main-password YOUR_MAIN_ROOT_PASSWORD \
   --new-host NEW_SERVER_IP \
   --new-password YOUR_NEW_ROOT_PASSWORD \
-  --server-name Germany \
-  --server-flag 🇩🇪 \
+  --server-name "🇩🇪 Germany" \
   --server-domain de.1-2-3-4.sslip.io
 ```
+
+The flag emoji prefix in `--server-name` is parsed automatically.
 
 ## Local Notes
 
