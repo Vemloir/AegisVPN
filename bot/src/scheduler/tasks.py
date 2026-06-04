@@ -307,7 +307,7 @@ async def backup_database(bot: Bot):
 # down edge and once on recovery — not every cycle.
 _down_servers: set[int] = set()
 _fail_counts: dict[int, int] = {}
-HEALTH_FAIL_THRESHOLD = 2  # at the 5-min job interval → ~10 min before alerting
+HEALTH_FAIL_THRESHOLD = 2  # 1-min interval + immediate retry → alert in ~2 min
 
 
 async def _alert_admins(bot: Bot, text: str) -> None:
@@ -319,10 +319,7 @@ async def _alert_admins(bot: Bot, text: str) -> None:
 
 
 async def _probe_xray_port(host: str, port: int, timeout: float = 4.0) -> bool:
-    """True iff a TCP connection to the node's VLESS port completes. The agent
-    API (:8444) answering doesn't prove xray (the port users connect to) is
-    actually serving — so a closed VLESS port means the node is down for users
-    even while the agent is alive. We check both."""
+    """True iff a TCP connection to the node's VLESS port completes."""
     try:
         fut = asyncio.open_connection(host, port)
         _, writer = await asyncio.wait_for(fut, timeout=timeout)
@@ -336,6 +333,28 @@ async def _probe_xray_port(host: str, port: int, timeout: float = 4.0) -> bool:
         return False
 
 
+async def _check_one(server: Server) -> tuple[bool, str, int | None]:
+    """Return (ok, reason, clients) for a single server."""
+    client = AgentClient(server.agent_url, server.agent_token)
+    agent_ok = False
+    clients = None
+    reason = ""
+    try:
+        health = await client.get_health()
+        agent_ok = health.get("status") == "ok"
+        clients = health.get("clients")
+        if not agent_ok:
+            reason = f"agent status={health.get('status')!r}"
+    except Exception as exc:
+        reason = f"agent unreachable ({type(exc).__name__})"
+
+    xray_ok = await _probe_xray_port(server.host, server.port)
+    if not xray_ok:
+        reason = (reason + "; " if reason else "") + f"xray port {server.port} closed"
+
+    return agent_ok and xray_ok, reason, clients
+
+
 async def check_servers_health(bot: Bot):
     logger.info("Running task: check_servers_health")
     async with async_session_maker() as session:
@@ -343,23 +362,13 @@ async def check_servers_health(bot: Bot):
         servers = result.scalars().all()
 
     for server in servers:
-        client = AgentClient(server.agent_url, server.agent_token)
-        agent_ok = False
-        clients = None
-        reason = ""
-        try:
-            health = await client.get_health()
-            agent_ok = health.get("status") == "ok"
-            clients = health.get("clients")
-            if not agent_ok:
-                reason = f"agent status={health.get('status')!r}"
-        except Exception as exc:
-            reason = f"agent unreachable ({type(exc).__name__})"
+        ok, reason, clients = await _check_one(server)
 
-        xray_ok = await _probe_xray_port(server.host, server.port)
-        if not xray_ok:
-            reason = (reason + "; " if reason else "") + f"xray port {server.port} closed"
-        ok = agent_ok and xray_ok
+        # On first failure do an immediate retry after a short pause to avoid
+        # alerting on transient blips (brief network hiccup, sshd rate-limit).
+        if not ok:
+            await asyncio.sleep(3)
+            ok, reason, clients = await _check_one(server)
 
         was_down = server.id in _down_servers
         if ok:
@@ -374,8 +383,6 @@ async def check_servers_health(bot: Bot):
                 )
             continue
 
-        # Failing this cycle — bump the streak, alert only once we cross the
-        # threshold (and haven't alerted already).
         fails = _fail_counts.get(server.id, 0) + 1
         _fail_counts[server.id] = fails
         logger.warning(
