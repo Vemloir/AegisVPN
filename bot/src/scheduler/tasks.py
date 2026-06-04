@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from aiogram import Bot
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaDocument
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
@@ -229,6 +229,52 @@ def _make_sqlite_backup() -> Path | None:
     for old in backups[: max(0, len(backups) - settings.backup_keep)]:
         old.unlink(missing_ok=True)
     return gz
+
+
+# message_id of the last backup document sent to each admin (for editing in place)
+_backup_msg_ids: dict[int, int] = {}
+
+
+async def send_backup_to_admins(bot: Bot):
+    """Hourly: send (or silently edit in place) a backup document to every admin."""
+    if not settings.backup_enabled:
+        return
+    logger.info("Running task: send_backup_to_admins")
+    try:
+        gz = await asyncio.to_thread(_make_sqlite_backup)
+    except Exception as exc:
+        logger.error("backup failed: %s", exc)
+        return
+    if gz is None:
+        return
+
+    data = gz.read_bytes()
+    caption = f"Бекапп БД {datetime.now(UTC):%Y-%m-%d %H:%M} UTC ({len(data) // 1024} KiB)"
+
+    for admin_id in settings.admin_ids:
+        try:
+            existing_id = _backup_msg_ids.get(admin_id)
+            if existing_id:
+                try:
+                    await bot.edit_message_media(
+                        chat_id=admin_id,
+                        message_id=existing_id,
+                        media=InputMediaDocument(
+                            media=BufferedInputFile(data, filename=gz.name),
+                            caption=caption,
+                        ),
+                    )
+                    continue
+                except Exception:
+                    pass  # message too old or deleted — fall through to send new
+            msg = await bot.send_document(
+                admin_id,
+                BufferedInputFile(data, filename=gz.name),
+                caption=caption,
+            )
+            _backup_msg_ids[admin_id] = msg.message_id
+        except Exception as exc:
+            logger.error("backup send to admin %s failed: %s", admin_id, exc)
 
 
 async def backup_database(bot: Bot):

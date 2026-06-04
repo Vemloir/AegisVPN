@@ -10,6 +10,7 @@ from .tasks import (
     poll_traffic,
     remind_expiring_subscriptions,
     retry_unsynced_servers,
+    send_backup_to_admins,
 )
 
 
@@ -22,5 +23,6 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     scheduler.add_job(check_servers_health, "interval", minutes=5, args=[bot])
     scheduler.add_job(poll_traffic, "interval", minutes=2)
     scheduler.add_job(backup_database, "cron", hour=settings.backup_hour, args=[bot])
+    scheduler.add_job(send_backup_to_admins, "interval", hours=1, args=[bot])
 
     return scheduler

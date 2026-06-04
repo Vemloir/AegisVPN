@@ -16,7 +16,7 @@ def admin_panel_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Тарифы", callback_data="admin_plans")],
             [InlineKeyboardButton(text="Пользователи", callback_data="admin_users")],
             [InlineKeyboardButton(text="Продлить всем активным", callback_data="admin_bulk_extend_active_start")],
-            [InlineKeyboardButton(text="Скачать базу данных", callback_data="admin_download_db")],
+            [InlineKeyboardButton(text="Скачать бекапп", callback_data="admin_download_db")],
         ]
     )
 
