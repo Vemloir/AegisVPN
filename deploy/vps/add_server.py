@@ -52,13 +52,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--main-password", required=True)
     p.add_argument("--new-host", required=True, help="Fresh VPS IP/hostname")
     p.add_argument("--new-password", required=True)
-    p.add_argument("--server-name", required=True, help="Display name, e.g. 'Netherlands | Amsterdam'")
-    p.add_argument("--server-flag", required=True, help="Real emoji flag — pass via shell quoting, NOT json.dumps")
-    p.add_argument("--server-domain", required=True, help="Hostname the client connects to, e.g. nl.139-28-240-197.sslip.io")
+    p.add_argument("--server-name", required=True,
+                   help="Display name with flag emoji at the start, e.g. '🇯🇵 Japan | Tokyo'")
+    p.add_argument("--server-domain", required=True,
+                   help="IP/hostname the client connects to (use bare IP, not sslip.io)")
     p.add_argument("--agent-url", help="Defaults to http://<new-host>:8444")
     p.add_argument("--xray-port", default="443")
     p.add_argument("--reality-dest", default="gateway.icloud.com:443")
     p.add_argument("--reality-server-name", default="gateway.icloud.com")
+    p.add_argument("--xray-network", default="xhttp", choices=["xhttp", "tcp"],
+                   help="Transport protocol for the primary inbound (default: xhttp)")
     p.add_argument("--no-warp", action="store_true",
                    help="Skip registering a per-location Cloudflare WARP account "
                         "(by default each node gets its own, used to route AI "
@@ -302,6 +305,7 @@ XRAY_RUN_MODE=internal
 XRAY_CONFIG_PATH=/data/xray-config.json
 XRAY_PORT={args.xray_port}
 XRAY_TCP_PORT=0
+XRAY_NETWORK={args.xray_network}
 REALITY_DEST={args.reality_dest}
 REALITY_SERVER_NAME={args.reality_server_name}
 HOST_IP={args.server_domain}
@@ -328,25 +332,35 @@ def parse_env(content: str) -> dict[str, str]:
     return values
 
 
-def pick_reality_keys(env: dict[str, str], xray_tcp_port: str = "0") -> tuple[str, str]:
+def pick_reality_keys(env: dict[str, str], xray_network: str = "xhttp") -> tuple[str, str]:
     """Agent generates TWO Reality keypairs: PUBLIC_KEY/SHORT_ID for the
-    XHTTP inbound and *_TCP for the TCP inbound. Which one ends up on
-    XRAY_PORT depends on XRAY_TCP_PORT:
-      - XRAY_TCP_PORT=0 (our default): only the TCP inbound is active and
-        bound to XRAY_PORT — so the bot must hand out *_TCP keys.
-      - XRAY_TCP_PORT>0: XHTTP on XRAY_PORT + TCP on XRAY_TCP_PORT — bot
-        uses the non-TCP keys for the XHTTP inbound on XRAY_PORT.
-    Previously we always read PUBLIC_KEY which gave wrong-pbk handshakes
-    in the default layout — see deploy-add-server memory note #10."""
-    tcp_active = str(xray_tcp_port).strip() in ("", "0")
-    if tcp_active:
+    XHTTP inbound and *_TCP for the TCP inbound. Pick the right one based
+    on which transport is active on XRAY_PORT."""
+    if xray_network == "tcp":
         pk = env.get("PUBLIC_KEY_TCP") or env.get("PUBLIC_KEY")
         sid = env.get("SHORT_ID_TCP") or env.get("SHORT_ID")
-    else:
-        pk, sid = env.get("PUBLIC_KEY"), env.get("SHORT_ID")
+    else:  # xhttp
+        pk = env.get("PUBLIC_KEY") or env.get("PUBLIC_KEY_TCP")
+        sid = env.get("SHORT_ID") or env.get("SHORT_ID_TCP")
     if not pk or not sid:
-        raise SystemExit(f"agent.env missing Reality keys (tcp_active={tcp_active})")
+        raise SystemExit(f"agent.env missing Reality keys (network={xray_network})")
     return pk, sid
+
+
+# --- name/flag parsing -----------------------------------------------------
+
+def split_flag(name: str) -> tuple[str, str]:
+    """Split a leading country-flag emoji from the server name.
+
+    Country flags are two consecutive Regional Indicator letters (U+1F1E6–U+1F1FF).
+    Returns (flag, display_name) — e.g. ('🇯🇵', 'Japan | Tokyo').
+    If no flag is found the flag is empty and name is returned as-is."""
+    s = name.strip()
+    if (len(s) >= 2
+            and 0x1F1E6 <= ord(s[0]) <= 0x1F1FF
+            and 0x1F1E6 <= ord(s[1]) <= 0x1F1FF):
+        return s[:2], s[2:].lstrip()
+    return "", s
 
 
 # --- env exporting ---------------------------------------------------------
@@ -362,6 +376,7 @@ def shell_quote(s: str) -> str:
 
 def main() -> int:
     args = parse_args()
+    server_flag, server_name = split_flag(args.server_name)
     agent_url = args.agent_url or f"http://{args.new_host}:8444"
 
     if not MAIN_REGISTER_SCRIPT.exists():
@@ -397,7 +412,7 @@ def main() -> int:
 
         out = run_or_die(new_client, "cat /root/aegis/deploy/vps/data/vpn/agent.env", "read agent.env")
         remote_env = parse_env(out)
-        public_key, short_id = pick_reality_keys(remote_env, xray_tcp_port="0")
+        public_key, short_id = pick_reality_keys(remote_env, xray_network=args.xray_network)
         agent_token = remote_env.get("AGENT_TOKEN")
         if not agent_token:
             raise SystemExit("agent.env missing AGENT_TOKEN")
@@ -418,8 +433,8 @@ def main() -> int:
         # All env values shell-quoted so emoji flags / spaces in names work
         # unchanged in the DB (no json.dumps escapes).
         register_command = (
-            f"SERVER_NAME={shell_quote(args.server_name)} "
-            f"SERVER_FLAG={shell_quote(args.server_flag)} "
+            f"SERVER_NAME={shell_quote(server_name)} "
+            f"SERVER_FLAG={shell_quote(server_flag)} "
             f"SERVER_HOST={shell_quote(args.server_domain)} "
             f"SERVER_PORT={shell_quote(args.xray_port)} "
             f"PUBLIC_KEY={shell_quote(public_key)} "
@@ -478,7 +493,7 @@ def main() -> int:
         except Exception: pass
 
     print("\n✓ Done.")
-    print(f"   Name: {args.server_flag} {args.server_name}")
+    print(f"   Name: {server_flag} {server_name}")
     print(f"   Host: {args.server_domain}:{args.xray_port}")
     print(f"   Agent URL: {agent_url}")
     print(f"   Server ID in bot DB: {server_id}")
