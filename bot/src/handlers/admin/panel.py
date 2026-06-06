@@ -11,7 +11,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from src.services.admin_service import AdminService
 
-from .common import is_admin
+from .common import fmt_bytes, is_admin
 from .keyboards import (
     admin_back_keyboard,
     admin_panel_keyboard,
@@ -61,12 +61,21 @@ async def cq_admin_stats(call: CallbackQuery):
             value = str(count) if count >= 0 else "н/д"
             lines.append(f"  {label}: {value}")
         nodes_text = "\n\nОнлайн по нодам:\n" + "\n".join(lines)
+    traffic_text = ""
+    if stats.traffic_per_server:
+        lines = []
+        for flag, name, up, down in stats.traffic_per_server:
+            label = f"{flag} {name}" if flag else name
+            lines.append(f"  {label}: ↑ {fmt_bytes(up)} / ↓ {fmt_bytes(down)}")
+        lines.append(f"  Всего: ↑ {fmt_bytes(stats.traffic_total_up)} / ↓ {fmt_bytes(stats.traffic_total_down)}")
+        traffic_text = "\n\nТрафик по локациям:\n" + "\n".join(lines)
     text = (
         f"{html.bold('Статистика')}\n\n"
         f"Пользователей: {stats.users}\n"
         f"Активных подписок: {stats.active_subscriptions}\n"
         f"Забаненных: {stats.banned_users}"
         f"{nodes_text}"
+        f"{traffic_text}"
     )
     try:
         await call.message.edit_text(text, parse_mode="HTML", reply_markup=admin_stats_keyboard())  # type: ignore

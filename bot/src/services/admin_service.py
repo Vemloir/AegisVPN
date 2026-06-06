@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 
 from src.core.database import async_session_maker
-from src.models import Server, Subscription, User
+from src.models import Server, Subscription, SubscriptionServer, User
 from src.services.agent_client import AgentClient
 from src.services.server_access_service import ServerAccessService
 from src.services.subscription_service import SubscriptionService
@@ -25,6 +25,10 @@ class AdminStats:
     active_subscriptions: int
     banned_users: int
     nodes_online: list[tuple[str, str, int]] = field(default_factory=list)
+    # (flag, name, up_bytes, down_bytes) sorted by name; includes inactive servers with traffic
+    traffic_per_server: list[tuple[str, str, int, int]] = field(default_factory=list)
+    traffic_total_up: int = 0
+    traffic_total_down: int = 0
 
 
 class AdminService:
@@ -47,6 +51,31 @@ class AdminService:
             all_servers = (
                 await session.execute(select(Server).where(Server.is_active == True))  # noqa: E712
             ).scalars().all()
+
+            # Per-server traffic totals (all servers, including inactive ones with data)
+            traffic_rows = (
+                await session.execute(
+                    select(
+                        Server.id,
+                        Server.flag,
+                        Server.name,
+                        func.coalesce(func.sum(SubscriptionServer.traffic_up_bytes), 0).label("up"),
+                        func.coalesce(func.sum(SubscriptionServer.traffic_down_bytes), 0).label("down"),
+                    )
+                    .join(SubscriptionServer, SubscriptionServer.server_id == Server.id, isouter=True)
+                    .group_by(Server.id)
+                    .having(
+                        func.coalesce(func.sum(SubscriptionServer.traffic_up_bytes), 0)
+                        + func.coalesce(func.sum(SubscriptionServer.traffic_down_bytes), 0)
+                        > 0
+                    )
+                    .order_by(Server.name)
+                )
+            ).all()
+
+        traffic_per_server = [(r.flag or "", r.name, int(r.up), int(r.down)) for r in traffic_rows]
+        traffic_total_up = sum(r[2] for r in traffic_per_server)
+        traffic_total_down = sum(r[3] for r in traffic_per_server)
 
         xray_servers = [s for s in all_servers if not s.static_uri]
         static_servers = [s for s in all_servers if s.static_uri]
@@ -74,7 +103,7 @@ class AdminService:
         hy2_results = [r for r in await asyncio.gather(*(fetch_hy2_online(s) for s in static_servers)) if r]
         nodes_online = sorted(xray_results + hy2_results, key=lambda x: x[1])
 
-        return AdminStats(users_count, active_subs, banned_users, nodes_online)
+        return AdminStats(users_count, active_subs, banned_users, nodes_online, traffic_per_server, traffic_total_up, traffic_total_down)
 
     @staticmethod
     async def count_active_non_lifetime_subscriptions() -> int:
