@@ -310,6 +310,9 @@ REALITY_DEST={args.reality_dest}
 REALITY_SERVER_NAME={args.reality_server_name}
 HOST_IP={args.server_domain}
 EOF
+# Reset client state so re-provisioned nodes don't get duplicate clients
+rm -f /root/aegis/deploy/vps/data/vpn/client_map.json
+rm -f /root/aegis/deploy/vps/data/vpn/xray-config.json
 cd /root/aegis/deploy/vps
 docker compose up -d --build vpn 2>&1 | tail -3
 # Entrypoint generates agent.env on first run; wait until it exists.
