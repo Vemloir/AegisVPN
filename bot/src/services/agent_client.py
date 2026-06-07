@@ -92,6 +92,25 @@ class AgentClient:
             pass
         return 0
 
+    async def get_online_emails(self) -> set[str] | None:
+        """Emails with at least one live session on this node right now.
+
+        Returns ``None`` when the node can't answer (old agent without the
+        endpoint, or a transient error) so the caller can fall back; returns an
+        empty set when the node is reachable but nobody is online.
+        """
+        try:
+            async with get_session().get(
+                f"{self.base_url}/online-emails",
+                headers=self.headers,
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as resp:
+                if resp.status == 200:
+                    return set((await resp.json()).get("emails") or [])
+        except Exception:
+            return None
+        return None
+
     @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=1, max=4))
     async def get_stats(self) -> dict[str, dict[str, int]]:
         """Per-email traffic counters from the node's Xray.

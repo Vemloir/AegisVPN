@@ -22,6 +22,7 @@ from .xray import (
     config_lock,
     find_vless_inbound,
     get_online_count,
+    get_online_emails,
     get_xray_config,
     list_vless_inbounds,
     query_traffic_stats,
@@ -57,6 +58,16 @@ async def health():
 @app.get("/online", dependencies=[Depends(verify_token)])
 async def online():
     return {"online": await get_online_count()}
+
+
+@app.get("/online-emails", dependencies=[Depends(verify_token)])
+async def online_emails():
+    """Emails with at least one live session right now (authoritative online state).
+
+    The bot maps these to per-device emails (user_X_sub_Y_dev_Z) to show, exactly,
+    which device is connected and to which node — no traffic-delta guessing.
+    """
+    return {"emails": await get_online_emails()}
 
 
 @app.get("/hy2-online", dependencies=[Depends(verify_token)])

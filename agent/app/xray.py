@@ -186,8 +186,40 @@ async def xray_api_remove(tag: str, email: str) -> bool:
     return ok
 
 
-async def get_online_count() -> int:
-    """Number of users with active sessions right now (xray statsgetallonlineusers)."""
+def _parse_online_users(raw: bytes) -> list[str]:
+    """Extract the list of online user emails from `statsgetallonlineusers` output.
+
+    Xray reports `{"users": {<email>: <ip-list-or-count>, ...}}`. We only need the
+    keys (the emails with at least one live session). We also tolerate a list shape
+    (of plain emails or `{"email": ...}` records) across Xray versions.
+    """
+    try:
+        data = json.loads(raw.decode("utf-8") or "{}")
+    except (ValueError, TypeError):
+        return []
+    users = data.get("users")
+    if isinstance(users, dict):
+        return [str(k) for k in users.keys()]
+    if isinstance(users, list):
+        emails: list[str] = []
+        for item in users:
+            if isinstance(item, str):
+                emails.append(item)
+            elif isinstance(item, dict):
+                email = item.get("email") or item.get("user") or item.get("name")
+                if email:
+                    emails.append(str(email))
+        return emails
+    return []
+
+
+async def get_online_emails() -> list[str]:
+    """Emails of users with at least one active session right now.
+
+    Authoritative live state from Xray's online stats (requires
+    `statsUserOnline: true` in policy). Used by the bot to decide, per device,
+    whether it is connected — no traffic-delta guessing.
+    """
     try:
         proc = await asyncio.create_subprocess_exec(
             "xray", "api", "statsgetallonlineusers", f"--server={api_server()}",
@@ -196,12 +228,13 @@ async def get_online_count() -> int:
         )
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
     except (TimeoutError, Exception):
-        return 0
-    try:
-        data = json.loads(out.decode("utf-8") or "{}")
-        return len(data.get("users") or [])
-    except (ValueError, TypeError):
-        return 0
+        return []
+    return _parse_online_users(out)
+
+
+async def get_online_count() -> int:
+    """Number of users with active sessions right now (xray statsgetallonlineusers)."""
+    return len(await get_online_emails())
 
 
 async def query_traffic_stats() -> dict[str, dict[str, int]]:

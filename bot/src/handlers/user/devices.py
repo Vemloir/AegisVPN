@@ -77,40 +77,41 @@ def _fmt_bytes(b: int) -> str:
     return f"{b:.1f} PB"
 
 
-async def _live_check_subscription_email(session, sub: Subscription) -> "Server | None":
-    """Query all synced nodes for the legacy subscription email.
+async def _live_check_device(
+    session, sub: Subscription, device_uuid_email: str, is_primary: bool
+) -> "Server | None":
+    """Ask every synced node, right now, whether this device has a live session.
 
-    Returns the first Server where traffic increased since the last poll (meaning the
-    client is using a cached pre-device-UUID link and is actively connected right now).
+    A node returns the set of emails currently online. We look for the device's own
+    email; for `is_primary` devices we also accept the legacy shared email (clients
+    still on the pre-device UUID). Returns the connected Server, or None.
     """
-    old_email = f"user_{sub.user_id}_sub_{sub.id}"
-    rows = (
+    legacy_email = f"user_{sub.user_id}_sub_{sub.id}"
+    servers = (
         await session.execute(
-            select(SubscriptionServer, Server)
-            .join(Server, SubscriptionServer.server_id == Server.id)
+            select(Server)
+            .join(SubscriptionServer, SubscriptionServer.server_id == Server.id)
             .where(
                 SubscriptionServer.subscription_id == sub.id,
                 SubscriptionServer.is_synced == True,  # noqa: E712
                 Server.is_active == True,  # noqa: E712
             )
         )
-    ).all()
-    if not rows:
+    ).scalars().all()
+    if not servers:
         return None
 
-    async def _check(link: SubscriptionServer, server: Server) -> "Server | None":
-        try:
-            stats = await AgentClient(server.agent_url, server.agent_token).get_stats()
-        except Exception:
+    async def _check(server: Server) -> "Server | None":
+        online = await AgentClient(server.agent_url, server.agent_token).get_online_emails()
+        if not online:
             return None
-        s = stats.get(old_email, {})
-        cur_up = int(s.get("uplink", 0) or 0)
-        cur_down = int(s.get("downlink", 0) or 0)
-        if cur_up > (link.traffic_last_up or 0) or cur_down > (link.traffic_last_down or 0):
+        if device_uuid_email in online:
+            return server
+        if is_primary and legacy_email in online:
             return server
         return None
 
-    results = await asyncio.gather(*(_check(lnk, srv) for lnk, srv in rows))
+    results = await asyncio.gather(*(_check(s) for s in servers))
     return next((s for s in results if s is not None), None)
 
 
@@ -135,9 +136,9 @@ async def _render_device_detail(tg_id: int, language: str, device_id: int) -> tu
                 await session.execute(select(Server).where(Server.id == device.last_server_id))
             ).scalar_one_or_none()
 
-        # Live check: if the device looks offline, query nodes directly for legacy-UUID
-        # traffic (clients that haven't refreshed their subscription link yet).
-        # Only do this for the most recently active device to avoid wrong attribution.
+        # Live check: if the device looks offline, ask the nodes directly (authoritative
+        # online state) instead of waiting for the next poll. The legacy shared email is
+        # only attributed to the most recently active device, to avoid mis-attribution.
         now_live = datetime.now(UTC).replace(tzinfo=None)
         is_stale = not device.is_suspended and (
             device.last_active_at is None
@@ -156,13 +157,14 @@ async def _render_device_detail(tg_id: int, language: str, device_id: int) -> tu
                     .limit(1)
                 )
             ).scalar()
-            if primary_id is None or primary_id == device.id:
-                live_server = await _live_check_subscription_email(session, sub)
-                if live_server is not None:
-                    device.last_active_at = now_live
-                    device.last_server_id = live_server.id
-                    last_server = live_server
-                    await session.commit()
+            device_email = f"user_{sub.user_id}_sub_{sub.id}_dev_{device.id}"
+            is_primary = primary_id is None or primary_id == device.id
+            live_server = await _live_check_device(session, sub, device_email, is_primary)
+            if live_server is not None:
+                device.last_active_at = now_live
+                device.last_server_id = live_server.id
+                last_server = live_server
+                await session.commit()
 
         # Read all scalar attrs inside the session (before it closes / expiry on commit)
         name = device.display_name
