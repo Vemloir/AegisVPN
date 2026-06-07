@@ -1,4 +1,5 @@
 from .base import Base
+from .device import Device
 from .payment import Payment
 from .plan import Plan
 from .referral import Referral
@@ -15,6 +16,7 @@ __all__ = [
     "Plan",
     "Subscription",
     "SubscriptionServer",
+    "Device",
     "Payment",
     "Referral",
 ]

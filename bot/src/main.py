@@ -115,9 +115,29 @@ async def subscription_response(request: web.Request, profile: str) -> web.Respo
     if not sub_token:
         return web.Response(status=400, text="Token missing")
 
+    ua = request.headers.get("User-Agent", "").strip()
+
     async with async_session_maker() as session:
         sub = await SubscriptionService.get_subscription_by_token(session, sub_token)
-        b64_content = await SubscriptionService.get_subscription_vless_links(session, sub_token, profile=profile)
+
+        device_uuid: str | None = None
+        if sub and ua:
+            device = await SubscriptionService.get_or_create_device(session, sub, ua)
+            if device is None:
+                # Device limit reached; return empty subscription so the client
+                # shows "0 locations" rather than an error.
+                await session.commit()
+                return web.Response(
+                    text="",
+                    content_type="text/plain",
+                    headers={"Content-Disposition": f'attachment; filename="{settings.subscription_title}"'},
+                )
+            device_uuid = device.uuid
+            await session.commit()
+
+        b64_content = await SubscriptionService.get_subscription_vless_links(
+            session, sub_token, profile=profile, device_uuid=device_uuid
+        )
 
     if not sub or not b64_content:
         return web.Response(status=404, text="Subscription not found or inactive")

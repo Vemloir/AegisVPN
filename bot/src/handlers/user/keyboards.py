@@ -1,8 +1,11 @@
 """Inline keyboards for the end-user flow."""
 
+from __future__ import annotations
+
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from src.services import t
+from src.services.subscription_service import MAX_DEVICES_PER_SUBSCRIPTION
 
 
 def subscription_keyboard(
@@ -38,11 +41,22 @@ def subscription_detail_keyboard(language: str, kind: str) -> InlineKeyboardMark
     )
 
 
-def settings_keyboard(language: str, has_active_subscription: bool = False) -> InlineKeyboardMarkup:
+def settings_keyboard(
+    language: str,
+    has_active_subscription: bool = False,
+    device_count: int = 0,
+    device_limit: int = MAX_DEVICES_PER_SUBSCRIPTION,
+) -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(text=t(language, "change_language"), callback_data="settings_language")],
     ]
     if has_active_subscription:
+        buttons.append([
+            InlineKeyboardButton(
+                text=t(language, "devices_btn", count=device_count, limit=device_limit),
+                callback_data="devices_open",
+            )
+        ])
         buttons.append([InlineKeyboardButton(text=t(language, "reissue_subscription"), callback_data="reissue_subscription")])
     buttons.append([InlineKeyboardButton(text=t(language, "delete_account"), callback_data="account_delete")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -74,5 +88,28 @@ def language_keyboard(language: str) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="English", callback_data="settings_set_language:en"),
             ],
             [InlineKeyboardButton(text=t(language, "back_to_settings"), callback_data="settings_open")],
+        ]
+    )
+
+
+def devices_list_keyboard(language: str, devices: list) -> InlineKeyboardMarkup:
+    rows = []
+    for device in devices:
+        name = device.display_name[:24] + "…" if len(device.display_name) > 24 else device.display_name
+        rows.append([
+            InlineKeyboardButton(
+                text=t(language, "devices_remove_btn", name=name),
+                callback_data=f"devices_remove:{device.id}",
+            )
+        ])
+    rows.append([InlineKeyboardButton(text=t(language, "back_to_settings"), callback_data="settings_open")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def device_remove_confirm_keyboard(language: str, device_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=t(language, "devices_remove_yes"), callback_data=f"devices_remove_confirm:{device_id}")],
+            [InlineKeyboardButton(text=t(language, "devices_back"), callback_data="devices_open")],
         ]
     )

@@ -3,7 +3,10 @@
 from aiogram import F, Router, html
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
+from sqlalchemy import select
 
+from src.core.database import async_session_maker
+from src.models import Device, Subscription, User
 from src.services import (
     UserService,
     get_user_language,
@@ -11,25 +14,48 @@ from src.services import (
     set_user_language,
     t,
 )
-from src.services.subscription_service import SubscriptionService
+from src.services.subscription_service import MAX_DEVICES_PER_SUBSCRIPTION, SubscriptionService
 
 from .keyboards import delete_account_keyboard, language_keyboard, reissue_subscription_keyboard, settings_keyboard
 
 router = Router()
 
 
-async def render_settings(tg_id: int) -> tuple[str, str, bool]:
+async def _get_device_count(tg_id: int) -> int:
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC).replace(tzinfo=None)
+    async with async_session_maker() as session:
+        user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
+        if not user:
+            return 0
+        sub = (
+            await session.execute(
+                select(Subscription).where(
+                    Subscription.user_id == user.id,
+                    Subscription.is_active == True,  # noqa: E712
+                    Subscription.expires_at > now,
+                )
+            )
+        ).scalar_one_or_none()
+        if not sub:
+            return 0
+        return await SubscriptionService.get_device_count_for_subscription(session, sub.id)
+
+
+async def render_settings(tg_id: int) -> tuple[str, str, bool, int]:
     language = await get_user_language(tg_id)
     has_active = await UserService.has_active_subscription(tg_id)
+    device_count = await _get_device_count(tg_id) if has_active else 0
     text = (
         f"{html.bold(t(language, 'settings_title'))}\n\n"
         f"{t(language, 'settings_language', language_name=language_label(language))}"
     )
-    return text, language, has_active
+    return text, language, has_active, device_count
 
 
 async def render_settings_text(tg_id: int) -> tuple[str, str]:
-    text, language, _ = await render_settings(tg_id)
+    text, language, _, _ = await render_settings(tg_id)
     return text, language
 
 
@@ -39,14 +65,22 @@ async def cmd_settings(message: Message):
         return
 
     await UserService.ensure_user(message.from_user.id, message.from_user.username, message.from_user.language_code)
-    text, language, has_active = await render_settings(message.from_user.id)
-    await message.answer(text, parse_mode="HTML", reply_markup=settings_keyboard(language, has_active))
+    text, language, has_active, device_count = await render_settings(message.from_user.id)
+    await message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=settings_keyboard(language, has_active, device_count, MAX_DEVICES_PER_SUBSCRIPTION),
+    )
 
 
 @router.callback_query(F.data == "settings_open")
 async def cq_settings_open(call: CallbackQuery):
-    text, language, has_active = await render_settings(call.from_user.id)
-    await call.message.edit_text(text, parse_mode="HTML", reply_markup=settings_keyboard(language, has_active))  # type: ignore
+    text, language, has_active, device_count = await render_settings(call.from_user.id)
+    await call.message.edit_text(  # type: ignore
+        text,
+        parse_mode="HTML",
+        reply_markup=settings_keyboard(language, has_active, device_count, MAX_DEVICES_PER_SUBSCRIPTION),
+    )
     await call.answer()
 
 
@@ -124,10 +158,15 @@ async def cq_settings_set_language(call: CallbackQuery):
         return
 
     has_active = await UserService.has_active_subscription(call.from_user.id)
+    device_count = await _get_device_count(call.from_user.id) if has_active else 0
     text = (
         f"{html.bold(t(updated, 'settings_title'))}\n\n"
         f"{t(updated, 'language_updated')}\n"
         f"{t(updated, 'settings_language', language_name=language_label(updated))}"
     )
-    await call.message.edit_text(text, parse_mode="HTML", reply_markup=settings_keyboard(updated, has_active))  # type: ignore
+    await call.message.edit_text(  # type: ignore
+        text,
+        parse_mode="HTML",
+        reply_markup=settings_keyboard(updated, has_active, device_count, MAX_DEVICES_PER_SUBSCRIPTION),
+    )
     await call.answer()

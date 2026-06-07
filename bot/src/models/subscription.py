@@ -7,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base, utcnow
 
 if TYPE_CHECKING:
+    from .device import Device
     from .server import Server
     from .user import User
 
@@ -30,6 +31,9 @@ class Subscription(Base):
 
     user: Mapped["User"] = relationship(back_populates="subscriptions")
     servers: Mapped[list["SubscriptionServer"]] = relationship(
+        back_populates="subscription", cascade="all, delete-orphan"
+    )
+    devices: Mapped[list["Device"]] = relationship(
         back_populates="subscription", cascade="all, delete-orphan"
     )
 

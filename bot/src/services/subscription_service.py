@@ -1,18 +1,27 @@
 import asyncio
 import base64
+import hashlib
+import re
 import secrets
+import uuid as _uuid_mod
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import settings
 from src.core.logger import logger
-from src.models import Server, Subscription, SubscriptionServer
+from src.models import Device, Server, Subscription, SubscriptionServer
 from src.services.agent_client import AgentClient
 from src.services.server_access_service import ServerAccessService
+
+MAX_DEVICES_PER_SUBSCRIPTION = 3
+
+_UA_VERSION_RE = re.compile(r"/[\d.]+")
+_UA_DIGITS_RE = re.compile(r"\b\d[\d.]*\b")
+_UA_PRODUCT_RE = re.compile(r"^([A-Za-z0-9][\w\-.+]*)")
 
 
 class SubscriptionService:
@@ -199,6 +208,7 @@ class SubscriptionService:
         session: AsyncSession,
         sub_token: str,
         profile: str | None = None,
+        device_uuid: str | None = None,
     ) -> str:
         normalized_profile = SubscriptionService.normalize_profile(profile)
         include_all_profiles = profile != SubscriptionService.FAST_PROFILE
@@ -239,6 +249,10 @@ class SubscriptionService:
         server_name_counts = Counter(server.name.strip().casefold() for server in servers if server.name.strip())
         duplicate_name_keys = {name for name, count in server_name_counts.items() if count > 1}
 
+        # device_uuid is used for xray-backed servers; static-URI servers always
+        # use sub.client_uuid (they have their own auth mechanism).
+        effective_uuid = device_uuid or sub.client_uuid
+
         async def fetch_link(server: Server) -> str:
             # Static-URI servers (e.g. a standalone Hysteria2 node) aren't backed
             # by an agent — serve their ready-made URI verbatim, substituting
@@ -256,7 +270,7 @@ class SubscriptionService:
                 else SubscriptionService.SAFE_PROFILE
             )
             try:
-                text = await client.get_subscription(sub.client_uuid, profile=target_profile)
+                text = await client.get_subscription(effective_uuid, profile=target_profile)
                 if text:
                     return SubscriptionService.normalize_vless_uri(
                         text,
@@ -292,6 +306,165 @@ class SubscriptionService:
                 logger.error(f"Failed to remove client {sub.client_uuid} from server {server.id}: {exc}")
 
         await asyncio.gather(*(remove_from_server(server) for server in servers))
+
+    # ------------------------------------------------------------------
+    # Device management
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _detect_platform(ua_lower: str) -> str:
+        if "iphone" in ua_lower or "ipad" in ua_lower or "iphone os" in ua_lower:
+            return "iOS"
+        if "android" in ua_lower:
+            return "Android"
+        if "windows" in ua_lower:
+            return "Windows"
+        if "mac os x" in ua_lower or "macos" in ua_lower:
+            return "macOS"
+        if "linux" in ua_lower:
+            return "Linux"
+        return ""
+
+    @staticmethod
+    def make_device_display_name(ua: str) -> str:
+        # Extract the first product token (app name is always the first word before '/' or space).
+        m = _UA_PRODUCT_RE.match(ua.strip())
+        client = m.group(1) if m else ""
+        platform = SubscriptionService._detect_platform(ua.lower())
+        if client and platform:
+            return f"{platform} · {client}"
+        if client:
+            return client
+        if platform:
+            return platform
+        return "Device"
+
+    @staticmethod
+    def fingerprint_ua(ua: str) -> str:
+        normalized = _UA_VERSION_RE.sub("", ua)
+        normalized = _UA_DIGITS_RE.sub("", normalized)
+        normalized = " ".join(normalized.split())
+        return hashlib.sha256(normalized.encode()).hexdigest()[:32]
+
+    @staticmethod
+    async def get_or_create_device(
+        session: AsyncSession,
+        sub: "Subscription",
+        ua: str,
+        max_devices: int = MAX_DEVICES_PER_SUBSCRIPTION,
+    ) -> "Device | None":
+        fingerprint = SubscriptionService.fingerprint_ua(ua)
+        now = datetime.now(UTC).replace(tzinfo=None)
+
+        result = await session.execute(
+            select(Device).where(
+                Device.subscription_id == sub.id,
+                Device.ua_fingerprint == fingerprint,
+                Device.is_active == True,  # noqa: E712
+            )
+        )
+        device = result.scalar_one_or_none()
+
+        if device is not None:
+            device.last_active_at = now
+            return device
+
+        count = (
+            await session.execute(
+                select(func.count(Device.id)).where(
+                    Device.subscription_id == sub.id,
+                    Device.is_active == True,  # noqa: E712
+                )
+            )
+        ).scalar_one()
+
+        if count >= max_devices:
+            return None
+
+        device = Device(
+            subscription_id=sub.id,
+            uuid=str(_uuid_mod.uuid4()),
+            ua_fingerprint=fingerprint,
+            display_name=SubscriptionService.make_device_display_name(ua),
+            last_active_at=now,
+            is_active=True,
+        )
+        session.add(device)
+        await session.flush()
+
+        await SubscriptionService._sync_device_to_servers(session, sub, device)
+        return device
+
+    @staticmethod
+    async def _sync_device_to_servers(
+        session: AsyncSession,
+        sub: "Subscription",
+        device: "Device",
+    ) -> None:
+        result = await session.execute(
+            select(Server)
+            .join(SubscriptionServer)
+            .where(
+                SubscriptionServer.subscription_id == sub.id,
+                SubscriptionServer.is_synced == True,  # noqa: E712
+                Server.is_active == True,  # noqa: E712
+                Server.static_uri.is_(None),
+            )
+        )
+        servers = result.scalars().all()
+        email = f"user_{sub.user_id}_sub_{sub.id}_dev_{device.id}"
+
+        async def _add(server: Server) -> None:
+            try:
+                await AgentClient(server.agent_url, server.agent_token).add_client(device.uuid, email)
+            except Exception as exc:
+                logger.error("device sync to server %s failed: %s", server.id, exc)
+
+        await asyncio.gather(*(_add(s) for s in servers))
+
+    @staticmethod
+    async def remove_device(
+        session: AsyncSession,
+        sub: "Subscription",
+        device: "Device",
+    ) -> None:
+        result = await session.execute(
+            select(Server)
+            .join(SubscriptionServer)
+            .where(SubscriptionServer.subscription_id == sub.id)
+        )
+        servers = result.scalars().all()
+
+        async def _remove(server: Server) -> None:
+            if getattr(server, "static_uri", None):
+                return
+            try:
+                await AgentClient(server.agent_url, server.agent_token).remove_client(device.uuid)
+            except Exception as exc:
+                logger.error("device remove from server %s failed: %s", server.id, exc)
+
+        await asyncio.gather(*(_remove(s) for s in servers))
+        device.is_active = False
+
+    @staticmethod
+    async def get_active_devices(session: AsyncSession, sub: "Subscription") -> list["Device"]:
+        result = await session.execute(
+            select(Device)
+            .where(Device.subscription_id == sub.id, Device.is_active == True)  # noqa: E712
+            .order_by(Device.id)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def get_device_count_for_subscription(session: AsyncSession, sub_id: int) -> int:
+        return (
+            await session.execute(
+                select(func.count(Device.id)).where(
+                    Device.subscription_id == sub_id,
+                    Device.is_active == True,  # noqa: E712
+                )
+            )
+        ).scalar_one()
 
     @staticmethod
     async def reissue_subscription(

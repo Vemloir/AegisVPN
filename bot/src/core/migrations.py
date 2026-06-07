@@ -72,6 +72,13 @@ async def _existing_columns(session: AsyncSession, table: str, is_sqlite: bool) 
 
 async def run_migrations() -> None:
     """Add any columns missing from the live schema. Idempotent."""
+    # Ensure all model-defined tables exist (create_all is safe; it never drops or modifies).
+    from src.core.database import engine
+    from src.models import Base  # noqa: F401 — triggers all model imports
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
     is_sqlite = _is_sqlite()
     async with async_session_maker() as session:
         for table, columns in MIGRATIONS.items():
