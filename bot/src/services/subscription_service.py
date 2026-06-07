@@ -20,11 +20,11 @@ from src.services.server_access_service import ServerAccessService
 _UA_VERSION_RE = re.compile(r"/[\d.]+")
 _UA_DIGITS_RE = re.compile(r"\b\d[\d.]*\b")
 _UA_PRODUCT_RE = re.compile(r"^([A-Za-z0-9][\w\-.+]*)")
-_UA_IOS_VER_RE = re.compile(r"(?:iPhone OS|iOS)\s+([\d_]+)")
-_UA_AND_VER_RE = re.compile(r"Android\s+([\d.]+)")
-_UA_WIN_VER_RE = re.compile(r"Windows NT\s+([\d.]+)")
+_UA_IOS_VER_RE = re.compile(r"(?:iPhone OS|iOS)\s+([\d_]+)", re.IGNORECASE)
+_UA_AND_VER_RE = re.compile(r"Android[/ ]([\d.]+)", re.IGNORECASE)
+_UA_WIN_VER_RE = re.compile(r"Windows NT\s+([\d.]+)", re.IGNORECASE)
 _WIN_NT = {"10.0": "10/11", "6.3": "8.1", "6.2": "8", "6.1": "7"}
-_UA_MAC_VER_RE = re.compile(r"Mac OS X\s+([\d_]+)")
+_UA_MAC_VER_RE = re.compile(r"Mac OS X[/ ]([\d_]+)", re.IGNORECASE)
 
 
 class SubscriptionService:

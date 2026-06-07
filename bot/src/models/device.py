@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String
+from sqlalchemy import BigInteger, Boolean, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, utcnow
@@ -26,8 +26,9 @@ class Device(Base):
     last_server_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("servers.id", ondelete="SET NULL"), nullable=True
     )
+    traffic_up_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    traffic_down_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_suspended: Mapped[bool] = mapped_column(Boolean, default=False)
 
     subscription: Mapped["Subscription"] = relationship(back_populates="devices")
-    last_server: Mapped["Server | None"] = relationship(foreign_keys=[last_server_id])

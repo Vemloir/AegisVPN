@@ -224,6 +224,8 @@ async def poll_traffic():
                     if device:
                         device.last_active_at = now
                         device.last_server_id = server.id
+                        device.traffic_up_bytes = (device.traffic_up_bytes or 0) + delta_up
+                        device.traffic_down_bytes = (device.traffic_down_bytes or 0) + delta_down
                         changed = True
 
         if changed:

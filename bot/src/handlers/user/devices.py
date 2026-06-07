@@ -7,7 +7,7 @@ from aiogram.types import CallbackQuery
 from sqlalchemy import select
 
 from src.core.database import async_session_maker
-from src.models import Device, Subscription, User
+from src.models import Device, Server, Subscription, User
 from src.services import get_user_language, t
 from src.services.subscription_service import SubscriptionService
 
@@ -68,6 +68,14 @@ async def _render_devices(tg_id: int, language: str) -> tuple[str, object]:
 _CONNECTED_THRESHOLD_SEC = 5 * 60  # 5 minutes without traffic = not connected
 
 
+def _fmt_bytes(b: int) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if b < 1024:
+            return f"{b:.1f} {unit}" if unit != "B" else f"{b} {unit}"
+        b /= 1024
+    return f"{b:.1f} PB"
+
+
 async def _render_device_detail(tg_id: int, language: str, device_id: int) -> tuple[str, object] | None:
     async with async_session_maker() as session:
         _, sub = await _get_sub_for_user(session, tg_id)
@@ -82,18 +90,32 @@ async def _render_device_detail(tg_id: int, language: str, device_id: int) -> tu
         if not device:
             return None
 
-        last_server = device.last_server if device.last_server_id else None
+        # Explicitly query server to avoid async lazy-load
+        last_server: Server | None = None
+        if device.last_server_id:
+            last_server = (
+                await session.execute(select(Server).where(Server.id == device.last_server_id))
+            ).scalar_one_or_none()
 
-    lines = [html.bold(device.display_name), ""]
-    lines.append(t(language, "device_detail_added", date=device.created_at.strftime("%d.%m.%Y, %H:%M")))
+        # Read all scalar attrs inside the session
+        name = device.display_name
+        added = device.created_at.strftime("%d.%m.%Y, %H:%M")
+        is_suspended = device.is_suspended
+        last_active = device.last_active_at
+        dev_id = device.id
+        up = device.traffic_up_bytes or 0
+        down = device.traffic_down_bytes or 0
 
-    if device.is_suspended:
+    lines = [html.bold(name), ""]
+    lines.append(t(language, "device_detail_added", date=added))
+
+    if is_suspended:
         lines.append(t(language, "device_detail_suspended"))
     else:
         now = datetime.now(UTC).replace(tzinfo=None)
         is_online = (
-            device.last_active_at is not None
-            and (now - device.last_active_at).total_seconds() < _CONNECTED_THRESHOLD_SEC
+            last_active is not None
+            and (now - last_active).total_seconds() < _CONNECTED_THRESHOLD_SEC
             and last_server is not None
         )
         if is_online:
@@ -102,7 +124,10 @@ async def _render_device_detail(tg_id: int, language: str, device_id: int) -> tu
         else:
             lines.append(t(language, "device_detail_not_connected"))
 
-    return "\n".join(lines), device_detail_keyboard(language, device.id, device.is_suspended)
+    if up or down:
+        lines.append(t(language, "device_detail_traffic", up=_fmt_bytes(up), down=_fmt_bytes(down)))
+
+    return "\n".join(lines), device_detail_keyboard(language, dev_id, is_suspended)
 
 
 @router.callback_query(F.data == "devices_open")
