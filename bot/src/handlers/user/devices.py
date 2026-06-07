@@ -1,5 +1,6 @@
 """Devices management screen: list, detail, suspend/resume, remove."""
 
+import asyncio
 from datetime import UTC, datetime
 
 from aiogram import F, Router, html
@@ -7,8 +8,8 @@ from aiogram.types import CallbackQuery
 from sqlalchemy import select
 
 from src.core.database import async_session_maker
-from src.models import Device, Server, Subscription, User
-from src.services import get_user_language, t
+from src.models import Device, Server, Subscription, SubscriptionServer, User
+from src.services import AgentClient, get_user_language, t
 from src.services.subscription_service import SubscriptionService
 
 from .keyboards import device_detail_keyboard, device_remove_confirm_keyboard, devices_list_keyboard
@@ -76,6 +77,43 @@ def _fmt_bytes(b: int) -> str:
     return f"{b:.1f} PB"
 
 
+async def _live_check_subscription_email(session, sub: Subscription) -> "Server | None":
+    """Query all synced nodes for the legacy subscription email.
+
+    Returns the first Server where traffic increased since the last poll (meaning the
+    client is using a cached pre-device-UUID link and is actively connected right now).
+    """
+    old_email = f"user_{sub.user_id}_sub_{sub.id}"
+    rows = (
+        await session.execute(
+            select(SubscriptionServer, Server)
+            .join(Server, SubscriptionServer.server_id == Server.id)
+            .where(
+                SubscriptionServer.subscription_id == sub.id,
+                SubscriptionServer.is_synced == True,  # noqa: E712
+                Server.is_active == True,  # noqa: E712
+            )
+        )
+    ).all()
+    if not rows:
+        return None
+
+    async def _check(link: SubscriptionServer, server: Server) -> "Server | None":
+        try:
+            stats = await AgentClient(server.agent_url, server.agent_token).get_stats()
+        except Exception:
+            return None
+        s = stats.get(old_email, {})
+        cur_up = int(s.get("uplink", 0) or 0)
+        cur_down = int(s.get("downlink", 0) or 0)
+        if cur_up > (link.traffic_last_up or 0) or cur_down > (link.traffic_last_down or 0):
+            return server
+        return None
+
+    results = await asyncio.gather(*(_check(lnk, srv) for lnk, srv in rows))
+    return next((s for s in results if s is not None), None)
+
+
 async def _render_device_detail(tg_id: int, language: str, device_id: int) -> tuple[str, object] | None:
     async with async_session_maker() as session:
         _, sub = await _get_sub_for_user(session, tg_id)
@@ -97,7 +135,36 @@ async def _render_device_detail(tg_id: int, language: str, device_id: int) -> tu
                 await session.execute(select(Server).where(Server.id == device.last_server_id))
             ).scalar_one_or_none()
 
-        # Read all scalar attrs inside the session
+        # Live check: if the device looks offline, query nodes directly for legacy-UUID
+        # traffic (clients that haven't refreshed their subscription link yet).
+        # Only do this for the most recently active device to avoid wrong attribution.
+        now_live = datetime.now(UTC).replace(tzinfo=None)
+        is_stale = not device.is_suspended and (
+            device.last_active_at is None
+            or (now_live - device.last_active_at).total_seconds() >= _CONNECTED_THRESHOLD_SEC
+        )
+        if is_stale:
+            primary_id = (
+                await session.execute(
+                    select(Device.id)
+                    .where(
+                        Device.subscription_id == sub.id,
+                        Device.is_active == True,  # noqa: E712
+                        Device.is_suspended == False,  # noqa: E712
+                    )
+                    .order_by(Device.last_active_at.desc())
+                    .limit(1)
+                )
+            ).scalar()
+            if primary_id is None or primary_id == device.id:
+                live_server = await _live_check_subscription_email(session, sub)
+                if live_server is not None:
+                    device.last_active_at = now_live
+                    device.last_server_id = live_server.id
+                    last_server = live_server
+                    await session.commit()
+
+        # Read all scalar attrs inside the session (before it closes / expiry on commit)
         name = device.display_name
         added = device.created_at.strftime("%d.%m.%Y, %H:%M")
         is_suspended = device.is_suspended
@@ -105,6 +172,8 @@ async def _render_device_detail(tg_id: int, language: str, device_id: int) -> tu
         dev_id = device.id
         up = device.traffic_up_bytes or 0
         down = device.traffic_down_bytes or 0
+        last_server_name = last_server.name if last_server else None
+        last_server_flag = (last_server.flag or "").strip() if last_server else ""
 
     lines = [html.bold(name), ""]
     lines.append(t(language, "device_detail_added", date=added))
@@ -116,10 +185,10 @@ async def _render_device_detail(tg_id: int, language: str, device_id: int) -> tu
         is_online = (
             last_active is not None
             and (now - last_active).total_seconds() < _CONNECTED_THRESHOLD_SEC
-            and last_server is not None
+            and last_server_name is not None
         )
         if is_online:
-            loc = f"{last_server.flag} {last_server.name}".strip() if last_server.flag else last_server.name
+            loc = f"{last_server_flag} {last_server_name}".strip() if last_server_flag else last_server_name
             lines.append(t(language, "device_detail_connected", location=loc))
         else:
             lines.append(t(language, "device_detail_not_connected"))

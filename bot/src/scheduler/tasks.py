@@ -199,6 +199,28 @@ async def poll_traffic():
                     link.traffic_last_down = cur_down
                     changed = True
 
+                # Attribute legacy-UUID activity to the most recently seen non-suspended device.
+                # Clients that cached a link before device UUIDs were introduced still send
+                # traffic under the old sub email; this keeps their last_active_at current.
+                if delta_up or delta_down:
+                    dev_res = await session.execute(
+                        select(Device)
+                        .where(
+                            Device.subscription_id == sub.id,
+                            Device.is_active == True,  # noqa: E712
+                            Device.is_suspended == False,  # noqa: E712
+                        )
+                        .order_by(Device.last_active_at.desc())
+                        .limit(1)
+                    )
+                    top_device = dev_res.scalar_one_or_none()
+                    if top_device:
+                        top_device.last_active_at = now
+                        top_device.last_server_id = server.id
+                        top_device.traffic_up_bytes = (top_device.traffic_up_bytes or 0) + delta_up
+                        top_device.traffic_down_bytes = (top_device.traffic_down_bytes or 0) + delta_down
+                        changed = True
+
             # Update device connection status from device emails (user_X_sub_Y_dev_Z)
             for email, cur in stats.items():
                 if "_dev_" not in email:
