@@ -11,13 +11,14 @@ def subscription_keyboard(
     show_trial: bool = False,
     has_v2ray: bool = False,
     is_lifetime: bool = False,
+    has_mtproxy: bool = False,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     if has_active_subscription:
-        rows.append([
-            InlineKeyboardButton(text=t(language, "vpn_sub_btn"), callback_data="subscription_show_v2ray"),
-            InlineKeyboardButton(text=t(language, "tg_proxy_btn"), callback_data="tg_proxy_open"),
-        ])
+        top_row = [InlineKeyboardButton(text=t(language, "vpn_sub_btn"), callback_data="subscription_show_v2ray")]
+        if has_mtproxy:
+            top_row.append(InlineKeyboardButton(text=t(language, "tg_proxy_btn"), callback_data="tg_proxy_open"))
+        rows.append(top_row)
         rows.append([InlineKeyboardButton(text=t(language, "setup_guide"), callback_data="help_setup:v2ray")])
         if not is_lifetime:
             rows.append([InlineKeyboardButton(text=t(language, "renew_vpn"), callback_data="buy_plan")])

@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from aiogram import F, Router, html
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from src.core.database import async_session_maker
 from src.models import Server, Subscription, User
@@ -77,12 +77,23 @@ async def render_subscription_info(tg_id: int) -> tuple[str, str | None, str, bo
 
 async def render_subscription_screen(tg_id: int) -> tuple[str, InlineKeyboardMarkup]:
     text, subscription_link, language, show_trial, is_lifetime = await render_subscription_info(tg_id)
+    has_mtproxy = False
+    if subscription_link is not None:
+        async with async_session_maker() as session:
+            count = await session.scalar(
+                select(func.count(Server.id)).where(
+                    Server.is_active == True,  # noqa: E712
+                    Server.mtproxy_secret.isnot(None),
+                )
+            )
+            has_mtproxy = (count or 0) > 0
     markup = subscription_keyboard(
         language,
         has_active_subscription=subscription_link is not None,
         show_trial=show_trial,
         has_v2ray=subscription_link is not None,
         is_lifetime=is_lifetime,
+        has_mtproxy=has_mtproxy,
     )
     return text, markup
 
