@@ -77,16 +77,13 @@ def _fmt_bytes(b: int) -> str:
     return f"{b:.1f} PB"
 
 
-async def _live_check_device(
-    session, sub: Subscription, device_uuid_email: str, is_primary: bool
-) -> "Server | None":
+async def _live_check_device(session, sub: Subscription, device_email: str) -> "Server | None":
     """Ask every synced node, right now, whether this device has a live session.
 
-    A node returns the set of emails currently online. We look for the device's own
-    email; for `is_primary` devices we also accept the legacy shared email (clients
-    still on the pre-device UUID). Returns the connected Server, or None.
+    A node returns the set of emails currently online; we look for the device's own
+    per-device email only (no legacy-shared-email guessing). Returns the connected
+    Server, or None.
     """
-    legacy_email = f"user_{sub.user_id}_sub_{sub.id}"
     servers = (
         await session.execute(
             select(Server)
@@ -103,11 +100,7 @@ async def _live_check_device(
 
     async def _check(server: Server) -> "Server | None":
         online = await AgentClient(server.agent_url, server.agent_token).get_online_emails()
-        if not online:
-            return None
-        if device_uuid_email in online:
-            return server
-        if is_primary and legacy_email in online:
+        if online and device_email in online:
             return server
         return None
 
@@ -137,29 +130,16 @@ async def _render_device_detail(tg_id: int, language: str, device_id: int) -> tu
             ).scalar_one_or_none()
 
         # Live check: if the device looks offline, ask the nodes directly (authoritative
-        # online state) instead of waiting for the next poll. The legacy shared email is
-        # only attributed to the most recently active device, to avoid mis-attribution.
+        # online state) instead of waiting for the next poll. Matches only this device's
+        # own per-device email — no guessing across devices.
         now_live = datetime.now(UTC).replace(tzinfo=None)
         is_stale = not device.is_suspended and (
             device.last_active_at is None
             or (now_live - device.last_active_at).total_seconds() >= _CONNECTED_THRESHOLD_SEC
         )
         if is_stale:
-            primary_id = (
-                await session.execute(
-                    select(Device.id)
-                    .where(
-                        Device.subscription_id == sub.id,
-                        Device.is_active == True,  # noqa: E712
-                        Device.is_suspended == False,  # noqa: E712
-                    )
-                    .order_by(Device.last_active_at.desc())
-                    .limit(1)
-                )
-            ).scalar()
             device_email = f"user_{sub.user_id}_sub_{sub.id}_dev_{device.id}"
-            is_primary = primary_id is None or primary_id == device.id
-            live_server = await _live_check_device(session, sub, device_email, is_primary)
+            live_server = await _live_check_device(session, sub, device_email)
             if live_server is not None:
                 device.last_active_at = now_live
                 device.last_server_id = live_server.id

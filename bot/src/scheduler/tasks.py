@@ -251,88 +251,51 @@ def _parse_dev_id(email: str) -> int | None:
         return None
 
 
-def _parse_sub_id(email: str) -> int | None:
-    """Extract the subscription id from a legacy email `user_X_sub_Y` (no _dev_)."""
-    if "_dev_" in email or "_sub_" not in email:
-        return None
-    try:
-        return int(email.rsplit("_sub_", 1)[1])
-    except (ValueError, IndexError):
-        return None
-
-
 async def _mark_devices_online(session, server_id: int, online_emails: set[str], now: datetime) -> bool:
     """Mark devices connected to `server_id` from the node's live online emails.
 
-    Direct hit: `user_X_sub_Y_dev_Z` → device Z is connected here.
-    Legacy hit: `user_X_sub_Y` (client still on the shared pre-device UUID) →
-    attribute to the subscription's most recently active non-suspended device.
+    A connection is attributed to a device ONLY by its own per-device email
+    `user_X_sub_Y_dev_Z`. The shared legacy email (a client still on the pre-device
+    UUID) is deliberately ignored: it can't be tied to a specific device, and
+    guessing produced wrong results (one device's session shown under another).
     """
     changed = False
     for email in online_emails:
         device_id = _parse_dev_id(email)
-        if device_id is not None:
-            device = (await session.execute(
-                select(Device).where(Device.id == device_id, Device.is_active == True)  # noqa: E712
-            )).scalar_one_or_none()
-            if device and not device.is_suspended:
-                device.last_active_at = now
-                device.last_server_id = server_id
-                changed = True
+        if device_id is None:
             continue
-        sub_id = _parse_sub_id(email)
-        if sub_id is not None:
-            device = (await session.execute(
-                select(Device)
-                .where(
-                    Device.subscription_id == sub_id,
-                    Device.is_active == True,  # noqa: E712
-                    Device.is_suspended == False,  # noqa: E712
-                )
-                .order_by(Device.last_active_at.desc())
-                .limit(1)
-            )).scalar_one_or_none()
-            if device:
-                device.last_active_at = now
-                device.last_server_id = server_id
-                changed = True
+        device = (await session.execute(
+            select(Device).where(Device.id == device_id, Device.is_active == True)  # noqa: E712
+        )).scalar_one_or_none()
+        if device and not device.is_suspended:
+            device.last_active_at = now
+            device.last_server_id = server_id
+            changed = True
     return changed
 
 
 async def _mark_devices_online_fallback(session, server_id: int, stats: dict, now: datetime) -> bool:
     """Online detection for nodes whose agent lacks /online-emails (during rollout).
 
-    Treats any email whose cumulative traffic moved since the last poll as online.
+    Per-device emails only — a device is online if its own counter moved since the
+    last poll. Shared legacy emails are ignored (can't be tied to one device).
     """
     changed = False
     for email, cur in stats.items():
+        device_id = _parse_dev_id(email)
+        if device_id is None:
+            continue
         cur_up = int(cur.get("uplink", 0) or 0)
         cur_down = int(cur.get("downlink", 0) or 0)
-        device_id = _parse_dev_id(email)
-        sub_id = None if device_id is not None else _parse_sub_id(email)
-        if device_id is None and sub_id is None:
-            continue
-        key = (device_id if device_id is not None else -sub_id, server_id)  # type: ignore[operator]
+        key = (device_id, server_id)
         last_up, last_down = _online_fallback_last.get(key, (0, 0))
         moved = cur_up > last_up or cur_down > last_down
         _online_fallback_last[key] = (cur_up, cur_down)
         if not moved:
             continue
-        if device_id is not None:
-            device = (await session.execute(
-                select(Device).where(Device.id == device_id, Device.is_active == True)  # noqa: E712
-            )).scalar_one_or_none()
-        else:
-            device = (await session.execute(
-                select(Device)
-                .where(
-                    Device.subscription_id == sub_id,
-                    Device.is_active == True,  # noqa: E712
-                    Device.is_suspended == False,  # noqa: E712
-                )
-                .order_by(Device.last_active_at.desc())
-                .limit(1)
-            )).scalar_one_or_none()
+        device = (await session.execute(
+            select(Device).where(Device.id == device_id, Device.is_active == True)  # noqa: E712
+        )).scalar_one_or_none()
         if device and not device.is_suspended:
             device.last_active_at = now
             device.last_server_id = server_id
