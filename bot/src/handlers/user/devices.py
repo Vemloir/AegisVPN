@@ -7,7 +7,7 @@ from aiogram.types import CallbackQuery
 from sqlalchemy import select
 
 from src.core.database import async_session_maker
-from src.models import Device, Server, Subscription, SubscriptionServer, User
+from src.models import Device, Subscription, User
 from src.services import get_user_language, t
 from src.services.subscription_service import SubscriptionService
 
@@ -65,6 +65,9 @@ async def _render_devices(tg_id: int, language: str) -> tuple[str, object]:
     return "\n".join(lines), devices_list_keyboard(language, devices)
 
 
+_CONNECTED_THRESHOLD_SEC = 5 * 60  # 5 minutes without traffic = not connected
+
+
 async def _render_device_detail(tg_id: int, language: str, device_id: int) -> tuple[str, object] | None:
     async with async_session_maker() as session:
         _, sub = await _get_sub_for_user(session, tg_id)
@@ -79,36 +82,25 @@ async def _render_device_detail(tg_id: int, language: str, device_id: int) -> tu
         if not device:
             return None
 
-        # Servers this subscription is synced to
-        servers = (
-            await session.execute(
-                select(Server)
-                .join(SubscriptionServer)
-                .where(
-                    SubscriptionServer.subscription_id == sub.id,
-                    SubscriptionServer.is_synced == True,  # noqa: E712
-                    Server.is_active == True,  # noqa: E712
-                    Server.static_uri.is_(None),
-                )
-                .order_by(Server.display_order, Server.name)
-            )
-        ).scalars().all()
-
-        loc_names = ", ".join(
-            f"{s.flag} {s.name}".strip() if s.flag else s.name
-            for s in servers
-        )
+        last_server = device.last_server if device.last_server_id else None
 
     lines = [html.bold(device.display_name), ""]
-    lines.append(t(language, "device_detail_added", date=device.created_at.strftime("%d.%m.%Y")))
-    lines.append(t(language, "device_detail_last", time=_fmt_last_active(language, device.last_active_at)))
-    status_key = "device_detail_status_suspended" if device.is_suspended else "device_detail_status_active"
-    lines.append(t(language, status_key))
-    lines.append("")
-    if loc_names and not device.is_suspended:
-        lines.append(t(language, "device_detail_locations", names=loc_names))
+    lines.append(t(language, "device_detail_added", date=device.created_at.strftime("%d.%m.%Y, %H:%M")))
+
+    if device.is_suspended:
+        lines.append(t(language, "device_detail_suspended"))
     else:
-        lines.append(t(language, "device_detail_no_locations"))
+        now = datetime.now(UTC).replace(tzinfo=None)
+        is_online = (
+            device.last_active_at is not None
+            and (now - device.last_active_at).total_seconds() < _CONNECTED_THRESHOLD_SEC
+            and last_server is not None
+        )
+        if is_online:
+            loc = f"{last_server.flag} {last_server.name}".strip() if last_server.flag else last_server.name
+            lines.append(t(language, "device_detail_connected", location=loc))
+        else:
+            lines.append(t(language, "device_detail_not_connected"))
 
     return "\n".join(lines), device_detail_keyboard(language, device.id, device.is_suspended)
 

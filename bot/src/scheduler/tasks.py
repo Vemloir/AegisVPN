@@ -13,7 +13,7 @@ from sqlalchemy.orm import joinedload
 from src.core.config import settings
 from src.core.database import async_session_maker
 from src.core.logger import logger
-from src.models import Server, Subscription, SubscriptionServer, User
+from src.models import Device, Server, Subscription, SubscriptionServer, User
 from src.services import AgentClient, SubscriptionService, t
 
 
@@ -126,6 +126,11 @@ async def retry_unsynced_servers():
         await session.commit()
 
 
+# Per-(device_id, server_id) last seen counters for delta accounting.
+# In-memory only; resets on bot restart (recovers within one poll cycle).
+_device_last_stats: dict[tuple[int, int], tuple[int, int]] = {}
+
+
 async def poll_traffic():
     """Pull per-client byte counters from every node and accumulate them.
 
@@ -135,6 +140,7 @@ async def poll_traffic():
     current value itself is the delta.
     """
     logger.info("Running task: poll_traffic")
+    now = datetime.now(UTC).replace(tzinfo=None)
     async with async_session_maker() as session:
         servers = (await session.execute(select(Server).where(Server.is_active == True))).scalars().all()
 
@@ -174,7 +180,7 @@ async def poll_traffic():
                 cur_down = int(cur.get("downlink", 0) or 0)
 
                 delta_up = cur_up - (link.traffic_last_up or 0)
-                if delta_up < 0:  # Xray restarted, counter reset to 0
+                if delta_up < 0:
                     delta_up = cur_up
                 delta_down = cur_down - (link.traffic_last_down or 0)
                 if delta_down < 0:
@@ -192,6 +198,33 @@ async def poll_traffic():
                     link.traffic_last_up = cur_up
                     link.traffic_last_down = cur_down
                     changed = True
+
+            # Update device connection status from device emails (user_X_sub_Y_dev_Z)
+            for email, cur in stats.items():
+                if "_dev_" not in email:
+                    continue
+                try:
+                    device_id = int(email.rsplit("_", 1)[1])
+                except (ValueError, IndexError):
+                    continue
+
+                cur_up = int(cur.get("uplink", 0) or 0)
+                cur_down = int(cur.get("downlink", 0) or 0)
+                key = (device_id, server.id)
+                last_up, last_down = _device_last_stats.get(key, (0, 0))
+
+                delta_up = cur_up - last_up if cur_up >= last_up else cur_up
+                delta_down = cur_down - last_down if cur_down >= last_down else cur_down
+                _device_last_stats[key] = (cur_up, cur_down)
+
+                if delta_up or delta_down:
+                    device = (await session.execute(
+                        select(Device).where(Device.id == device_id, Device.is_active == True)  # noqa: E712
+                    )).scalar_one_or_none()
+                    if device:
+                        device.last_active_at = now
+                        device.last_server_id = server.id
+                        changed = True
 
         if changed:
             await session.commit()

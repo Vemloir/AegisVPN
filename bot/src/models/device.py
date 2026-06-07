@@ -1,12 +1,13 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, ForeignKey, String
+from sqlalchemy import Boolean, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, utcnow
 
 if TYPE_CHECKING:
+    from .server import Server
     from .subscription import Subscription
 
 
@@ -21,7 +22,12 @@ class Device(Base):
     ua_fingerprint: Mapped[str] = mapped_column(String(64))
     display_name: Mapped[str] = mapped_column(String(100))
     last_active_at: Mapped[datetime | None] = mapped_column(nullable=True, default=utcnow)
+    # Server where traffic was last seen (set by poll_traffic)
+    last_server_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("servers.id", ondelete="SET NULL"), nullable=True
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_suspended: Mapped[bool] = mapped_column(Boolean, default=False)
 
     subscription: Mapped["Subscription"] = relationship(back_populates="devices")
+    last_server: Mapped["Server | None"] = relationship(foreign_keys=[last_server_id])
