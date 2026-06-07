@@ -1,6 +1,12 @@
-"""Devices management screen: list, detail, suspend/resume, remove."""
+"""Devices management screen: list, detail, suspend/resume, remove.
 
-import asyncio
+We only surface information we can state reliably — the device's display name,
+when it was added, and whether its subscription is suspended. Connection status,
+location and per-device traffic were intentionally dropped: the server can't tell
+two devices apart while they share a UUID, and a subscription refresh alone (no
+real connection) made those signals misleading.
+"""
+
 from datetime import UTC, datetime
 
 from aiogram import F, Router, html
@@ -8,26 +14,13 @@ from aiogram.types import CallbackQuery
 from sqlalchemy import select
 
 from src.core.database import async_session_maker
-from src.models import Device, Server, Subscription, SubscriptionServer, User
-from src.services import AgentClient, get_user_language, t
+from src.models import Device, Subscription, User
+from src.services import get_user_language, t
 from src.services.subscription_service import SubscriptionService
 
 from .keyboards import device_detail_keyboard, device_remove_confirm_keyboard, devices_list_keyboard
 
 router = Router()
-
-
-def _fmt_last_active(language: str, dt: datetime | None) -> str:
-    if dt is None:
-        return t(language, "devices_active_never")
-    diff = (datetime.now(UTC).replace(tzinfo=None) - dt).total_seconds()
-    if diff < 90:
-        return t(language, "devices_active_now")
-    if diff < 3600:
-        return t(language, "devices_active_min", n=int(diff // 60))
-    if diff < 86400:
-        return t(language, "devices_active_hours", n=int(diff // 3600))
-    return t(language, "devices_active_days", n=int(diff // 86400))
 
 
 async def _get_sub_for_user(session, tg_id: int) -> tuple["User | None", "Subscription | None"]:
@@ -61,51 +54,9 @@ async def _render_devices(tg_id: int, language: str) -> tuple[str, object]:
     else:
         for i, dev in enumerate(devices, 1):
             status = " [II]" if dev.is_suspended else ""
-            lines.append(f"{i}. {dev.display_name}{status} — {_fmt_last_active(language, dev.last_active_at)}")
+            lines.append(f"{i}. {dev.display_name}{status}")
     lines += ["", t(language, "devices_hint")]
     return "\n".join(lines), devices_list_keyboard(language, devices)
-
-
-_CONNECTED_THRESHOLD_SEC = 5 * 60  # 5 minutes without traffic = not connected
-
-
-def _fmt_bytes(b: int) -> str:
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if b < 1024:
-            return f"{b:.1f} {unit}" if unit != "B" else f"{b} {unit}"
-        b /= 1024
-    return f"{b:.1f} PB"
-
-
-async def _live_check_device(session, sub: Subscription, device_email: str) -> "Server | None":
-    """Ask every synced node, right now, whether this device has a live session.
-
-    A node returns the set of emails currently online; we look for the device's own
-    per-device email only (no legacy-shared-email guessing). Returns the connected
-    Server, or None.
-    """
-    servers = (
-        await session.execute(
-            select(Server)
-            .join(SubscriptionServer, SubscriptionServer.server_id == Server.id)
-            .where(
-                SubscriptionServer.subscription_id == sub.id,
-                SubscriptionServer.is_synced == True,  # noqa: E712
-                Server.is_active == True,  # noqa: E712
-            )
-        )
-    ).scalars().all()
-    if not servers:
-        return None
-
-    async def _check(server: Server) -> "Server | None":
-        online = await AgentClient(server.agent_url, server.agent_token).get_online_emails()
-        if online and device_email in online:
-            return server
-        return None
-
-    results = await asyncio.gather(*(_check(s) for s in servers))
-    return next((s for s in results if s is not None), None)
 
 
 async def _render_device_detail(tg_id: int, language: str, device_id: int) -> tuple[str, object] | None:
@@ -122,61 +73,15 @@ async def _render_device_detail(tg_id: int, language: str, device_id: int) -> tu
         if not device:
             return None
 
-        # Explicitly query server to avoid async lazy-load
-        last_server: Server | None = None
-        if device.last_server_id:
-            last_server = (
-                await session.execute(select(Server).where(Server.id == device.last_server_id))
-            ).scalar_one_or_none()
-
-        # Live check: if the device looks offline, ask the nodes directly (authoritative
-        # online state) instead of waiting for the next poll. Matches only this device's
-        # own per-device email — no guessing across devices.
-        now_live = datetime.now(UTC).replace(tzinfo=None)
-        is_stale = not device.is_suspended and (
-            device.last_active_at is None
-            or (now_live - device.last_active_at).total_seconds() >= _CONNECTED_THRESHOLD_SEC
-        )
-        if is_stale:
-            device_email = f"user_{sub.user_id}_sub_{sub.id}_dev_{device.id}"
-            live_server = await _live_check_device(session, sub, device_email)
-            if live_server is not None:
-                device.last_active_at = now_live
-                device.last_server_id = live_server.id
-                last_server = live_server
-                await session.commit()
-
-        # Read all scalar attrs inside the session (before it closes / expiry on commit)
         name = device.display_name
         added = device.created_at.strftime("%d.%m.%Y, %H:%M")
         is_suspended = device.is_suspended
-        last_active = device.last_active_at
         dev_id = device.id
-        up = device.traffic_up_bytes or 0
-        down = device.traffic_down_bytes or 0
-        last_server_name = last_server.name if last_server else None
-        last_server_flag = (last_server.flag or "").strip() if last_server else ""
 
     lines = [html.bold(name), ""]
     lines.append(t(language, "device_detail_added", date=added))
-
     if is_suspended:
         lines.append(t(language, "device_detail_suspended"))
-    else:
-        now = datetime.now(UTC).replace(tzinfo=None)
-        is_online = (
-            last_active is not None
-            and (now - last_active).total_seconds() < _CONNECTED_THRESHOLD_SEC
-            and last_server_name is not None
-        )
-        if is_online:
-            loc = f"{last_server_flag} {last_server_name}".strip() if last_server_flag else last_server_name
-            lines.append(t(language, "device_detail_connected", location=loc))
-        else:
-            lines.append(t(language, "device_detail_not_connected"))
-
-    if up or down:
-        lines.append(t(language, "device_detail_traffic", up=_fmt_bytes(up), down=_fmt_bytes(down)))
 
     return "\n".join(lines), device_detail_keyboard(language, dev_id, is_suspended)
 

@@ -13,7 +13,7 @@ from sqlalchemy.orm import joinedload
 from src.core.config import settings
 from src.core.database import async_session_maker
 from src.core.logger import logger
-from src.models import Device, Server, Subscription, SubscriptionServer, User
+from src.models import Server, Subscription, SubscriptionServer, User
 from src.services import AgentClient, SubscriptionService, t
 
 
@@ -126,17 +126,8 @@ async def retry_unsynced_servers():
         await session.commit()
 
 
-# Per-(device_id, server_id) last seen counters for delta accounting.
-# In-memory only; resets on bot restart (recovers within one poll cycle).
-_device_last_stats: dict[tuple[int, int], tuple[int, int]] = {}
-
-# Fallback online detection for old agents (no /online-emails): last raw counters
-# keyed by (device_id | -sub_id, server_id). In-memory only.
-_online_fallback_last: dict[tuple[int, int], tuple[int, int]] = {}
-
-
 async def poll_traffic():
-    """Pull per-client byte counters from every node and accumulate them.
+    """Pull per-subscription byte counters from every node and accumulate them.
 
     Xray's counters are cumulative since its last start and reset to 0 on
     restart, so we store the last raw value per (subscription, node) and add
@@ -144,7 +135,6 @@ async def poll_traffic():
     current value itself is the delta.
     """
     logger.info("Running task: poll_traffic")
-    now = datetime.now(UTC).replace(tzinfo=None)
     async with async_session_maker() as session:
         servers = (await session.execute(select(Server).where(Server.is_active == True))).scalars().all()
 
@@ -203,104 +193,8 @@ async def poll_traffic():
                     link.traffic_last_down = cur_down
                     changed = True
 
-            # --- per-device traffic bytes (from /stats device emails) -----------
-            for email, cur in stats.items():
-                device_id = _parse_dev_id(email)
-                if device_id is None:
-                    continue
-                cur_up = int(cur.get("uplink", 0) or 0)
-                cur_down = int(cur.get("downlink", 0) or 0)
-                key = (device_id, server.id)
-                last_up, last_down = _device_last_stats.get(key, (0, 0))
-                delta_up = cur_up - last_up if cur_up >= last_up else cur_up
-                delta_down = cur_down - last_down if cur_down >= last_down else cur_down
-                _device_last_stats[key] = (cur_up, cur_down)
-                if delta_up or delta_down:
-                    device = (await session.execute(
-                        select(Device).where(Device.id == device_id, Device.is_active == True)  # noqa: E712
-                    )).scalar_one_or_none()
-                    if device:
-                        device.traffic_up_bytes = (device.traffic_up_bytes or 0) + delta_up
-                        device.traffic_down_bytes = (device.traffic_down_bytes or 0) + delta_down
-                        changed = True
-
-            # --- authoritative online state (from /online-emails) --------------
-            # Xray reports exactly which emails have a live session right now, so we
-            # mark last_active/last_server from that, not from flaky traffic deltas.
-            # Old agents without the endpoint return None → fall back to the delta
-            # heuristic (traffic moved since the last poll ⇒ treat as online).
-            online_emails = await client.get_online_emails()
-            if online_emails is not None:
-                if await _mark_devices_online(session, server.id, online_emails, now):
-                    changed = True
-            else:
-                if await _mark_devices_online_fallback(session, server.id, stats, now):
-                    changed = True
-
         if changed:
             await session.commit()
-
-
-def _parse_dev_id(email: str) -> int | None:
-    """Extract the device id from a per-device email `user_X_sub_Y_dev_Z`."""
-    if "_dev_" not in email:
-        return None
-    try:
-        return int(email.rsplit("_", 1)[1])
-    except (ValueError, IndexError):
-        return None
-
-
-async def _mark_devices_online(session, server_id: int, online_emails: set[str], now: datetime) -> bool:
-    """Mark devices connected to `server_id` from the node's live online emails.
-
-    A connection is attributed to a device ONLY by its own per-device email
-    `user_X_sub_Y_dev_Z`. The shared legacy email (a client still on the pre-device
-    UUID) is deliberately ignored: it can't be tied to a specific device, and
-    guessing produced wrong results (one device's session shown under another).
-    """
-    changed = False
-    for email in online_emails:
-        device_id = _parse_dev_id(email)
-        if device_id is None:
-            continue
-        device = (await session.execute(
-            select(Device).where(Device.id == device_id, Device.is_active == True)  # noqa: E712
-        )).scalar_one_or_none()
-        if device and not device.is_suspended:
-            device.last_active_at = now
-            device.last_server_id = server_id
-            changed = True
-    return changed
-
-
-async def _mark_devices_online_fallback(session, server_id: int, stats: dict, now: datetime) -> bool:
-    """Online detection for nodes whose agent lacks /online-emails (during rollout).
-
-    Per-device emails only — a device is online if its own counter moved since the
-    last poll. Shared legacy emails are ignored (can't be tied to one device).
-    """
-    changed = False
-    for email, cur in stats.items():
-        device_id = _parse_dev_id(email)
-        if device_id is None:
-            continue
-        cur_up = int(cur.get("uplink", 0) or 0)
-        cur_down = int(cur.get("downlink", 0) or 0)
-        key = (device_id, server_id)
-        last_up, last_down = _online_fallback_last.get(key, (0, 0))
-        moved = cur_up > last_up or cur_down > last_down
-        _online_fallback_last[key] = (cur_up, cur_down)
-        if not moved:
-            continue
-        device = (await session.execute(
-            select(Device).where(Device.id == device_id, Device.is_active == True)  # noqa: E712
-        )).scalar_one_or_none()
-        if device and not device.is_suspended:
-            device.last_active_at = now
-            device.last_server_id = server_id
-            changed = True
-    return changed
 
 
 def _make_full_backup() -> Path | None:
