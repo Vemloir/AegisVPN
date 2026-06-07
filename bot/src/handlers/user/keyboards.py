@@ -5,7 +5,6 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from src.services import t
-from src.services.subscription_service import MAX_DEVICES_PER_SUBSCRIPTION
 
 
 def subscription_keyboard(
@@ -45,7 +44,6 @@ def settings_keyboard(
     language: str,
     has_active_subscription: bool = False,
     device_count: int = 0,
-    device_limit: int = MAX_DEVICES_PER_SUBSCRIPTION,
 ) -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(text=t(language, "change_language"), callback_data="settings_language")],
@@ -53,7 +51,7 @@ def settings_keyboard(
     if has_active_subscription:
         buttons.append([
             InlineKeyboardButton(
-                text=t(language, "devices_btn", count=device_count, limit=device_limit),
+                text=t(language, "devices_btn", count=device_count),
                 callback_data="devices_open",
             )
         ])

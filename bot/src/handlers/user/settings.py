@@ -6,7 +6,7 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 
 from src.core.database import async_session_maker
-from src.models import Device, Subscription, User
+from src.models import Subscription, User
 from src.services import (
     UserService,
     get_user_language,
@@ -14,7 +14,7 @@ from src.services import (
     set_user_language,
     t,
 )
-from src.services.subscription_service import MAX_DEVICES_PER_SUBSCRIPTION, SubscriptionService
+from src.services.subscription_service import SubscriptionService
 
 from .keyboards import delete_account_keyboard, language_keyboard, reissue_subscription_keyboard, settings_keyboard
 
@@ -40,7 +40,7 @@ async def _get_device_count(tg_id: int) -> int:
         ).scalar_one_or_none()
         if not sub:
             return 0
-        return await SubscriptionService.get_device_count_for_subscription(session, sub.id)
+        return len(await SubscriptionService.get_active_devices(session, sub))
 
 
 async def render_settings(tg_id: int) -> tuple[str, str, bool, int]:
@@ -69,7 +69,7 @@ async def cmd_settings(message: Message):
     await message.answer(
         text,
         parse_mode="HTML",
-        reply_markup=settings_keyboard(language, has_active, device_count, MAX_DEVICES_PER_SUBSCRIPTION),
+        reply_markup=settings_keyboard(language, has_active, device_count),
     )
 
 
@@ -79,7 +79,7 @@ async def cq_settings_open(call: CallbackQuery):
     await call.message.edit_text(  # type: ignore
         text,
         parse_mode="HTML",
-        reply_markup=settings_keyboard(language, has_active, device_count, MAX_DEVICES_PER_SUBSCRIPTION),
+        reply_markup=settings_keyboard(language, has_active, device_count),
     )
     await call.answer()
 
@@ -167,6 +167,6 @@ async def cq_settings_set_language(call: CallbackQuery):
     await call.message.edit_text(  # type: ignore
         text,
         parse_mode="HTML",
-        reply_markup=settings_keyboard(updated, has_active, device_count, MAX_DEVICES_PER_SUBSCRIPTION),
+        reply_markup=settings_keyboard(updated, has_active, device_count),
     )
     await call.answer()

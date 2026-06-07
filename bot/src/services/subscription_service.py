@@ -8,7 +8,7 @@ from collections import Counter
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import settings
@@ -16,8 +16,6 @@ from src.core.logger import logger
 from src.models import Device, Server, Subscription, SubscriptionServer
 from src.services.agent_client import AgentClient
 from src.services.server_access_service import ServerAccessService
-
-MAX_DEVICES_PER_SUBSCRIPTION = 3
 
 _UA_VERSION_RE = re.compile(r"/[\d.]+")
 _UA_DIGITS_RE = re.compile(r"\b\d[\d.]*\b")
@@ -351,8 +349,7 @@ class SubscriptionService:
         session: AsyncSession,
         sub: "Subscription",
         ua: str,
-        max_devices: int = MAX_DEVICES_PER_SUBSCRIPTION,
-    ) -> "Device | None":
+    ) -> "Device":
         fingerprint = SubscriptionService.fingerprint_ua(ua)
         now = datetime.now(UTC).replace(tzinfo=None)
 
@@ -368,18 +365,6 @@ class SubscriptionService:
         if device is not None:
             device.last_active_at = now
             return device
-
-        count = (
-            await session.execute(
-                select(func.count(Device.id)).where(
-                    Device.subscription_id == sub.id,
-                    Device.is_active == True,  # noqa: E712
-                )
-            )
-        ).scalar_one()
-
-        if count >= max_devices:
-            return None
 
         device = Device(
             subscription_id=sub.id,
@@ -454,17 +439,6 @@ class SubscriptionService:
             .order_by(Device.id)
         )
         return list(result.scalars().all())
-
-    @staticmethod
-    async def get_device_count_for_subscription(session: AsyncSession, sub_id: int) -> int:
-        return (
-            await session.execute(
-                select(func.count(Device.id)).where(
-                    Device.subscription_id == sub_id,
-                    Device.is_active == True,  # noqa: E712
-                )
-            )
-        ).scalar_one()
 
     @staticmethod
     async def reissue_subscription(

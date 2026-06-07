@@ -9,7 +9,7 @@ from sqlalchemy import select
 from src.core.database import async_session_maker
 from src.models import Device, Subscription, User
 from src.services import get_user_language, t
-from src.services.subscription_service import MAX_DEVICES_PER_SUBSCRIPTION, SubscriptionService
+from src.services.subscription_service import SubscriptionService
 
 from .keyboards import device_remove_confirm_keyboard, devices_list_keyboard
 
@@ -68,9 +68,8 @@ async def _render_devices(tg_id: int, language: str) -> tuple[str, object]:
 
         devices = await SubscriptionService.get_active_devices(session, sub)
 
-    limit = MAX_DEVICES_PER_SUBSCRIPTION
     count = len(devices)
-    lines = [html.bold(t(language, "devices_title", count=count, limit=limit)), ""]
+    lines = [html.bold(t(language, "devices_title", count=count)), ""]
 
     if not devices:
         lines.append(t(language, "devices_empty"))
@@ -78,7 +77,7 @@ async def _render_devices(tg_id: int, language: str) -> tuple[str, object]:
         for i, dev in enumerate(devices, 1):
             lines.append(f"{i}. {dev.display_name} — {_fmt_last_active(language, dev.last_active_at)}")
 
-    lines += ["", t(language, "devices_hint", limit=limit)]
+    lines += ["", t(language, "devices_hint")]
     return "\n".join(lines), devices_list_keyboard(language, devices)
 
 

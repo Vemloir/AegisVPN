@@ -123,15 +123,6 @@ async def subscription_response(request: web.Request, profile: str) -> web.Respo
         device_uuid: str | None = None
         if sub and ua:
             device = await SubscriptionService.get_or_create_device(session, sub, ua)
-            if device is None:
-                # Device limit reached; return empty subscription so the client
-                # shows "0 locations" rather than an error.
-                await session.commit()
-                return web.Response(
-                    text="",
-                    content_type="text/plain",
-                    headers={"Content-Disposition": f'attachment; filename="{settings.subscription_title}"'},
-                )
             device_uuid = device.uuid
             await session.commit()
 
