@@ -46,9 +46,6 @@ MIGRATIONS: dict[str, list[Column]] = {
         Column("last_server_id", "INTEGER", "INTEGER"),
         Column("traffic_up_bytes", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
         Column("traffic_down_bytes", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
-        Column("os_label", "VARCHAR(64)", "VARCHAR(64)"),
-        Column("added_location", "VARCHAR(128)", "VARCHAR(128)"),
-        Column("added_country_code", "VARCHAR(2)", "VARCHAR(2)"),
     ],
     "servers": [
         Column(

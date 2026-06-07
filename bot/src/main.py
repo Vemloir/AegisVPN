@@ -110,28 +110,19 @@ async def sub_fast_handler(request: web.Request) -> web.Response:
     return await subscription_response(request, SubscriptionService.FAST_PROFILE)
 
 
-def _client_ip(request: web.Request) -> str | None:
-    """Real client IP behind the Caddy reverse proxy (first X-Forwarded-For hop)."""
-    xff = request.headers.get("X-Forwarded-For", "")
-    if xff:
-        return xff.split(",")[0].strip()
-    return request.remote
-
-
 async def subscription_response(request: web.Request, profile: str) -> web.Response:
     sub_token = request.match_info.get("token")
     if not sub_token:
         return web.Response(status=400, text="Token missing")
 
     ua = request.headers.get("User-Agent", "").strip()
-    client_ip = _client_ip(request)
 
     async with async_session_maker() as session:
         sub = await SubscriptionService.get_subscription_by_token(session, sub_token)
 
         device_uuid: str | None = None
         if sub and ua:
-            device = await SubscriptionService.get_or_create_device(session, sub, ua, client_ip)
+            device = await SubscriptionService.get_or_create_device(session, sub, ua)
             await session.commit()
             if not device.is_suspended:
                 device_uuid = device.uuid

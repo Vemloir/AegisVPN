@@ -156,9 +156,3 @@ async def bootstrap_application() -> None:
     await bootstrap_plans()
     await ensure_default_plan_exists()
     await bootstrap_server()
-
-    # Fetch/refresh the offline GeoIP database in the background — it's a ~90MB
-    # download and must not block startup; device locations resolve once it's ready.
-    from src.services import geoip
-
-    asyncio.create_task(geoip.ensure_db())
