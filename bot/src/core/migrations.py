@@ -50,6 +50,7 @@ MIGRATIONS: dict[str, list[Column]] = {
         ),
         Column("display_order", "INTEGER DEFAULT 0", "INTEGER DEFAULT 0"),
         Column("static_uri", "VARCHAR(512)", "VARCHAR(512)"),
+        Column("mtproxy_secret", "VARCHAR(64)", "VARCHAR(64)"),
     ],
 }
 

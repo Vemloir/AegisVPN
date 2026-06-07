@@ -150,6 +150,38 @@ def update_agent(c: paramiko.SSHClient, host: str) -> None:
 # CLI
 # ---------------------------------------------------------------------------
 
+def setup_mtproxy(c: paramiko.SSHClient, host: str, main_c: paramiko.SSHClient, server_id: int) -> str | None:
+    """Generate an MTProxy secret, start mtg on port 80, store secret in DB. Returns secret or None."""
+    print(f"  [{host}] generating MTProxy secret…")
+    _, out, _ = c.exec_command("docker run --rm ghcr.io/9seconds/mtg:2 generate-secret google.com 2>/dev/null", timeout=60)
+    rc = out.channel.recv_exit_status()
+    secret = out.read().decode().strip()
+    if rc != 0 or not secret:
+        print(f"  [{host}] failed to generate secret, skipping MTProxy")
+        return None
+
+    print(f"  [{host}] starting mtg on port 80…")
+    run(c,
+        f"docker rm -f aegis-mtg 2>/dev/null || true && "
+        f"docker run -d --name aegis-mtg --network host --restart unless-stopped "
+        f"ghcr.io/9seconds/mtg:2 run {secret} --bind 0.0.0.0:80 2>&1 | tail -1",
+        "start mtg", timeout=60)
+
+    # Save secret to bot DB
+    update_cmd = (
+        f"docker exec aegis-bot python3 -c "
+        f"'import asyncio; from sqlalchemy import text; from src.core.database import async_session_maker\n"
+        f"exec(\"\"\"async def q():\\n"
+        f"    async with async_session_maker() as s:\\n"
+        f"        await s.execute(text(\\\"UPDATE servers SET mtproxy_secret=\\\\\\\"{secret}\\\\\\\" WHERE id={server_id}\\\"))\\n"
+        f"        await s.commit()\\n"
+        f"asyncio.run(q())\"\"\")'"
+    )
+    run(main_c, update_cmd, "save secret", timeout=30)
+    print(f"  [{host}] MTProxy ready ✓  secret={secret[:8]}…")
+    return secret
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Push code updates to AegisVPN nodes.")
     p.add_argument("--main-host", default="89.125.181.236")
@@ -160,18 +192,25 @@ def parse_args() -> argparse.Namespace:
         "--node", action="append", dest="nodes_list", metavar="IP:PASSWORD",
         help="Node to update (repeatable). Format: ip:password",
     )
+    p.add_argument(
+        "--mtproxy", action="store_true",
+        help="Set up MTProxy (Telegram proxy, port 80) on --node targets. "
+             "Requires --main-password and --node SERVER_ID:IP:PASSWORD.",
+    )
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
 
-    if not args.bot and not args.nodes:
-        raise SystemExit("Specify --bot and/or --nodes")
+    if not args.bot and not args.nodes and not args.mtproxy:
+        raise SystemExit("Specify --bot, --nodes, and/or --mtproxy")
     if args.bot and not args.main_password:
         raise SystemExit("--bot requires --main-password")
-    if args.nodes and not args.nodes_list:
-        raise SystemExit("--nodes requires at least one --node IP:PASSWORD")
+    if (args.nodes or args.mtproxy) and not args.nodes_list:
+        raise SystemExit("--nodes/--mtproxy requires at least one --node")
+    if args.mtproxy and not args.main_password:
+        raise SystemExit("--mtproxy requires --main-password (to update the bot DB)")
 
     if args.bot:
         print(f"[bot] connecting to {args.main_host}…")
@@ -181,17 +220,37 @@ def main() -> None:
         finally:
             c.close()
 
-    if args.nodes:
+    main_c: paramiko.SSHClient | None = None
+
+    if args.nodes or args.mtproxy:
         for node_str in args.nodes_list:
-            ip, _, password = node_str.partition(":")
-            if not password:
-                raise SystemExit(f"Bad --node format (expected IP:PASSWORD): {node_str}")
+            parts = node_str.split(":")
+            if args.mtproxy:
+                # Format: SERVER_ID:IP:PASSWORD
+                if len(parts) < 3:
+                    raise SystemExit(f"--mtproxy expects SERVER_ID:IP:PASSWORD, got: {node_str}")
+                server_id, ip, password = int(parts[0]), parts[1], ":".join(parts[2:])
+            else:
+                # Format: IP:PASSWORD
+                if len(parts) < 2:
+                    raise SystemExit(f"Bad --node format (expected IP:PASSWORD): {node_str}")
+                ip, password = parts[0], ":".join(parts[1:])
+                server_id = 0
+
             print(f"[node {ip}] connecting…")
             c = connect(ip, password)
             try:
-                update_agent(c, ip)
+                if args.nodes:
+                    update_agent(c, ip)
+                if args.mtproxy:
+                    if main_c is None:
+                        main_c = connect(args.main_host, args.main_password)
+                    setup_mtproxy(c, ip, main_c, server_id)
             finally:
                 c.close()
+
+    if main_c is not None:
+        main_c.close()
 
     print("\nAll done.")
 

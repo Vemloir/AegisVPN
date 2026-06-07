@@ -31,6 +31,7 @@ class Server(Base):
     # node). `{uuid}`/`{host}` placeholders are substituted; the bot appends the
     # flagged label as the #fragment. NULL = normal agent-backed server.
     static_uri: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    mtproxy_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     subscription_servers: Mapped[list["SubscriptionServer"]] = relationship(
         back_populates="server", cascade="all, delete-orphan"

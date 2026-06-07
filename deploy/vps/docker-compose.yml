@@ -31,6 +31,15 @@ services:
       - ./data/bot:/data
       - ./data/vpn:/vpn-data:ro
 
+  mtg:
+    image: ghcr.io/9seconds/mtg:2
+    container_name: aegis-mtg
+    restart: unless-stopped
+    network_mode: host
+    logging: *default-logging
+    profiles:
+      - mtproxy
+
   caddy:
     image: caddy:2
     container_name: aegis-caddy

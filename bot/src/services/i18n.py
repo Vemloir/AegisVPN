@@ -125,6 +125,14 @@ TEXTS: dict[str, dict[str, str]] = {
         "reissue_subscription_success": "Подписка перевыпущена.\n\nНовая ссылка:\n{link}\n\nОбновите её в вашем клиенте.",
         "reissue_subscription_no_active": "У вас нет активной подписки для перевыпуска.",
         "reissue_subscription_failed": "Не удалось перевыпустить подписку. Попробуйте ещё раз.",
+        "tg_proxy_btn": "Telegram-прокси",
+        "vpn_sub_btn": "VPN-подписка",
+        "tg_proxy_title": "Telegram MTProxy",
+        "tg_proxy_hint": (
+            "Прокси для Telegram — работает без VPN-клиента, прямо в настройках Telegram.\n\n"
+            "Нажмите на ссылку нужной локации, чтобы добавить прокси:"
+        ),
+        "tg_proxy_none": "Прокси пока не настроены. Скоро появятся.",
     },
     "en": {
         "buy_vpn": "Buy VPN",
@@ -245,6 +253,14 @@ TEXTS: dict[str, dict[str, str]] = {
         "reissue_subscription_success": "Subscription reissued.\n\nNew link:\n{link}\n\nUpdate it in your client.",
         "reissue_subscription_no_active": "You do not have an active subscription to reissue.",
         "reissue_subscription_failed": "Failed to reissue the subscription. Please try again.",
+        "tg_proxy_btn": "Telegram proxy",
+        "vpn_sub_btn": "VPN subscription",
+        "tg_proxy_title": "Telegram MTProxy",
+        "tg_proxy_hint": (
+            "A proxy for Telegram — works without a VPN client, directly in Telegram settings.\n\n"
+            "Tap a location link to add the proxy:"
+        ),
+        "tg_proxy_none": "No proxies configured yet. Coming soon.",
     },
 }
 

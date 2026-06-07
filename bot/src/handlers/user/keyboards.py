@@ -13,16 +13,18 @@ def subscription_keyboard(
     is_lifetime: bool = False,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    # The subscription link is now shown inline on the screen; offer the setup
-    # guide directly instead of a button that just revealed the link.
-    if has_v2ray:
+    if has_active_subscription:
+        rows.append([
+            InlineKeyboardButton(text=t(language, "vpn_sub_btn"), callback_data="subscription_show_v2ray"),
+            InlineKeyboardButton(text=t(language, "tg_proxy_btn"), callback_data="tg_proxy_open"),
+        ])
         rows.append([InlineKeyboardButton(text=t(language, "setup_guide"), callback_data="help_setup:v2ray")])
-    # No point offering "renew" to a lifetime subscription.
-    if not (has_active_subscription and is_lifetime):
-        action_text = t(language, "renew_vpn") if has_active_subscription else t(language, "buy_vpn")
-        rows.append([InlineKeyboardButton(text=action_text, callback_data="buy_plan")])
-    if show_trial and not has_active_subscription:
-        rows.append([InlineKeyboardButton(text=t(language, "trial_vpn"), callback_data="trial_activate")])
+        if not is_lifetime:
+            rows.append([InlineKeyboardButton(text=t(language, "renew_vpn"), callback_data="buy_plan")])
+    else:
+        rows.append([InlineKeyboardButton(text=t(language, "buy_vpn"), callback_data="buy_plan")])
+        if show_trial:
+            rows.append([InlineKeyboardButton(text=t(language, "trial_vpn"), callback_data="trial_activate")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

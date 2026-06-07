@@ -5,11 +5,11 @@ from datetime import UTC, datetime
 
 from aiogram import F, Router, html
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import select
 
 from src.core.database import async_session_maker
-from src.models import Subscription, User
+from src.models import Server, Subscription, User
 from src.services import (
     ServerAccessService,
     SubscriptionService,
@@ -151,6 +151,37 @@ async def cq_subscription_show_v2ray(call: CallbackQuery):
         return
     text, markup = rendered
     await call.message.edit_text(text, parse_mode="HTML", reply_markup=markup)  # type: ignore
+    await call.answer()
+
+
+@router.callback_query(F.data == "tg_proxy_open")
+async def cq_tg_proxy_open(call: CallbackQuery):
+    if not await require_privacy(call):
+        return
+    language = await get_user_language(call.from_user.id)
+
+    async with async_session_maker() as session:
+        result = await session.execute(
+            select(Server)
+            .where(Server.is_active == True, Server.mtproxy_secret.isnot(None))  # noqa: E712
+            .order_by(Server.display_order, Server.name)
+        )
+        servers = result.scalars().all()
+
+    if not servers:
+        text = f"{html.bold(t(language, 'tg_proxy_title'))}\n\n{t(language, 'tg_proxy_none')}"
+    else:
+        lines = [html.bold(t(language, "tg_proxy_title")), "", t(language, "tg_proxy_hint"), ""]
+        for server in servers:
+            label = f"{server.flag} {server.name}" if server.flag else server.name
+            link = f"https://t.me/proxy?server={server.host}&port=80&secret={server.mtproxy_secret}"
+            lines.append(f"{label}: {html.link(label, link)}")
+        text = "\n".join(lines)
+
+    markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t(language, "back_to_subscription"), callback_data="subscription_open")]
+    ])
+    await call.message.edit_text(text, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)  # type: ignore
     await call.answer()
 
 

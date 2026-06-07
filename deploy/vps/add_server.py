@@ -66,6 +66,8 @@ def parse_args() -> argparse.Namespace:
                    help="Skip registering a per-location Cloudflare WARP account "
                         "(by default each node gets its own, used to route AI "
                         "domains around VPS-range blocks).")
+    p.add_argument("--no-mtproxy", action="store_true",
+                   help="Skip setting up MTProxy (Telegram proxy) on this node.")
     return p.parse_args()
 
 
@@ -488,6 +490,39 @@ def main() -> int:
             timeout=30,
         )
         print("     " + out.strip())
+
+        if not args.no_mtproxy and server_id is not None:
+            print("[+] setting up MTProxy (Telegram proxy) on port 80…")
+            code, secret_out, _ = exec_command(
+                new_client,
+                "docker run --rm ghcr.io/9seconds/mtg:2 generate-secret google.com 2>/dev/null",
+                timeout=60,
+            )
+            mtproxy_secret = secret_out.strip()
+            if code == 0 and mtproxy_secret:
+                run_or_die(
+                    new_client,
+                    f"cd /root/aegis/deploy/vps && "
+                    f"docker compose --profile mtproxy run -d --name aegis-mtg "
+                    f"--no-deps mtg run {mtproxy_secret} --bind 0.0.0.0:80 2>&1 | tail -2",
+                    "start mtg", timeout=60,
+                )
+                # Store secret in bot DB
+                update_cmd = (
+                    f"docker exec aegis-bot python3 -c "
+                    f"'import asyncio; from sqlalchemy import text; from src.core.database import async_session_maker\n"
+                    f"exec(\"\"\"async def q():\\n"
+                    f"    async with async_session_maker() as s:\\n"
+                    f"        await s.execute(text(\\\"UPDATE servers SET mtproxy_secret=\\\\\\\"{mtproxy_secret}\\\\\\\" WHERE id={server_id}\\\"))\\n"
+                    f"        await s.commit()\\n"
+                    f"        print(\\\"ok\\\")\\n"
+                    f"asyncio.run(q())\"\"\")'"
+                )
+                run_or_die(main_client, update_cmd, "save mtproxy_secret", timeout=30)
+                print(f"     MTProxy ready — secret={mtproxy_secret[:8]}…")
+                print(f"     Link: https://t.me/proxy?server={args.server_domain}&port=80&secret={mtproxy_secret}")
+            else:
+                print("     [warn] failed to generate MTProxy secret, skipping.")
     finally:
         if main_client is not None:
             try: main_client.close()
