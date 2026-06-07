@@ -316,27 +316,43 @@ class SubscriptionService:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _os_version(raw: str, keep_minor: bool = False) -> str:
+        """A plausible OS version from a raw UA token, or '' if implausible.
+
+        Guards against clients (e.g. Happ) that append a long build number after the
+        OS name like ``Android/17800541067281831514`` — a real OS major version is a
+        small integer, so anything above 99 is rejected.
+        """
+        parts = raw.replace("_", ".").split(".")
+        head = parts[0]
+        if not head.isdigit() or not (1 <= int(head) <= 99):
+            return ""
+        if keep_minor and len(parts) > 1 and parts[1].isdigit():
+            return f"{head}.{parts[1]}"
+        return head
+
+    @staticmethod
     def _detect_platform(ua: str) -> str:
         ua_lower = ua.lower()
         if "ipad" in ua_lower:
             m = _UA_IOS_VER_RE.search(ua)
-            ver = m.group(1).replace("_", ".").rsplit(".", 1)[0] if m else ""
+            ver = SubscriptionService._os_version(m.group(1)) if m else ""
             return f"iPad · iOS {ver}" if ver else "iPad"
         if "iphone" in ua_lower or "iphone os" in ua_lower:
             m = _UA_IOS_VER_RE.search(ua)
-            ver = m.group(1).replace("_", ".").rsplit(".", 1)[0] if m else ""
+            ver = SubscriptionService._os_version(m.group(1)) if m else ""
             return f"iPhone · iOS {ver}" if ver else "iPhone"
         if "android" in ua_lower:
             m = _UA_AND_VER_RE.search(ua)
-            ver = m.group(1).rsplit(".", 1)[0] if m else ""
+            ver = SubscriptionService._os_version(m.group(1)) if m else ""
             return f"Android {ver}" if ver else "Android"
         if "windows" in ua_lower:
             m = _UA_WIN_VER_RE.search(ua)
-            ver = _WIN_NT.get(m.group(1), m.group(1)) if m else ""
+            ver = _WIN_NT.get(m.group(1), "") if m else ""
             return f"Windows {ver}" if ver else "Windows"
         if "mac os x" in ua_lower or "macos" in ua_lower:
             m = _UA_MAC_VER_RE.search(ua)
-            ver = m.group(1).replace("_", ".").rsplit(".", 1)[0] if m else ""
+            ver = SubscriptionService._os_version(m.group(1), keep_minor=True) if m else ""
             return f"macOS {ver}" if ver else "macOS"
         if "linux" in ua_lower:
             return "Linux"
@@ -382,6 +398,14 @@ class SubscriptionService:
         device = result.scalar_one_or_none()
 
         if device is not None:
+            # Re-derive name/OS from the current UA so records created by an older,
+            # buggier parser self-heal on the next subscription fetch.
+            new_name = SubscriptionService.make_device_display_name(ua)
+            new_os = SubscriptionService._detect_platform(ua) or None
+            if device.display_name != new_name:
+                device.display_name = new_name
+            if device.os_label != new_os:
+                device.os_label = new_os
             if not device.is_suspended:
                 device.last_active_at = now
             return device

@@ -40,3 +40,26 @@ def test_build_subscription_url_contains_token():
     url = SubscriptionService.build_subscription_url("tok123")
     assert url.startswith("http")
     assert "/sub/tok123" in url
+
+
+def test_happ_android_build_number_is_not_os_version():
+    # Happ appends its own build number after the OS name; it must not be read as
+    # an Android version (regression: "Android 17800541067281831514").
+    ua = "Happ/2.9.1/Android/17800541067281831514"
+    assert SubscriptionService._detect_platform(ua) == "Android"
+    assert SubscriptionService.make_device_display_name(ua) == "Android · Happ"
+
+
+def test_standard_android_version_is_parsed():
+    ua = "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36"
+    assert SubscriptionService._detect_platform(ua) == "Android 14"
+
+
+def test_happ_windows_has_no_bogus_version():
+    assert SubscriptionService._detect_platform("Happ/2.9.1/Windows/2604241012503") == "Windows"
+
+
+def test_ios_version_parsed_but_build_rejected():
+    assert SubscriptionService._detect_platform("Happ/2.9.1/iPhone/99887766554433") == "iPhone"
+    ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X)"
+    assert SubscriptionService._detect_platform(ua) == "iPhone · iOS 17"
