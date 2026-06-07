@@ -108,6 +108,13 @@ def update_bot(c: paramiko.SSHClient) -> None:
         rel = py.relative_to(BOT_DIR)
         upload(c, py, f"/root/aegis/bot/{rel.as_posix()}")
 
+    # Dependency manifests must ship too — the image installs from pyproject.toml,
+    # so a dependency change is invisible to the build unless these are uploaded.
+    for manifest in ("pyproject.toml", "uv.lock"):
+        src = BOT_DIR / manifest
+        if src.exists():
+            upload(c, src, f"/root/aegis/bot/{manifest}")
+
     # Recreate bot container WITHOUT going through docker compose up
     # (which would also restart aegis-vpn via depends_on).
     print("  rebuilding image…")
