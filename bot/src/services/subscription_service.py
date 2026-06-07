@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import settings
 from src.core.logger import logger
 from src.models import Device, Server, Subscription, SubscriptionServer
+from src.services import geoip
 from src.services.agent_client import AgentClient
 from src.services.server_access_service import ServerAccessService
 
@@ -366,6 +367,7 @@ class SubscriptionService:
         session: AsyncSession,
         sub: "Subscription",
         ua: str,
+        client_ip: str | None = None,
     ) -> "Device":
         fingerprint = SubscriptionService.fingerprint_ua(ua)
         now = datetime.now(UTC).replace(tzinfo=None)
@@ -384,11 +386,19 @@ class SubscriptionService:
                 device.last_active_at = now
             return device
 
+        # New device: capture OS (from UA) and the approximate "added from" location
+        # (GeoIP of the requesting IP, resolved once; the IP itself is not stored).
+        os_label = SubscriptionService._detect_platform(ua) or None
+        added_location, added_country_code = geoip.lookup(client_ip)
+
         device = Device(
             subscription_id=sub.id,
             uuid=str(_uuid_mod.uuid4()),
             ua_fingerprint=fingerprint,
             display_name=SubscriptionService.make_device_display_name(ua),
+            os_label=os_label,
+            added_location=added_location,
+            added_country_code=added_country_code,
             last_active_at=now,
             is_active=True,
         )

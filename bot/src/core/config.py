@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     backup_hour: int = 4  # UTC hour for the daily backup
     backup_keep: int = 7  # local rotated copies kept under /data/backups
 
+    # Offline GeoIP (DB-IP City Lite) for the "added from" location on devices.
+    # Downloaded into the persistent /data volume on first boot, refreshed monthly.
+    geoip_enabled: bool = True
+    geoip_db_path: str = "/data/geoip/dbip-city-lite.mmdb"
+
     @property
     def db_url(self) -> str:
         if self.database_url:
