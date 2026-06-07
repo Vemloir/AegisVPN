@@ -22,5 +22,6 @@ class Device(Base):
     display_name: Mapped[str] = mapped_column(String(100))
     last_active_at: Mapped[datetime | None] = mapped_column(nullable=True, default=utcnow)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_suspended: Mapped[bool] = mapped_column(Boolean, default=False)
 
     subscription: Mapped["Subscription"] = relationship(back_populates="devices")

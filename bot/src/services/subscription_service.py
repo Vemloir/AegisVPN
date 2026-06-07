@@ -20,6 +20,11 @@ from src.services.server_access_service import ServerAccessService
 _UA_VERSION_RE = re.compile(r"/[\d.]+")
 _UA_DIGITS_RE = re.compile(r"\b\d[\d.]*\b")
 _UA_PRODUCT_RE = re.compile(r"^([A-Za-z0-9][\w\-.+]*)")
+_UA_IOS_VER_RE = re.compile(r"(?:iPhone OS|iOS)\s+([\d_]+)")
+_UA_AND_VER_RE = re.compile(r"Android\s+([\d.]+)")
+_UA_WIN_VER_RE = re.compile(r"Windows NT\s+([\d.]+)")
+_WIN_NT = {"10.0": "10/11", "6.3": "8.1", "6.2": "8", "6.1": "7"}
+_UA_MAC_VER_RE = re.compile(r"Mac OS X\s+([\d_]+)")
 
 
 class SubscriptionService:
@@ -310,25 +315,37 @@ class SubscriptionService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _detect_platform(ua_lower: str) -> str:
-        if "iphone" in ua_lower or "ipad" in ua_lower or "iphone os" in ua_lower:
-            return "iOS"
+    def _detect_platform(ua: str) -> str:
+        ua_lower = ua.lower()
+        if "ipad" in ua_lower:
+            m = _UA_IOS_VER_RE.search(ua)
+            ver = m.group(1).replace("_", ".").rsplit(".", 1)[0] if m else ""
+            return f"iPad · iOS {ver}" if ver else "iPad"
+        if "iphone" in ua_lower or "iphone os" in ua_lower:
+            m = _UA_IOS_VER_RE.search(ua)
+            ver = m.group(1).replace("_", ".").rsplit(".", 1)[0] if m else ""
+            return f"iPhone · iOS {ver}" if ver else "iPhone"
         if "android" in ua_lower:
-            return "Android"
+            m = _UA_AND_VER_RE.search(ua)
+            ver = m.group(1).rsplit(".", 1)[0] if m else ""
+            return f"Android {ver}" if ver else "Android"
         if "windows" in ua_lower:
-            return "Windows"
+            m = _UA_WIN_VER_RE.search(ua)
+            ver = _WIN_NT.get(m.group(1), m.group(1)) if m else ""
+            return f"Windows {ver}" if ver else "Windows"
         if "mac os x" in ua_lower or "macos" in ua_lower:
-            return "macOS"
+            m = _UA_MAC_VER_RE.search(ua)
+            ver = m.group(1).replace("_", ".").rsplit(".", 1)[0] if m else ""
+            return f"macOS {ver}" if ver else "macOS"
         if "linux" in ua_lower:
             return "Linux"
         return ""
 
     @staticmethod
     def make_device_display_name(ua: str) -> str:
-        # Extract the first product token (app name is always the first word before '/' or space).
         m = _UA_PRODUCT_RE.match(ua.strip())
         client = m.group(1) if m else ""
-        platform = SubscriptionService._detect_platform(ua.lower())
+        platform = SubscriptionService._detect_platform(ua)
         if client and platform:
             return f"{platform} · {client}"
         if client:
@@ -363,7 +380,8 @@ class SubscriptionService:
         device = result.scalar_one_or_none()
 
         if device is not None:
-            device.last_active_at = now
+            if not device.is_suspended:
+                device.last_active_at = now
             return device
 
         device = Device(
@@ -406,6 +424,39 @@ class SubscriptionService:
                 logger.error("device sync to server %s failed: %s", server.id, exc)
 
         await asyncio.gather(*(_add(s) for s in servers))
+
+    @staticmethod
+    async def suspend_device(
+        session: AsyncSession,
+        sub: "Subscription",
+        device: "Device",
+    ) -> None:
+        result = await session.execute(
+            select(Server)
+            .join(SubscriptionServer)
+            .where(SubscriptionServer.subscription_id == sub.id)
+        )
+        servers = result.scalars().all()
+
+        async def _remove(server: Server) -> None:
+            if getattr(server, "static_uri", None):
+                return
+            try:
+                await AgentClient(server.agent_url, server.agent_token).remove_client(device.uuid)
+            except Exception as exc:
+                logger.error("device suspend on server %s failed: %s", server.id, exc)
+
+        await asyncio.gather(*(_remove(s) for s in servers))
+        device.is_suspended = True
+
+    @staticmethod
+    async def resume_device(
+        session: AsyncSession,
+        sub: "Subscription",
+        device: "Device",
+    ) -> None:
+        await SubscriptionService._sync_device_to_servers(session, sub, device)
+        device.is_suspended = False
 
     @staticmethod
     async def remove_device(

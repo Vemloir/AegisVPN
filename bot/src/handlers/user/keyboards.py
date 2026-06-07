@@ -93,15 +93,27 @@ def language_keyboard(language: str) -> InlineKeyboardMarkup:
 def devices_list_keyboard(language: str, devices: list) -> InlineKeyboardMarkup:
     rows = []
     for device in devices:
-        name = device.display_name[:24] + "…" if len(device.display_name) > 24 else device.display_name
-        rows.append([
-            InlineKeyboardButton(
-                text=t(language, "devices_remove_btn", name=name),
-                callback_data=f"devices_remove:{device.id}",
-            )
-        ])
+        label = device.display_name[:28] + "…" if len(device.display_name) > 28 else device.display_name
+        if device.is_suspended:
+            label = f"[II] {label}"
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"devices_detail:{device.id}")])
     rows.append([InlineKeyboardButton(text=t(language, "back_to_settings"), callback_data="settings_open")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def device_detail_keyboard(language: str, device_id: int, is_suspended: bool) -> InlineKeyboardMarkup:
+    suspend_btn = (
+        InlineKeyboardButton(text=t(language, "device_resume_btn"), callback_data=f"devices_resume:{device_id}")
+        if is_suspended
+        else InlineKeyboardButton(text=t(language, "device_suspend_btn"), callback_data=f"devices_suspend:{device_id}")
+    )
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [suspend_btn],
+            [InlineKeyboardButton(text=t(language, "device_remove_btn"), callback_data=f"devices_remove:{device_id}")],
+            [InlineKeyboardButton(text=t(language, "devices_back"), callback_data="devices_open")],
+        ]
+    )
 
 
 def device_remove_confirm_keyboard(language: str, device_id: int) -> InlineKeyboardMarkup:
