@@ -83,6 +83,7 @@ async def _render_device_detail(tg_id: int, language: str, device_id: int) -> tu
 
         name = _clean_label(device.display_name)
         os_label = _clean_label(device.os_label)
+        build = device.build_number
         added = device.created_at.strftime("%d.%m.%Y, %H:%M")
         location = device.added_location
         country_code = device.added_country_code
@@ -95,6 +96,8 @@ async def _render_device_detail(tg_id: int, language: str, device_id: int) -> tu
     # the bare platform — the real OS version simply isn't in the User-Agent.
     if os_label:
         lines.append(t(language, "device_detail_os", os=os_label))
+    if build:
+        lines.append(t(language, "device_detail_build", build=build))
     lines.append(t(language, "device_detail_added", date=added))
     if location:
         flag = flag_emoji(country_code)

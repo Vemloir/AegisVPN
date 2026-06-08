@@ -24,6 +24,8 @@ class Device(Base):
     # OS + version parsed from the User-Agent at creation (e.g. "iOS 17", "Windows 10/11").
     # Empty for clients that don't report it (Happ sends just "Android"/"Windows").
     os_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Client build number from the User-Agent (e.g. Happ's "Happ/2.9.1/Android/<build>").
+    build_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # Approximate location the device was added from (GeoIP of the IP that first
     # fetched the subscription), resolved once at creation. The IP itself is not stored.
     added_location: Mapped[str | None] = mapped_column(String(128), nullable=True)

@@ -372,6 +372,20 @@ class SubscriptionService:
         return "Device"
 
     @staticmethod
+    def extract_build(ua: str) -> str | None:
+        """Client build number from the UA, if present.
+
+        Many clients append a long numeric build as a slash segment, e.g. Happ's
+        ``Happ/2.9.1/Android/17800541067281831514``. Return the first all-digit
+        segment of 4+ digits (short tokens like an OS major version are ignored).
+        """
+        for part in ua.split("/"):
+            part = part.strip()
+            if part.isdigit() and len(part) >= 4:
+                return part
+        return None
+
+    @staticmethod
     def fingerprint_ua(ua: str) -> str:
         normalized = _UA_VERSION_RE.sub("", ua)
         normalized = _UA_DIGITS_RE.sub("", normalized)
@@ -398,21 +412,25 @@ class SubscriptionService:
         device = result.scalar_one_or_none()
 
         if device is not None:
-            # Re-derive name/OS from the current UA so records created by an older,
-            # buggier parser self-heal on the next subscription fetch.
+            # Re-derive name/OS/build from the current UA so records created by an
+            # older, buggier parser self-heal on the next subscription fetch.
             new_name = SubscriptionService.make_device_display_name(ua)
             new_os = SubscriptionService._detect_platform(ua) or None
+            new_build = SubscriptionService.extract_build(ua)
             if device.display_name != new_name:
                 device.display_name = new_name
             if device.os_label != new_os:
                 device.os_label = new_os
+            if device.build_number != new_build:
+                device.build_number = new_build
             if not device.is_suspended:
                 device.last_active_at = now
             return device
 
-        # New device: capture OS (from UA) and the approximate "added from" location
-        # (GeoIP of the requesting IP, resolved once; the IP itself is not stored).
+        # New device: capture OS + build (from UA) and the approximate "added from"
+        # location (GeoIP of the requesting IP, resolved once; the IP isn't stored).
         os_label = SubscriptionService._detect_platform(ua) or None
+        build_number = SubscriptionService.extract_build(ua)
         added_location, added_country_code = geoip.lookup(client_ip)
 
         device = Device(
@@ -421,6 +439,7 @@ class SubscriptionService:
             ua_fingerprint=fingerprint,
             display_name=SubscriptionService.make_device_display_name(ua),
             os_label=os_label,
+            build_number=build_number,
             added_location=added_location,
             added_country_code=added_country_code,
             last_active_at=now,
