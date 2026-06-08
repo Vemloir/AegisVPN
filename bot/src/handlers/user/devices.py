@@ -16,6 +16,7 @@ from sqlalchemy import select
 from src.core.database import async_session_maker
 from src.models import Device, Subscription, User
 from src.services import get_user_language, t
+from src.services.geoip import flag_emoji
 from src.services.subscription_service import SubscriptionService
 
 from .keyboards import device_detail_keyboard, device_remove_confirm_keyboard, devices_list_keyboard
@@ -74,12 +75,24 @@ async def _render_device_detail(tg_id: int, language: str, device_id: int) -> tu
             return None
 
         name = device.display_name
+        os_label = device.os_label
         added = device.created_at.strftime("%d.%m.%Y, %H:%M")
+        location = device.added_location
+        country_code = device.added_country_code
         is_suspended = device.is_suspended
         dev_id = device.id
 
     lines = [html.bold(name), ""]
+    # Only show the OS line when it carries a real version (e.g. "iOS 17"); the bare
+    # platform ("Android") is already in the device name, and clients like Happ don't
+    # report a version at all.
+    if os_label and any(ch.isdigit() for ch in os_label):
+        lines.append(t(language, "device_detail_os", os=os_label))
     lines.append(t(language, "device_detail_added", date=added))
+    if location:
+        flag = flag_emoji(country_code)
+        loc = f"{flag} {location}".strip() if flag else location
+        lines.append(t(language, "device_detail_location", location=loc))
     if is_suspended:
         lines.append(t(language, "device_detail_suspended"))
 

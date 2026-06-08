@@ -21,6 +21,13 @@ class Device(Base):
     uuid: Mapped[str] = mapped_column(String(36), unique=True, index=True)
     ua_fingerprint: Mapped[str] = mapped_column(String(64))
     display_name: Mapped[str] = mapped_column(String(100))
+    # OS + version parsed from the User-Agent at creation (e.g. "iOS 17", "Windows 10/11").
+    # Empty for clients that don't report it (Happ sends just "Android"/"Windows").
+    os_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Approximate location the device was added from (GeoIP of the IP that first
+    # fetched the subscription), resolved once at creation. The IP itself is not stored.
+    added_location: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    added_country_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
     last_active_at: Mapped[datetime | None] = mapped_column(nullable=True, default=utcnow)
     # Server where traffic was last seen (set by poll_traffic)
     last_server_id: Mapped[int | None] = mapped_column(
