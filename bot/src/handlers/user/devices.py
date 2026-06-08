@@ -1,12 +1,10 @@
 """Devices management screen: list, detail, suspend/resume, remove.
 
-We only surface information we can state reliably — the device's display name,
-when it was added, and whether its subscription is suspended. Connection status,
-location and per-device traffic were intentionally dropped: the server can't tell
-two devices apart while they share a UUID, and a subscription refresh alone (no
-real connection) made those signals misleading.
+Shows the device name, OS (when the client reports it), the approximate location
+it was added from, and the added time — plus suspend/resume/delete controls.
 """
 
+import re
 from datetime import UTC, datetime
 
 from aiogram import F, Router, html
@@ -18,6 +16,15 @@ from src.models import Device, Subscription, User
 from src.services import get_user_language, t
 from src.services.geoip import flag_emoji
 from src.services.subscription_service import SubscriptionService
+
+# Strips a 3+ digit run (a client build number like Happ's) that an older parser
+# may have stored as if it were an OS version — so stale records render cleanly
+# without waiting for the self-heal on the next subscription fetch.
+_BUILD_NUM_RE = re.compile(r"\s+\d{3,}")
+
+
+def _clean_label(s: str | None) -> str | None:
+    return _BUILD_NUM_RE.sub("", s) if s else s
 
 from .keyboards import device_detail_keyboard, device_remove_confirm_keyboard, devices_list_keyboard
 
@@ -55,7 +62,7 @@ async def _render_devices(tg_id: int, language: str) -> tuple[str, object]:
     else:
         for i, dev in enumerate(devices, 1):
             status = " [II]" if dev.is_suspended else ""
-            lines.append(f"{i}. {dev.display_name}{status}")
+            lines.append(f"{i}. {_clean_label(dev.display_name)}{status}")
     lines += ["", t(language, "devices_hint")]
     return "\n".join(lines), devices_list_keyboard(language, devices)
 
@@ -74,8 +81,8 @@ async def _render_device_detail(tg_id: int, language: str, device_id: int) -> tu
         if not device:
             return None
 
-        name = device.display_name
-        os_label = device.os_label
+        name = _clean_label(device.display_name)
+        os_label = _clean_label(device.os_label)
         added = device.created_at.strftime("%d.%m.%Y, %H:%M")
         location = device.added_location
         country_code = device.added_country_code
@@ -83,10 +90,10 @@ async def _render_device_detail(tg_id: int, language: str, device_id: int) -> tu
         dev_id = device.id
 
     lines = [html.bold(name), ""]
-    # Only show the OS line when it carries a real version (e.g. "iOS 17"); the bare
-    # platform ("Android") is already in the device name, and clients like Happ don't
-    # report a version at all.
-    if os_label and any(ch.isdigit() for ch in os_label):
+    # Always show the OS line. It carries a version when the client reports one
+    # (e.g. "iOS 17"); for clients that don't (Happ sends just "Android"), it shows
+    # the bare platform — the real OS version simply isn't in the User-Agent.
+    if os_label:
         lines.append(t(language, "device_detail_os", os=os_label))
     lines.append(t(language, "device_detail_added", date=added))
     if location:

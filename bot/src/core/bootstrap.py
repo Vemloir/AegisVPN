@@ -148,6 +148,28 @@ async def bootstrap_server() -> None:
         await session.commit()
 
 
+async def heal_device_labels() -> None:
+    """One-time cleanup: strip client build numbers an older parser stored as if
+    they were OS versions (e.g. "Android 17800541067281831514" → "Android")."""
+    import re
+
+    from src.models import Device
+
+    pat = re.compile(r"\s+\d{3,}")
+    async with async_session_maker() as session:
+        devices = (await session.execute(select(Device))).scalars().all()
+        changed = False
+        for d in devices:
+            if d.display_name and (fixed := pat.sub("", d.display_name)) != d.display_name:
+                d.display_name = fixed
+                changed = True
+            if d.os_label and (fixed := pat.sub("", d.os_label)) != d.os_label:
+                d.os_label = fixed
+                changed = True
+        if changed:
+            await session.commit()
+
+
 async def bootstrap_application() -> None:
     if settings.auto_init_db:
         await init_db()
@@ -156,6 +178,7 @@ async def bootstrap_application() -> None:
     await bootstrap_plans()
     await ensure_default_plan_exists()
     await bootstrap_server()
+    await heal_device_labels()
 
     # Fetch/refresh the offline GeoIP database in the background — it's a ~90MB
     # download and must not block startup; device locations resolve once it's ready.
