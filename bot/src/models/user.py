@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, Boolean, String
+from sqlalchemy import BigInteger, Boolean, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -22,6 +22,9 @@ class User(Base):
     language: Mapped[str] = mapped_column(String(8), default="ru", server_default="ru")
     trial_used: Mapped[bool] = mapped_column(Boolean, default=False)
     privacy_accepted: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Per-user simultaneous-connection override. NULL = node default applies;
+    # 0 = unlimited; N>0 = at most N concurrent source IPs.
+    conn_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     subscriptions: Mapped[list["Subscription"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     payments: Mapped[list["Payment"]] = relationship(back_populates="user", cascade="all, delete-orphan")

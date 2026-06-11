@@ -9,12 +9,11 @@ from urllib.parse import quote, urlencode
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
-
 from pydantic import BaseModel
 
 from .config import settings
-from .connlimit import conn_limit_loop
-from .models import ClientAddRequest, ClientRemoveRequest
+from .connlimit import conn_limit_loop, set_override
+from .models import ClientAddRequest, ClientRemoveRequest, ConnLimitRequest
 from .security import verify_token
 from .xray import (
     build_client_record,
@@ -37,9 +36,10 @@ app = FastAPI(title="Aegis VPN Agent")
 
 @app.on_event("startup")
 async def _start_background_tasks() -> None:
-    if settings.conn_limit > 0:
-        asyncio.create_task(conn_limit_loop())
-        print(f"conn-limit enforcement on: max {settings.conn_limit} IPs/sub, every {settings.conn_limit_interval}s")
+    # Always run the loop: even with the node default disabled (conn_limit=0),
+    # per-user overrides pushed by the bot must still be enforced.
+    asyncio.create_task(conn_limit_loop())
+    print(f"conn-limit enforcement on: default {settings.conn_limit} IPs/user, every {settings.conn_limit_interval}s")
 
 
 @app.get("/health")
@@ -53,6 +53,17 @@ async def health():
             if client_id:
                 unique_clients.add(client_id)
     return {"status": "ok", "clients": len(unique_clients)}
+
+
+@app.post("/conn-limit", dependencies=[Depends(verify_token)])
+async def conn_limit(req: ConnLimitRequest):
+    """Set or clear a per-user simultaneous-connection override.
+
+    limit=None clears it (node default applies); 0 means unlimited; >0 caps to
+    that many concurrent source IPs. Persisted across restarts.
+    """
+    set_override(req.user_id, req.limit)
+    return {"status": "ok", "user_id": req.user_id, "limit": req.limit}
 
 
 @app.get("/online", dependencies=[Depends(verify_token)])

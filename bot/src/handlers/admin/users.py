@@ -14,6 +14,7 @@ from .keyboards import (
     admin_panel_keyboard,
     cancel_keyboard,
     confirmation_keyboard,
+    user_conn_limit_keyboard,
     users_lookup_keyboard,
 )
 from .rendering import render_user_details
@@ -341,6 +342,112 @@ async def cq_admin_user_ban_confirm(call: CallbackQuery):
     text, keyboard = rendered
     await call.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)  # type: ignore
     await call.answer("Пользователь забанен")
+
+
+async def _apply_conn_limit(call_or_msg, tg_id: int, limit: int | None) -> None:
+    """Set the user's conn-limit, push to nodes, and re-render the user card."""
+    user, ok, total = await AdminService.set_user_conn_limit(tg_id, limit)
+    if user is None:
+        await call_or_msg.answer("Пользователь не найден")
+        return
+    rendered = await render_user_details(tg_id)
+    if rendered is None:
+        await call_or_msg.answer("Пользователь не найден")
+        return
+    if limit is None:
+        what = "по умолчанию"
+    elif limit == 0:
+        what = "без лимита"
+    else:
+        what = str(limit)
+    note = f"Лимит подключений: {what} (разослано на {ok}/{total} нод)"
+    text, keyboard = rendered
+    body = f"{text}\n\n{html.bold(note)}"
+    if isinstance(call_or_msg, CallbackQuery):
+        await call_or_msg.message.edit_text(body, parse_mode="HTML", reply_markup=keyboard)  # type: ignore
+        await call_or_msg.answer()
+    else:
+        await call_or_msg.answer(body, parse_mode="HTML", reply_markup=keyboard)
+
+
+@router.callback_query(F.data.startswith("admin_user_connlimit:"))
+async def cq_admin_user_connlimit(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Доступ запрещён", show_alert=True)
+        return
+
+    tg_id = int(call.data.split(":", 1)[1])  # type: ignore[arg-type]
+    rendered = await render_user_details(tg_id)
+    if rendered is None:
+        await call.answer("Пользователь не найден", show_alert=True)
+        return
+
+    text, _ = rendered
+    prompt = (
+        f"{text}\n\n{html.bold('Лимит подключений')}\n"
+        "Сколько одновременных подключений (IP) разрешить этому пользователю?\n"
+        "«По умолчанию» — как на ноде; «Без лимита» — снять ограничение."
+    )
+    await call.message.edit_text(prompt, parse_mode="HTML", reply_markup=user_conn_limit_keyboard(tg_id))  # type: ignore
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("admin_user_connlimit_set:"))
+async def cq_admin_user_connlimit_set(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Доступ запрещён", show_alert=True)
+        return
+
+    parts = call.data.split(":")  # type: ignore[union-attr]
+    if len(parts) != 3:
+        await call.answer("Некорректные параметры", show_alert=True)
+        return
+    tg_id = int(parts[1])
+    limit = None if parts[2] == "default" else int(parts[2])
+    await call.answer("Применяю...")
+    await _apply_conn_limit(call, tg_id, limit)
+
+
+@router.callback_query(F.data.startswith("admin_user_connlimit_custom:"))
+async def cq_admin_user_connlimit_custom(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        await call.answer("Доступ запрещён", show_alert=True)
+        return
+
+    tg_id = int(call.data.split(":", 1)[1])  # type: ignore[arg-type]
+    await state.set_state(AdminStates.waiting_user_conn_limit)
+    await state.update_data(conn_limit_tg_id=tg_id)
+    await call.message.edit_text(  # type: ignore
+        f"{html.bold('Лимит подключений')}\nОтправьте число (сколько одновременных IP разрешить, 0 — без лимита).",
+        parse_mode="HTML",
+        reply_markup=cancel_keyboard(f"admin_user_show:{tg_id}"),
+    )
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_user_conn_limit)
+async def msg_admin_user_conn_limit(message: Message, state: FSMContext):
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+
+    data = await state.get_data()
+    tg_id = data.get("conn_limit_tg_id")
+    if not tg_id:
+        await state.clear()
+        await message.answer("Пользователь не выбран.", reply_markup=admin_panel_keyboard())
+        return
+
+    try:
+        limit = int((message.text or "").strip())
+    except ValueError:
+        await message.answer("Нужно отправить число (0 — без лимита).")
+        return
+    if limit < 0:
+        await message.answer("Число не может быть отрицательным (0 — без лимита).")
+        return
+
+    await state.clear()
+    await _apply_conn_limit(message, tg_id, limit)
 
 
 @router.callback_query(F.data.startswith("admin_user_show:"))

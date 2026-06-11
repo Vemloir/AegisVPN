@@ -7,6 +7,7 @@ block rule, rebuilt every cycle so IPs that drop below the limit are released.
 
 import asyncio
 import json
+import os
 
 from .config import settings
 from .xray import api_server, run_xray_api
@@ -14,6 +15,61 @@ from .xray import api_server, run_xray_api
 # Whether any IPs were blocked in the previous cycle. Used to avoid
 # calling sib (which reads stdin and spams errors) when there's nothing to do.
 _prev_had_excess: bool = False
+
+# Per-user simultaneous-IP overrides, keyed by the bot's user id (the same id
+# embedded in the Xray email `user_<id>_sub_...`). Value semantics: 0 = unlimited,
+# >0 = that many IPs. A missing key falls back to the node default
+# (`settings.conn_limit`). Persisted so it survives node/agent restarts.
+_OVERRIDES_PATH = "/data/conn_limits.json"
+_overrides: dict[int, int] = {}
+
+
+def _load_overrides() -> None:
+    global _overrides
+    try:
+        with open(_OVERRIDES_PATH) as fh:
+            raw = json.load(fh)
+        _overrides = {int(k): int(v) for k, v in raw.items()}
+    except (OSError, ValueError, TypeError):
+        _overrides = {}
+
+
+def _save_overrides() -> None:
+    try:
+        os.makedirs(os.path.dirname(_OVERRIDES_PATH), exist_ok=True)
+        tmp = _OVERRIDES_PATH + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump({str(k): v for k, v in _overrides.items()}, fh)
+        os.replace(tmp, _OVERRIDES_PATH)
+    except OSError as exc:
+        print(f"conn-limit: failed to persist overrides: {exc}")
+
+
+def set_override(user_id: int, limit: int | None) -> None:
+    """Set (or, when limit is None, clear) a user's connection-limit override."""
+    if limit is None:
+        _overrides.pop(user_id, None)
+    else:
+        _overrides[user_id] = max(0, int(limit))
+    _save_overrides()
+
+
+def _user_id_from_email(email: str) -> int | None:
+    # Emails look like `user_<id>_sub_<sid>` (optionally `_dev_<did>`).
+    parts = email.split("_")
+    if len(parts) >= 2 and parts[0] == "user" and parts[1].isdigit():
+        return int(parts[1])
+    return None
+
+
+def _limit_for(email: str) -> int:
+    uid = _user_id_from_email(email)
+    if uid is not None and uid in _overrides:
+        return _overrides[uid]
+    return settings.conn_limit
+
+
+_load_overrides()
 
 
 async def online_users() -> list[str]:
@@ -53,11 +109,11 @@ async def enforce_conn_limit_once() -> int:
     automatically unblocked next cycle. Returns the count of blocked IPs.
     """
     global _prev_had_excess
-    limit = settings.conn_limit
-    if limit <= 0:
-        return 0
     excess: list[str] = []
     for email in await online_users():
+        limit = _limit_for(email)  # per-user override, else node default
+        if limit <= 0:  # 0 = unlimited (default disabled or per-user "no limit")
+            continue
         ips = await online_ips(email)
         if len(ips) <= limit:
             continue

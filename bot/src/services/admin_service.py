@@ -287,3 +287,37 @@ class AdminService:
 
             await session.commit()
             return user
+
+    @staticmethod
+    async def set_user_conn_limit(tg_id: int, limit: int | None) -> tuple[User | None, int, int]:
+        """Set a user's connection-limit override and push it to every node.
+
+        ``limit``: None → node default; 0 → unlimited; N>0 → at most N IPs.
+        Returns ``(user, pushed_ok, total_nodes)``; user is None if not found.
+        """
+        async with async_session_maker() as session:
+            user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
+            if user is None:
+                return None, 0, 0
+            user.conn_limit = limit
+            await session.commit()
+            user_id = user.id
+
+            servers = (
+                (
+                    await session.execute(
+                        select(Server).where(Server.is_active == True, Server.static_uri.is_(None))  # noqa: E712
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        async def _push(server: Server) -> bool:
+            try:
+                return await AgentClient(server.agent_url, server.agent_token).set_conn_limit(user_id, limit)
+            except Exception:
+                return False
+
+        results = await asyncio.gather(*(_push(s) for s in servers))
+        return user, sum(1 for r in results if r), len(servers)

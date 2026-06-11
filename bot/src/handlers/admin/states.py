@@ -8,3 +8,4 @@ class AdminStates(StatesGroup):
     waiting_plan_price = State()
     waiting_user_issue_days = State()
     waiting_bulk_extend_days = State()
+    waiting_user_conn_limit = State()

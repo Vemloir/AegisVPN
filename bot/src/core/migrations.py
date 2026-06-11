@@ -29,6 +29,7 @@ MIGRATIONS: dict[str, list[Column]] = {
         Column("language", "VARCHAR(8) DEFAULT 'ru'", "VARCHAR(8) DEFAULT 'ru'"),
         Column("trial_used", "BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE"),
         Column("privacy_accepted", "BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE"),
+        Column("conn_limit", "INTEGER", "INTEGER"),
     ],
     "subscriptions": [
         Column("legacy_sub_token", "VARCHAR(255)", "VARCHAR(255)"),

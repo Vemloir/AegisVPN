@@ -63,6 +63,12 @@ async def render_user_details(tg_id: int) -> tuple[str, InlineKeyboardMarkup] | 
         sub = sub_result.scalar_one_or_none()
 
         username = f"@{user.username}" if user.username else "без username"
+        if user.conn_limit is None:
+            conn_limit_text = "по умолчанию"
+        elif user.conn_limit == 0:
+            conn_limit_text = "без лимита"
+        else:
+            conn_limit_text = str(user.conn_limit)
         lines = [
             f"{html.bold('Пользователь')}",
             "",
@@ -70,6 +76,7 @@ async def render_user_details(tg_id: int) -> tuple[str, InlineKeyboardMarkup] | 
             f"Username: {username}",
             f"Статус: {'забанен' if user.is_banned else 'активен'}",
             f"Язык: {user.language}",
+            f"Лимит подключений: {conn_limit_text}",
         ]
 
         has_active_subscription = False

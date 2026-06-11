@@ -105,8 +105,19 @@ def user_manage_keyboard(user: User, has_active_subscription: bool) -> InlineKey
         [InlineKeyboardButton(text=issue_text, callback_data=f"admin_user_issue_start:{user.tg_id}")],
         [InlineKeyboardButton(text="Выдать навсегда", callback_data=f"admin_user_issue_lifetime_start:{user.tg_id}")],
         [InlineKeyboardButton(text="Удалить подписку", callback_data=f"admin_user_revoke_prompt:{user.tg_id}")],
+        [InlineKeyboardButton(text="Лимит подключений", callback_data=f"admin_user_connlimit:{user.tg_id}")],
         [InlineKeyboardButton(text=ban_text, callback_data=f"admin_user_toggle_ban:{user.tg_id}")],
         [InlineKeyboardButton(text="Другой пользователь", callback_data="admin_users")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def user_conn_limit_keyboard(tg_id: int) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="По умолчанию", callback_data=f"admin_user_connlimit_set:{tg_id}:default")],
+        [InlineKeyboardButton(text="Без лимита (∞)", callback_data=f"admin_user_connlimit_set:{tg_id}:0")],
+        [InlineKeyboardButton(text="Задать число", callback_data=f"admin_user_connlimit_custom:{tg_id}")],
+        [InlineKeyboardButton(text="Назад", callback_data=f"admin_user_show:{tg_id}")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

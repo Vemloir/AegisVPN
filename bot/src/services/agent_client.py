@@ -59,6 +59,22 @@ class AgentClient:
             return False
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    async def set_conn_limit(self, user_id: int, limit: int | None) -> bool:
+        """Push a per-user connection-limit override to the node.
+
+        ``limit`` None clears it (node default applies); 0 means unlimited; a
+        positive value caps the user to that many concurrent source IPs.
+        """
+        payload = {"user_id": user_id, "limit": limit}
+        async with get_session().post(
+            f"{self.base_url}/conn-limit", json=payload, headers=self.headers
+        ) as resp:
+            if resp.status == 200:
+                return True
+            resp.raise_for_status()
+            return False
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def get_health(self) -> dict:
         async with get_session().get(f"{self.base_url}/health") as resp:
             if resp.status == 200:
