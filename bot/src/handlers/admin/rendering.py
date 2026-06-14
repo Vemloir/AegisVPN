@@ -7,6 +7,7 @@ from aiogram.types import InlineKeyboardMarkup
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from src.core.config import settings
 from src.core.database import async_session_maker
 from src.models import Server, ServerAccessGrant, Subscription, SubscriptionServer, User
 from src.services import SubscriptionService
@@ -63,12 +64,8 @@ async def render_user_details(tg_id: int) -> tuple[str, InlineKeyboardMarkup] | 
         sub = sub_result.scalar_one_or_none()
 
         username = f"@{user.username}" if user.username else "без username"
-        if user.conn_limit is None:
-            conn_limit_text = "по умолчанию"
-        elif user.conn_limit == 0:
-            conn_limit_text = "без лимита"
-        else:
-            conn_limit_text = str(user.conn_limit)
+        effective_limit = settings.default_conn_limit if user.conn_limit is None else user.conn_limit
+        conn_limit_text = "без лимита (∞)" if effective_limit == 0 else str(effective_limit)
         lines = [
             f"{html.bold('Пользователь')}",
             "",

@@ -354,12 +354,7 @@ async def _apply_conn_limit(call_or_msg, tg_id: int, limit: int | None) -> None:
     if rendered is None:
         await call_or_msg.answer("Пользователь не найден")
         return
-    if limit is None:
-        what = "по умолчанию"
-    elif limit == 0:
-        what = "без лимита"
-    else:
-        what = str(limit)
+    what = "без лимита (∞)" if limit == 0 else str(limit)
     note = f"Лимит подключений: {what} (разослано на {ok}/{total} нод)"
     text, keyboard = rendered
     body = f"{text}\n\n{html.bold(note)}"
@@ -386,7 +381,7 @@ async def cq_admin_user_connlimit(call: CallbackQuery):
     prompt = (
         f"{text}\n\n{html.bold('Лимит подключений')}\n"
         "Сколько одновременных подключений (IP) разрешить этому пользователю?\n"
-        "«По умолчанию» — как на ноде; «Без лимита» — снять ограничение."
+        "«Без лимита» — снять ограничение совсем."
     )
     await call.message.edit_text(prompt, parse_mode="HTML", reply_markup=user_conn_limit_keyboard(tg_id))  # type: ignore
     await call.answer()
@@ -403,7 +398,7 @@ async def cq_admin_user_connlimit_set(call: CallbackQuery):
         await call.answer("Некорректные параметры", show_alert=True)
         return
     tg_id = int(parts[1])
-    limit = None if parts[2] == "default" else int(parts[2])
+    limit = int(parts[2])
     await call.answer("Применяю...")
     await _apply_conn_limit(call, tg_id, limit)
 

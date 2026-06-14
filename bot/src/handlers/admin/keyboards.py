@@ -114,7 +114,6 @@ def user_manage_keyboard(user: User, has_active_subscription: bool) -> InlineKey
 
 def user_conn_limit_keyboard(tg_id: int) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text="По умолчанию", callback_data=f"admin_user_connlimit_set:{tg_id}:default")],
         [InlineKeyboardButton(text="Без лимита (∞)", callback_data=f"admin_user_connlimit_set:{tg_id}:0")],
         [InlineKeyboardButton(text="Задать число", callback_data=f"admin_user_connlimit_custom:{tg_id}")],
         [InlineKeyboardButton(text="Назад", callback_data=f"admin_user_show:{tg_id}")],

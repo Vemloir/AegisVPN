@@ -42,6 +42,10 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
+    # Default simultaneous-connection limit per user, mirroring the node default
+    # (agent CONN_LIMIT). Shown in the admin card when a user has no override.
+    default_conn_limit: int = 5
+
     # Daily DB backup: a compressed dump is sent to each admin in Telegram.
     backup_enabled: bool = True
     backup_hour: int = 4  # UTC hour for the daily backup
