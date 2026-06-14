@@ -10,17 +10,17 @@ Both targets can be combined in one run.
 
 Usage examples:
 
-  # Update the bot only (main VPS at 89.125.181.236):
-  python update.py --main-host 89.125.181.236 --main-password '…' --bot
+  # Update the bot only (main VPS):
+  python update.py --main-host MAIN_IP --main-password '…' --bot
 
   # Update agent on two nodes:
-  python update.py --node 46.29.238.157:***REMOVED*** \\
-                   --node 150.251.158.201:***REMOVED*** \\
+  python update.py --node NODE_IP:ROOT_PASSWORD \\
+                   --node NODE_IP:ROOT_PASSWORD \\
                    --nodes
 
   # Both at once:
-  python update.py --main-host 89.125.181.236 --main-password '…' --bot \\
-                   --node 46.29.238.157:***REMOVED*** --nodes
+  python update.py --main-host MAIN_IP --main-password '…' --bot \\
+                   --node NODE_IP:ROOT_PASSWORD --nodes
 """
 
 from __future__ import annotations
