@@ -165,20 +165,36 @@ async def poll_traffic():
                 sub = link.subscription
                 if sub is None:
                     continue
-                email = f"user_{sub.user_id}_sub_{sub.id}"
-                cur = stats.get(email)
-                if not cur:
+                # A subscription reports traffic under several emails: the base
+                # user_X_sub_Y plus one user_X_sub_Y_dev_Z per device. Sum the
+                # deltas across all of them, keyed by a per-email cursor.
+                prefix = f"user_{sub.user_id}_sub_{sub.id}"
+                emails = [e for e in stats if e == prefix or e.startswith(f"{prefix}_dev_")]
+                if not emails:
                     continue
 
-                cur_up = int(cur.get("uplink", 0) or 0)
-                cur_down = int(cur.get("downlink", 0) or 0)
-
-                delta_up = cur_up - (link.traffic_last_up or 0)
-                if delta_up < 0:
-                    delta_up = cur_up
-                delta_down = cur_down - (link.traffic_last_down or 0)
-                if delta_down < 0:
-                    delta_down = cur_down
+                cursors = dict(link.traffic_cursors or {})
+                delta_up = delta_down = 0
+                for email in emails:
+                    cur = stats.get(email) or {}
+                    cur_up = int(cur.get("uplink", 0) or 0)
+                    cur_down = int(cur.get("downlink", 0) or 0)
+                    last = cursors.get(email)
+                    if last is None:
+                        # First sighting (cutover or a new device): record a
+                        # baseline so we never count pre-existing counters as a
+                        # one-time spike. Deltas accrue from the next poll on.
+                        cursors[email] = [cur_up, cur_down]
+                        continue
+                    d_up = cur_up - int(last[0])
+                    if d_up < 0:  # Xray restarted → counter reset to 0
+                        d_up = cur_up
+                    d_down = cur_down - int(last[1])
+                    if d_down < 0:
+                        d_down = cur_down
+                    delta_up += d_up
+                    delta_down += d_down
+                    cursors[email] = [cur_up, cur_down]
 
                 if delta_up:
                     sub.traffic_up_bytes = (sub.traffic_up_bytes or 0) + delta_up
@@ -188,9 +204,8 @@ async def poll_traffic():
                     sub.traffic_down_bytes = (sub.traffic_down_bytes or 0) + delta_down
                     link.traffic_down_bytes = (link.traffic_down_bytes or 0) + delta_down
                     changed = True
-                if link.traffic_last_up != cur_up or link.traffic_last_down != cur_down:
-                    link.traffic_last_up = cur_up
-                    link.traffic_last_down = cur_down
+                if cursors != (link.traffic_cursors or {}):
+                    link.traffic_cursors = cursors  # reassign so ORM flags the change
                     changed = True
 
         if changed:

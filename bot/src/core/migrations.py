@@ -41,6 +41,7 @@ MIGRATIONS: dict[str, list[Column]] = {
         Column("traffic_last_down", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
         Column("traffic_up_bytes", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
         Column("traffic_down_bytes", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
+        Column("traffic_cursors", "JSON", "JSONB"),
     ],
     "devices": [
         Column("is_suspended", "BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE"),

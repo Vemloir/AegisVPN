@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, Boolean, ForeignKey, Integer, String
+from sqlalchemy import JSON, BigInteger, Boolean, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, utcnow
@@ -46,8 +46,15 @@ class SubscriptionServer(Base):
     is_synced: Mapped[bool] = mapped_column(Boolean, default=False)
     # Last raw Xray counter seen on this node, for delta accounting. Xray
     # resets to 0 on restart; a drop below the stored value means restart.
+    # Legacy single-email cursor — superseded by traffic_cursors below, kept
+    # for backward compatibility with old rows.
     traffic_last_up: Mapped[int] = mapped_column(BigInteger, default=0)
     traffic_last_down: Mapped[int] = mapped_column(BigInteger, default=0)
+    # Per-email raw cursor {email: [last_up, last_down]} for delta accounting.
+    # A subscription now reports traffic under several emails (the base
+    # user_X_sub_Y plus one user_X_sub_Y_dev_Z per device), so we track each
+    # separately to survive Xray restarts and device add/remove.
+    traffic_cursors: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
     # Cumulative traffic on THIS node (per-location breakdown).
     traffic_up_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     traffic_down_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
