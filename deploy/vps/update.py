@@ -21,6 +21,11 @@ Usage examples:
   # Both at once:
   python update.py --main-host MAIN_IP --main-password '…' --bot \\
                    --node NODE_IP:ROOT_PASSWORD --nodes
+
+  # Switch nodes' Xray transport (xhttp|tcp) and mirror reality keys into the
+  # bot DB in one atomic pass (needs --main-password for the DB write):
+  python update.py --set-network xhttp --main-host MAIN_IP --main-password '…' \\
+                   --node NODE_IP:ROOT_PASSWORD --node NODE_IP:ROOT_PASSWORD
 """
 
 from __future__ import annotations
@@ -154,6 +159,102 @@ def update_agent(c: paramiko.SSHClient, host: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Transport switch (xhttp <-> tcp)
+# ---------------------------------------------------------------------------
+
+# agent.env lives on the host via the vpn service's ./data/vpn:/data volume.
+REMOTE_AGENT_ENV = "/root/aegis/deploy/vps/data/vpn/agent.env"
+
+
+def _parse_env(blob: str) -> dict[str, str]:
+    env: dict[str, str] = {}
+    for line in blob.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        env[key.strip()] = value.strip()
+    return env
+
+
+def _render_env(env: dict[str, str]) -> str:
+    return "".join(f"{k}={v}\n" for k, v in env.items())
+
+
+def set_network(c: paramiko.SSHClient, host: str, network: str) -> tuple[str, str]:
+    """Flip XRAY_NETWORK in the node's agent.env and restart the vpn container.
+
+    Returns (public_key, short_id) matching the *target* transport. Reality uses
+    a different keypair per transport, and the bot overrides pbk/sid from its DB
+    in normalize_vless_uri — so these MUST be mirrored into the DB or the reality
+    handshake breaks. Clients are preserved: entrypoint rebuilds the inbound from
+    the same on-disk config, only adding/stripping the vision flow as needed.
+    """
+    sftp = get_sftp(c)
+    with sftp.open(REMOTE_AGENT_ENV, "r") as fh:
+        env = _parse_env(fh.read().decode())
+
+    current = (env.get("XRAY_NETWORK") or "tcp").lower()
+    if network == "xhttp":
+        pubkey, sid = env.get("PUBLIC_KEY"), env.get("SHORT_ID")
+        env.setdefault("XHTTP_PATH", "/")
+        env.setdefault("XHTTP_MODE", "packet-up")
+    else:
+        pubkey = env.get("PUBLIC_KEY_TCP") or env.get("PUBLIC_KEY")
+        sid = env.get("SHORT_ID_TCP") or env.get("SHORT_ID")
+    if not pubkey or not sid:
+        raise SystemExit(
+            f"[{host}] agent.env missing reality keys for {network} "
+            f"(pubkey={bool(pubkey)}, sid={bool(sid)}) — aborting"
+        )
+
+    if current == network:
+        print(f"  [{host}] XRAY_NETWORK already '{network}' — re-syncing keys anyway")
+    env["XRAY_NETWORK"] = network
+    print(f"  [{host}] XRAY_NETWORK {current} -> {network}")
+    with sftp.open(REMOTE_AGENT_ENV, "w") as fh:
+        fh.write(_render_env(env))
+
+    print(f"  [{host}] restarting vpn container…")
+    run(c, "cd /root/aegis/deploy/vps && docker compose restart vpn 2>&1 | tail -2",
+        "vpn restart", timeout=120)
+    out = run(
+        c,
+        "sleep 5; docker exec aegis-vpn sh -c "
+        "'grep -m1 -o \"\\\"network\\\": \\\"[a-z]*\\\"\" "
+        "\"${XRAY_CONFIG_PATH:-/etc/xray/config.json}\"' || true",
+        "verify network", timeout=60,
+    )
+    print(f"  [{host}] live inbound: {out.strip() or '(unverified)'}")
+    return pubkey, sid
+
+
+def set_db_keys(main_c: paramiko.SSHClient, host: str, pubkey: str, sid: str) -> None:
+    """Mirror a node's active reality pubkey/short_id into its bot DB row."""
+    py = (
+        "import asyncio\n"
+        "from sqlalchemy import text\n"
+        "from src.core.database import async_session_maker\n"
+        f"PK, SID, HOST = {pubkey!r}, {sid!r}, {host!r}\n"
+        "async def q():\n"
+        "    async with async_session_maker() as s:\n"
+        "        res = await s.execute(text('UPDATE servers SET public_key=:pk, short_id=:sid WHERE host=:h'),"
+        " {'pk': PK, 'sid': SID, 'h': HOST})\n"
+        "        await s.commit()\n"
+        "        print('rows updated:', res.rowcount)\n"
+        "        r = await s.execute(text('SELECT id, name, host, public_key, short_id FROM servers WHERE host=:h'),"
+        " {'h': HOST})\n"
+        "        for row in r.fetchall(): print('  now:', tuple(row))\n"
+        "asyncio.run(q())\n"
+    )
+    cmd = "docker exec -i aegis-bot python3 <<'PYEOF'\n" + py + "PYEOF\n"
+    out = run(main_c, cmd, f"db update {host}", timeout=60)
+    print(out.rstrip())
+    if "rows updated: 0" in out:
+        raise SystemExit(f"[{host}] no servers row matched host={host} — DB NOT updated")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -200,6 +301,11 @@ def parse_args() -> argparse.Namespace:
         help="Node to update (repeatable). Format: ip:password",
     )
     p.add_argument(
+        "--set-network", choices=["xhttp", "tcp"], default=None,
+        help="Switch the Xray transport on --node targets and mirror the matching "
+             "reality keys into the bot DB. Requires --main-password.",
+    )
+    p.add_argument(
         "--mtproxy", action="store_true",
         help="Set up MTProxy (Telegram proxy, port 80) on --node targets. "
              "Requires --main-password and --node SERVER_ID:IP:PASSWORD.",
@@ -210,14 +316,18 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    if not args.bot and not args.nodes and not args.mtproxy:
-        raise SystemExit("Specify --bot, --nodes, and/or --mtproxy")
+    if not args.bot and not args.nodes and not args.mtproxy and not args.set_network:
+        raise SystemExit("Specify --bot, --nodes, --mtproxy, and/or --set-network")
     if args.bot and not args.main_password:
         raise SystemExit("--bot requires --main-password")
     if (args.nodes or args.mtproxy) and not args.nodes_list:
         raise SystemExit("--nodes/--mtproxy requires at least one --node")
     if args.mtproxy and not args.main_password:
         raise SystemExit("--mtproxy requires --main-password (to update the bot DB)")
+    if args.set_network and not args.nodes_list:
+        raise SystemExit("--set-network requires at least one --node IP:PASSWORD")
+    if args.set_network and not args.main_password:
+        raise SystemExit("--set-network requires --main-password (to update the bot DB)")
 
     if args.bot:
         print(f"[bot] connecting to {args.main_host}…")
@@ -226,6 +336,29 @@ def main() -> None:
             update_bot(c)
         finally:
             c.close()
+
+    if args.set_network:
+        results: list[tuple[str, str, str]] = []  # (ip, pubkey, sid)
+        for node_str in args.nodes_list:
+            parts = node_str.split(":")
+            if len(parts) < 2:
+                raise SystemExit(f"Bad --node format (expected IP:PASSWORD): {node_str}")
+            ip, password = parts[0], ":".join(parts[1:])
+            print(f"[set-network {ip}] connecting…")
+            c = connect(ip, password)
+            try:
+                pubkey, sid = set_network(c, ip, args.set_network)
+                results.append((ip, pubkey, sid))
+            finally:
+                c.close()
+
+        print(f"[db] connecting to {args.main_host}…")
+        mc = connect(args.main_host, args.main_password)
+        try:
+            for ip, pubkey, sid in results:
+                set_db_keys(mc, ip, pubkey, sid)
+        finally:
+            mc.close()
 
     main_c: paramiko.SSHClient | None = None
 
