@@ -19,7 +19,9 @@ class Settings(BaseSettings):
     fast_host_ip: str | None = None
     packet_encoding: str | None = "xudp"
     xhttp_path: str = "/"
-    xhttp_mode: str = "packet-up"
+    # "auto": server accepts packet-up + stream-up + stream-one; a client over
+    # direct REALITY resolves auto to stream-one (single full-duplex stream).
+    xhttp_mode: str = "auto"
 
     xray_config_path: str = "/etc/xray/config.json"
     # Local-only Xray gRPC API port (dokodemo-door inbound tagged "api").

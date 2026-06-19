@@ -26,6 +26,20 @@ Usage examples:
   # bot DB in one atomic pass (needs --main-password for the DB write):
   python update.py --set-network xhttp --main-host MAIN_IP --main-password '…' \\
                    --node NODE_IP:ROOT_PASSWORD --node NODE_IP:ROOT_PASSWORD
+
+  # Roll the xhttp tuning (server mode=auto, connIdle=60, tcpKeepAlive) onto
+  # already-xhttp nodes WITHOUT breaking the live subscriptions: push the new
+  # agent (brings the connIdle/sockopt entrypoint logic) AND re-sync the env via
+  # --set-network xhttp (rewrites XHTTP_MODE=auto). auto keeps existing packet-up
+  # clients working — no re-import. Combine both in one invocation:
+  python update.py --nodes --set-network xhttp \\
+                   --main-host MAIN_IP --main-password '…' \\
+                   --node NODE_IP:ROOT_PASSWORD --node NODE_IP:ROOT_PASSWORD
+
+  # One-time: migrate nodes to the split xray+agent topology so future code
+  # deploys (--nodes) recreate ONLY the agent and drop no client sessions:
+  python update.py --split-migrate \\
+                   --node NODE_IP:ROOT_PASSWORD --node NODE_IP:ROOT_PASSWORD
 """
 
 from __future__ import annotations
@@ -138,8 +152,11 @@ def update_bot(c: paramiko.SSHClient) -> None:
 # Agent (node) update
 # ---------------------------------------------------------------------------
 
-def update_agent(c: paramiko.SSHClient, host: str) -> None:
-    """Upload all agent sources and restart only the vpn container."""
+COMPOSE_LOCAL = ROOT / "deploy/vps/docker-compose.yml"
+REMOTE_COMPOSE = "/root/aegis/deploy/vps/docker-compose.yml"
+
+
+def _upload_agent_sources(c: paramiko.SSHClient, host: str) -> None:
     print(f"  [{host}] uploading agent sources…")
     base_files = [
         AGENT_DIR / "Dockerfile",
@@ -152,10 +169,42 @@ def update_agent(c: paramiko.SSHClient, host: str) -> None:
         rel = f.relative_to(AGENT_DIR)
         upload(c, f, f"/root/aegis/agent/{rel.as_posix()}")
 
-    print(f"  [{host}] rebuilding + restarting vpn…")
-    run(c, "cd /root/aegis/deploy/vps && docker compose up -d --build --no-deps vpn 2>&1 | tail -4",
-        "vpn rebuild", timeout=300)
+
+def update_agent(c: paramiko.SSHClient, host: str) -> None:
+    """Upload agent sources and recreate ONLY the agent container.
+
+    In the split topology xray runs in its own container, so rebuilding `agent`
+    leaves the data plane (and every live client session) untouched — code
+    deploys are zero-drop. Run --split-migrate once first to create the split.
+    """
+    _upload_agent_sources(c, host)
+    print(f"  [{host}] rebuilding + recreating agent (xray untouched)…")
+    run(c, "cd /root/aegis/deploy/vps && docker compose up -d --build --no-deps agent 2>&1 | tail -4",
+        "agent rebuild", timeout=300)
     print(f"  [{host}] agent updated ✓")
+
+
+def split_migrate(c: paramiko.SSHClient, host: str) -> None:
+    """One-time: migrate a node from the single `vpn` container to the split
+    `xray` + `agent` topology. Costs one brief xray blip at cutover; afterwards
+    `--nodes` recreates only `agent`, so future code deploys drop no sessions.
+    """
+    _upload_agent_sources(c, host)
+    print(f"  [{host}] uploading docker-compose.yml…")
+    upload(c, COMPOSE_LOCAL, REMOTE_COMPOSE)
+    print(f"  [{host}] building split images (old container still serving)…")
+    run(c, "cd /root/aegis/deploy/vps && docker compose build xray agent 2>&1 | tail -4",
+        "split build", timeout=400)
+    print(f"  [{host}] cutover: dropping single container, bringing up xray+agent…")
+    # The old `vpn` service holds the aegis-vpn name the new `agent` service
+    # wants; remove it (also stops the bundled xray) then start the split. xray
+    # reads the existing config straight off the shared ./data/vpn volume.
+    run(c, "docker rm -f aegis-vpn 2>/dev/null || true", "rm old vpn")
+    run(c, "cd /root/aegis/deploy/vps && docker compose up -d --no-deps xray agent 2>&1 | tail -6",
+        "split up", timeout=120)
+    out = run(c, "sleep 5; docker ps --filter name=aegis-xray --filter name=aegis-vpn "
+                 "--format '{{.Names}} {{.Status}}'", "verify split", timeout=60)
+    print(f"  [{host}] live containers:\n    " + "\n    ".join(out.strip().splitlines() or ["(none!)"]))
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +230,9 @@ def _render_env(env: dict[str, str]) -> str:
     return "".join(f"{k}={v}\n" for k, v in env.items())
 
 
-def set_network(c: paramiko.SSHClient, host: str, network: str) -> tuple[str, str]:
+def set_network(
+    c: paramiko.SSHClient, host: str, network: str, xhttp_mode: str = "auto"
+) -> tuple[str, str]:
     """Flip XRAY_NETWORK in the node's agent.env and restart the vpn container.
 
     Returns (public_key, short_id) matching the *target* transport. Reality uses
@@ -189,6 +240,11 @@ def set_network(c: paramiko.SSHClient, host: str, network: str) -> tuple[str, st
     in normalize_vless_uri — so these MUST be mirrored into the DB or the reality
     handshake breaks. Clients are preserved: entrypoint rebuilds the inbound from
     the same on-disk config, only adding/stripping the vision flow as needed.
+
+    For xhttp, the server mode is forced to `xhttp_mode` (default "auto"): auto
+    accepts existing packet-up clients AND new stream-up/stream-one ones, so the
+    15 live subscriptions keep working with no re-import. An explicit non-auto
+    mode would 400 every mismatched client — don't pass one unless re-issuing.
     """
     sftp = get_sftp(c)
     with sftp.open(REMOTE_AGENT_ENV, "r") as fh:
@@ -198,7 +254,8 @@ def set_network(c: paramiko.SSHClient, host: str, network: str) -> tuple[str, st
     if network == "xhttp":
         pubkey, sid = env.get("PUBLIC_KEY"), env.get("SHORT_ID")
         env.setdefault("XHTTP_PATH", "/")
-        env.setdefault("XHTTP_MODE", "packet-up")
+        env["XHTTP_MODE"] = xhttp_mode
+        env.setdefault("XRAY_CONN_IDLE", "60")
     else:
         pubkey = env.get("PUBLIC_KEY_TCP") or env.get("PUBLIC_KEY")
         sid = env.get("SHORT_ID_TCP") or env.get("SHORT_ID")
@@ -212,12 +269,20 @@ def set_network(c: paramiko.SSHClient, host: str, network: str) -> tuple[str, st
         print(f"  [{host}] XRAY_NETWORK already '{network}' — re-syncing keys anyway")
     env["XRAY_NETWORK"] = network
     print(f"  [{host}] XRAY_NETWORK {current} -> {network}")
+    if network == "xhttp":
+        print(f"  [{host}] XHTTP_MODE -> {xhttp_mode}, connIdle -> {env['XRAY_CONN_IDLE']}s")
     with sftp.open(REMOTE_AGENT_ENV, "w") as fh:
         fh.write(_render_env(env))
 
-    print(f"  [{host}] restarting vpn container…")
-    run(c, "cd /root/aegis/deploy/vps && docker compose restart vpn 2>&1 | tail -2",
-        "vpn restart", timeout=120)
+    # Split topology only (run --split-migrate first): recreate the agent so it
+    # rebuilds the config from the new env, then restart xray to load it. A
+    # transport change can't be hot-applied, so this xray bounce drops sessions
+    # once — unavoidable for a mode/keypair change.
+    print(f"  [{host}] applying: recreate agent + reload xray…")
+    run(c, "cd /root/aegis/deploy/vps && docker compose up -d --no-deps --force-recreate agent 2>&1 | tail -3",
+        "agent recreate", timeout=180)
+    run(c, "cd /root/aegis/deploy/vps && docker compose restart xray 2>&1 | tail -2",
+        "xray reload", timeout=120)
     out = run(
         c,
         "sleep 5; docker exec aegis-vpn sh -c "
@@ -306,9 +371,23 @@ def parse_args() -> argparse.Namespace:
              "reality keys into the bot DB. Requires --main-password.",
     )
     p.add_argument(
+        "--xhttp-mode", choices=["auto", "stream-one", "stream-up", "packet-up"],
+        default="auto",
+        help="Server xhttp mode when --set-network xhttp (default: auto). auto is "
+             "the only non-breaking value — it accepts existing packet-up clients "
+             "plus new stream-up/stream-one ones. An explicit mode 400s mismatched "
+             "clients, so only use it when re-issuing every subscription.",
+    )
+    p.add_argument(
         "--mtproxy", action="store_true",
         help="Set up MTProxy (Telegram proxy, port 80) on --node targets. "
              "Requires --main-password and --node SERVER_ID:IP:PASSWORD.",
+    )
+    p.add_argument(
+        "--split-migrate", action="store_true",
+        help="One-time: migrate --node targets from the single vpn container to "
+             "the split xray+agent topology (zero-drop code deploys afterwards). "
+             "Uploads docker-compose.yml + agent sources. One brief xray blip.",
     )
     return p.parse_args()
 
@@ -316,14 +395,16 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    if not args.bot and not args.nodes and not args.mtproxy and not args.set_network:
-        raise SystemExit("Specify --bot, --nodes, --mtproxy, and/or --set-network")
+    if not any((args.bot, args.nodes, args.mtproxy, args.set_network, args.split_migrate)):
+        raise SystemExit("Specify --bot, --nodes, --mtproxy, --set-network, and/or --split-migrate")
     if args.bot and not args.main_password:
         raise SystemExit("--bot requires --main-password")
     if (args.nodes or args.mtproxy) and not args.nodes_list:
         raise SystemExit("--nodes/--mtproxy requires at least one --node")
     if args.mtproxy and not args.main_password:
         raise SystemExit("--mtproxy requires --main-password (to update the bot DB)")
+    if args.split_migrate and not args.nodes_list:
+        raise SystemExit("--split-migrate requires at least one --node IP:PASSWORD")
     if args.set_network and not args.nodes_list:
         raise SystemExit("--set-network requires at least one --node IP:PASSWORD")
     if args.set_network and not args.main_password:
@@ -337,6 +418,19 @@ def main() -> None:
         finally:
             c.close()
 
+    if args.split_migrate:
+        for node_str in args.nodes_list:
+            parts = node_str.split(":")
+            if len(parts) < 2:
+                raise SystemExit(f"Bad --node format (expected IP:PASSWORD): {node_str}")
+            ip, password = parts[0], ":".join(parts[1:])
+            print(f"[split-migrate {ip}] connecting…")
+            c = connect(ip, password)
+            try:
+                split_migrate(c, ip)
+            finally:
+                c.close()
+
     if args.set_network:
         results: list[tuple[str, str, str]] = []  # (ip, pubkey, sid)
         for node_str in args.nodes_list:
@@ -347,7 +441,7 @@ def main() -> None:
             print(f"[set-network {ip}] connecting…")
             c = connect(ip, password)
             try:
-                pubkey, sid = set_network(c, ip, args.set_network)
+                pubkey, sid = set_network(c, ip, args.set_network, args.xhttp_mode)
                 results.append((ip, pubkey, sid))
             finally:
                 c.close()

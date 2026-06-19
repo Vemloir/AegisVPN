@@ -6,6 +6,21 @@ XRAY_CONFIG="${XRAY_CONFIG_PATH:-/etc/xray/config.json}"
 XRAY_RUN_MODE="${XRAY_RUN_MODE:-external}"
 TEMPLATE_FILE="/app/template.json"
 
+# --- split topology: the xray container runs ONLY the data plane -------------
+# In the split deployment the agent container owns config generation; this role
+# just runs xray against the shared on-disk config. It must NOT init keys or
+# rebuild the config (that would race the agent), so short-circuit before all of
+# that. On a cold start the config may not be written yet — wait briefly for the
+# agent to produce it (existing nodes already have it on the volume).
+if [ "$XRAY_RUN_MODE" = "xray-only" ]; then
+    echo "xray-only: waiting for $XRAY_CONFIG …"
+    for _ in $(seq 1 120); do
+        [ -f "$XRAY_CONFIG" ] && break
+        sleep 0.5
+    done
+    exec xray run -c "$XRAY_CONFIG"
+fi
+
 if [ ! -f "$ENV_FILE" ]; then
     echo "Initializing new agent..."
 
@@ -34,7 +49,12 @@ if [ ! -f "$ENV_FILE" ]; then
     REALITY_SERVER_NAME=${REALITY_SERVER_NAME:-"gateway.icloud.com"}
     HOST_IP=${HOST_IP:-$(curl -s https://api.ipify.org || echo "127.0.0.1")}
 XHTTP_PATH=${XHTTP_PATH:-"/"}
-XHTTP_MODE=${XHTTP_MODE:-"packet-up"}
+# "auto" lets the SERVER accept packet-up AND stream-up/stream-one clients at
+# once (xray hub.go is strict for any explicit mode, 400s the others), and lets
+# a client over direct REALITY resolve to stream-one (single full-duplex stream,
+# less overhead than packet-up's many POSTs — packet-up only helps behind a CDN).
+XHTTP_MODE=${XHTTP_MODE:-"auto"}
+XRAY_CONN_IDLE=${XRAY_CONN_IDLE:-60}
 REALITY_TCP_DEST=${REALITY_TCP_DEST:-$REALITY_DEST}
 REALITY_TCP_SERVER_NAME=${REALITY_TCP_SERVER_NAME:-$REALITY_SERVER_NAME}
 TCP_KEYS=$(xray x25519 2>&1)
@@ -63,6 +83,7 @@ REALITY_TCP_SERVER_NAME=$REALITY_TCP_SERVER_NAME
 HOST_IP=$HOST_IP
 XHTTP_PATH=$XHTTP_PATH
 XHTTP_MODE=$XHTTP_MODE
+XRAY_CONN_IDLE=$XRAY_CONN_IDLE
 EOF
 
     echo "=== AGENT TOKEN: $AGENT_TOKEN ==="
@@ -96,8 +117,26 @@ import os
 config_path = os.environ.get("XRAY_CONFIG") or os.environ.get("XRAY_CONFIG_PATH") or "/etc/xray/config.json"
 network = os.environ.get("XRAY_NETWORK", "tcp").strip().lower() or "tcp"
 xhttp_path = os.environ.get("XHTTP_PATH", "/").strip() or "/"
-xhttp_mode = os.environ.get("XHTTP_MODE", "packet-up").strip() or "packet-up"
+xhttp_mode = os.environ.get("XHTTP_MODE", "auto").strip() or "auto"
 tcp_port = (os.environ.get("XRAY_TCP_PORT") or "").strip()
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int((os.environ.get(name) or "").strip())
+    except (TypeError, ValueError):
+        return default
+
+
+# connIdle reaps a connection only after this many seconds with ZERO bytes in
+# either direction; the timer resets on every byte, so active tunnels are never
+# cut — it just frees ghost sessions (e.g. a half-open socket left behind after
+# a client roamed Wi-Fi<->cellular) faster, which also releases conn-limit slots.
+conn_idle = _int_env("XRAY_CONN_IDLE", 60)
+# TCP keepalive on the inbound socket detects a dead/half-open peer at the kernel
+# level (idle a bit under connIdle so it can probe before connIdle reaps).
+keepalive_idle = _int_env("XRAY_KEEPALIVE_IDLE", 30)
+keepalive_interval = _int_env("XRAY_KEEPALIVE_INTERVAL", 10)
 
 with open(config_path, "r", encoding="utf-8") as fh:
     config = json.load(fh)
@@ -169,6 +208,13 @@ def build_inbound(port: int, transport: str, tag: str) -> dict:
 
     inbound["sniffing"] = {"enabled": True, "destOverride": ["http", "tls"]}
 
+    if keepalive_idle > 0:
+        sockopt = stream.setdefault("sockopt", {})
+        sockopt["tcpKeepAliveIdle"] = keepalive_idle
+        sockopt["tcpKeepAliveInterval"] = keepalive_interval
+    else:
+        stream.pop("sockopt", None)
+
     return inbound
 
 
@@ -180,6 +226,13 @@ if tcp_port:
         new_inbounds.append(build_inbound(tcp_port_int, "tcp", "vless-in-tcp"))
 
 config["inbounds"] = new_inbounds + other_inbounds
+
+# Enforce connIdle on every boot: the policy block is otherwise preserved as-is
+# from the on-disk config, so nodes initialised with the old 300s default would
+# keep it forever without this. Only the connIdle field is touched; handshake
+# and the per-user stats flags stay whatever the config already had.
+level0 = config.setdefault("policy", {}).setdefault("levels", {}).setdefault("0", {})
+level0["connIdle"] = conn_idle
 
 
 def ensure_warp(cfg: dict) -> None:
@@ -291,7 +344,14 @@ if [ "$XRAY_RUN_MODE" = "internal" ]; then
     while true; do sleep 60; done
 fi
 
-pkill -HUP xray || true
+# Legacy single-container 'external' mode shares this container with xray, so a
+# config rebuild needs a HUP to reload it. In the split 'agent-only' role xray
+# lives in its OWN container and must survive agent restarts untouched (that is
+# the whole point — zero-drop code deploys), so never signal it here; transport
+# changes restart the xray container explicitly via the deploy tooling.
+if [ "$XRAY_RUN_MODE" != "agent-only" ]; then
+    pkill -HUP xray || true
+fi
 
 echo "Starting Agent API..."
 exec uvicorn app.main:app --host 0.0.0.0 --port 8444

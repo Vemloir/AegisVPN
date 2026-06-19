@@ -48,6 +48,21 @@ def test_build_subscription_query_xhttp():
     assert query["mode"] == "packet-up"
 
 
+def test_build_subscription_query_xhttp_mode_defaults_to_auto():
+    # When the live inbound carries no explicit xhttp mode, the sub link falls
+    # back to the settings default, which is now "auto" (client resolves auto to
+    # stream-one over direct REALITY; server-side auto accepts every mode).
+    inbound = {
+        "streamSettings": {
+            "network": "xhttp",
+            "xhttpSettings": {"path": "/"},
+            "realitySettings": {"serverNames": ["cdn.example.com"]},
+        }
+    }
+    query = dict(build_subscription_query(inbound))
+    assert query["mode"] == "auto"
+
+
 def test_parse_online_users_dict():
     raw = b'{"users": {"user_1_sub_2_dev_3": ["1.2.3.4"], "user_1_sub_2": ["5.6.7.8", "9.9.9.9"]}}'
     emails = set(_parse_online_users(raw))

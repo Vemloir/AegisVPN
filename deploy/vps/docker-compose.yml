@@ -5,14 +5,39 @@ x-logging: &default-logging
     max-file: "2"
 
 services:
-  vpn:
+  # Data plane: runs ONLY xray against the shared config that the agent owns.
+  # Kept separate so agent code deploys (which recreate `agent`) never restart
+  # xray — existing client sessions survive a code update untouched.
+  xray:
+    build:
+      context: ../../agent
+    container_name: aegis-xray
+    restart: unless-stopped
+    env_file:
+      - ./vpn.env
+    environment:
+      - XRAY_RUN_MODE=xray-only
+    network_mode: host
+    logging: *default-logging
+    volumes:
+      - ./data/vpn:/data
+
+  # Control plane: builds the xray config from agent.env and serves the agent
+  # API. Shares xray's PID namespace so `xray api` / `pkill xray` reach the data
+  # plane. Restarting this container does NOT touch xray (zero-drop deploys).
+  agent:
     build:
       context: ../../agent
     container_name: aegis-vpn
     restart: unless-stopped
     env_file:
       - ./vpn.env
+    environment:
+      - XRAY_RUN_MODE=agent-only
     network_mode: host
+    pid: "service:xray"
+    depends_on:
+      - xray
     logging: *default-logging
     volumes:
       - ./data/vpn:/data
