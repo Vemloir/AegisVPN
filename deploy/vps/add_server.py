@@ -4,11 +4,11 @@ main bot in a single shot. Idempotent enough to re-run if a step fails.
 Steps:
   1. SSH to the new VPS, install docker if absent.
   2. Upload the entire agent source tree + docker-compose.yml.
-  3. Write vpn.env with the desired Reality settings, `docker compose up vpn`.
+  3. Write vpn.env with the desired Reality settings, `docker compose up xray agent`.
   4. Read the auto-generated agent.env (Reality keys, agent token).
   5. SSH to the main VPS, upload the register helper, insert/update the
      server row in the bot's SQLite, push every active user UUID to the new
-     agent's /client/add endpoint, then `docker compose restart vpn` on the
+     agent's /client/add endpoint, then `docker compose restart xray` on the
      new node so xray reloads with all clients.
 
 Defaults assume the standard Reality-TCP layout (XRAY_TCP_PORT=0), so the
@@ -316,7 +316,7 @@ EOF
 rm -f /root/aegis/deploy/vps/data/vpn/client_map.json
 rm -f /root/aegis/deploy/vps/data/vpn/xray-config.json
 cd /root/aegis/deploy/vps
-docker compose up -d --build vpn 2>&1 | tail -3
+docker compose up -d --build xray agent 2>&1 | tail -3
 # Entrypoint generates agent.env on first run; wait until it exists.
 for i in $(seq 1 30); do
     [ -f /root/aegis/deploy/vps/data/vpn/agent.env ] && break
@@ -472,12 +472,12 @@ def main() -> int:
         print("     " + out.strip())
 
         # The agent's /client/add path writes UUIDs to disk but doesn't always
-        # hot-reload into the running xray (known bug). A container restart
-        # forces xray to re-read the config and accept all 18 UUIDs.
+        # hot-reload into the running xray (known bug). Restarting the xray
+        # container forces it to re-read the config and accept all UUIDs.
         run_or_die(
             new_client,
-            "cd /root/aegis/deploy/vps && docker compose restart vpn 2>&1 | tail -2",
-            "restart vpn", timeout=120,
+            "cd /root/aegis/deploy/vps && docker compose restart xray 2>&1 | tail -2",
+            "restart xray", timeout=120,
         )
         time.sleep(4)
         _, out, _ = exec_command(

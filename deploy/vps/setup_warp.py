@@ -63,8 +63,12 @@ def main() -> int:
 
     def recreate() -> None:
         if args.compose:
-            run("cd /root/aegis/deploy/vps && docker compose up -d --force-recreate vpn", 180)
+            # Split topology: recreate the agent so its entrypoint rebuilds the
+            # config with the WARP outbound from agent.env, then reload xray.
+            run("cd /root/aegis/deploy/vps && docker compose up -d --force-recreate agent "
+                "&& docker compose restart xray", 180)
         else:
+            # Legacy single-container path (non-compose nodes only).
             run("docker rm -f aegis-vpn 2>/dev/null; true", 60)
             run("docker run -d --name aegis-vpn --restart unless-stopped --network host "
                 "--log-opt max-size=5m --log-opt max-file=2 "
