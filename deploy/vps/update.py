@@ -121,11 +121,16 @@ def upload(c: paramiko.SSHClient, local: Path, remote: str) -> None:
 # ---------------------------------------------------------------------------
 
 def update_bot(c: paramiko.SSHClient) -> None:
-    """Upload all bot Python sources and recreate the bot container only."""
+    """Upload all bot sources (code + assets) and recreate the bot container only."""
     print("  uploading bot sources…")
-    for py in sorted((BOT_DIR / "src").rglob("*.py")):
-        rel = py.relative_to(BOT_DIR)
-        upload(c, py, f"/root/aegis/bot/{rel.as_posix()}")
+    # Upload EVERY source asset, not just .py — the privacy/ToS markdown (and any
+    # future templates/json) live under src/ too and must reach the image. A
+    # .py-only sweep silently shipped stale .md files and dropped new assets.
+    for f in sorted((BOT_DIR / "src").rglob("*")):
+        if f.is_dir() or "__pycache__" in f.parts or f.suffix == ".pyc":
+            continue
+        rel = f.relative_to(BOT_DIR)
+        upload(c, f, f"/root/aegis/bot/{rel.as_posix()}")
 
     # Dependency manifests must ship too — the image installs from pyproject.toml,
     # so a dependency change is invisible to the build unless these are uploaded.
