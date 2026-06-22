@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from src.models import Subscription
+from src.models import Server, Subscription
 from src.services import SubscriptionService
 
 
@@ -73,3 +73,38 @@ def test_extract_build_from_happ_ua():
 def test_extract_build_none_when_absent():
     assert SubscriptionService.extract_build("Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X)") is None
     assert SubscriptionService.extract_build("v2rayNG/1.8.5") is None
+
+
+def test_vless_link_to_xray_config_xhttp_has_recovery_knobs_and_clean_routing():
+    link = (
+        "vless://0146ca3d-e9b9-459a-8e54-b611dc601bec@1.2.3.4:443?type=xhttp"
+        "&security=reality&encryption=none&sni=gateway.icloud.com&fp=firefox"
+        "&pbk=PUBKEY&sid=SID&path=%2Ffi-xh&mode=auto#%F0%9F%87%AB%F0%9F%87%AE Finland"
+    )
+    cfg = SubscriptionService._vless_link_to_xray_config(link, Server(name="Finland | Helsinki"))
+    assert cfg is not None
+    # proxy first => unmatched traffic falls through to the tunnel (default-proxy)
+    assert [o["tag"] for o in cfg["outbounds"]] == ["proxy", "direct", "block"]
+    ss = cfg["outbounds"][0]["streamSettings"]
+    assert ss["network"] == "xhttp"
+    assert ss["xhttpSettings"]["path"] == "/fi-xh"
+    # roaming-recovery knobs are present
+    assert ss["xhttpSettings"]["xmux"]["hKeepAlivePeriod"] == 15
+    assert ss["sockopt"]["tcpKeepAliveIdle"] == 10
+    assert ss["realitySettings"]["publicKey"] == "PUBKEY"
+    assert cfg["outbounds"][0]["settings"]["vnext"][0]["users"][0]["id"] == "0146ca3d-e9b9-459a-8e54-b611dc601bec"
+    # clean routing: ru/cn direct, rest falls through to proxy
+    assert cfg["routing"]["domainStrategy"] == "IPIfNonMatch"
+    ru_cn = {d for r in cfg["routing"]["rules"] for d in r.get("domain", [])}
+    assert {"geosite:category-ru", "geosite:cn"} <= ru_cn
+    # DNS resolves DIRECT (https+local), never through the proxy -> recovery works
+    assert all(
+        (s if isinstance(s, str) else s["address"]).startswith("https+local://")
+        for s in cfg["dns"]["servers"]
+    )
+    assert cfg["remarks"] == "🇫🇮 Finland"
+
+
+def test_vless_link_to_xray_config_skips_non_vless():
+    # a Hysteria2 static_uri can't be an xray outbound -> excluded from the array
+    assert SubscriptionService._vless_link_to_xray_config("hysteria2://x@y:443", Server(name="HY2")) is None

@@ -1,12 +1,13 @@
 import asyncio
 import base64
 import hashlib
+import json
 import re
 import secrets
 import uuid as _uuid_mod
 from collections import Counter
 from datetime import UTC, datetime, timedelta
-from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +27,45 @@ _UA_AND_VER_RE = re.compile(r"Android[/ ]([\d.]+)", re.IGNORECASE)
 _UA_WIN_VER_RE = re.compile(r"Windows NT\s+([\d.]+)", re.IGNORECASE)
 _WIN_NT = {"10.0": "10/11", "6.3": "8.1", "6.2": "8", "6.1": "7"}
 _UA_MAC_VER_RE = re.compile(r"Mac OS X[/ ]([\d_]+)", re.IGNORECASE)
+
+# --- xray-JSON subscription building blocks ---------------------------------
+# Clean "default-proxy" policy: everything is tunneled EXCEPT RU/CN/private,
+# which go direct (so RU banking/gosuslugi see the user's real RU IP, not the
+# exit's). DNS uses https+local:// so it resolves via the Freedom outbound
+# (direct) and never deadlocks on a momentarily-dead proxy during a
+# Wi-Fi<->cellular switch — the #1 cause of "internet doesn't come back".
+_XRAY_CLEAN_DNS = {
+    "queryStrategy": "UseIPv4",
+    "servers": [
+        {
+            "address": "https+local://77.88.8.8/dns-query",
+            "domains": ["geosite:category-ru", "geosite:cn"],
+            "expectedIPs": ["geoip:ru", "geoip:cn"],
+            "skipFallback": True,
+        },
+        "https+local://1.1.1.1/dns-query",
+    ],
+}
+_XRAY_CLEAN_INBOUNDS = [
+    {
+        "tag": "socks", "listen": "127.0.0.1", "port": 10808, "protocol": "socks",
+        "settings": {"auth": "noauth", "udp": True},
+        "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"]},
+    },
+    {
+        "tag": "http", "listen": "127.0.0.1", "port": 10809, "protocol": "http",
+        "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"]},
+    },
+]
+_XRAY_CLEAN_ROUTING = {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+        {"type": "field", "protocol": ["bittorrent"], "outboundTag": "direct"},
+        {"type": "field", "ip": ["geoip:private"], "outboundTag": "direct"},
+        {"type": "field", "domain": ["geosite:category-ru", "geosite:cn"], "outboundTag": "direct"},
+        {"type": "field", "ip": ["geoip:ru", "geoip:cn"], "outboundTag": "direct"},
+    ],
+}
 
 
 class SubscriptionService:
@@ -208,25 +248,25 @@ class SubscriptionService:
             )
 
     @staticmethod
-    async def get_subscription_vless_links(
+    async def _collect_links(
         session: AsyncSession,
         sub_token: str,
         profile: str | None = None,
         device_uuid: str | None = None,
-    ) -> str:
+    ) -> list[tuple[Server, str]]:
         normalized_profile = SubscriptionService.normalize_profile(profile)
         include_all_profiles = profile != SubscriptionService.FAST_PROFILE
         sub = await SubscriptionService.get_subscription_by_token(session, sub_token)
 
         if not sub:
-            return ""
+            return []
 
         now = datetime.now(UTC).replace(tzinfo=None)
         if sub.expires_at <= now:
             sub.is_active = False
             await SubscriptionService.remove_subscription_from_servers(session, sub)
             await session.commit()
-            return ""
+            return []
 
         if include_all_profiles:
             server_filter = Server.is_active == True
@@ -287,9 +327,93 @@ class SubscriptionService:
             return ""
 
         links = await asyncio.gather(*(fetch_link(server) for server in servers))
-        valid_links = [link for link in links if link]
-        full_content = "\n".join(valid_links)
-        return base64.b64encode(full_content.encode("utf-8")).decode("utf-8")
+        return [(server, link) for server, link in zip(servers, links) if link]
+
+    @staticmethod
+    async def get_subscription_vless_links(
+        session: AsyncSession,
+        sub_token: str,
+        profile: str | None = None,
+        device_uuid: str | None = None,
+    ) -> str:
+        pairs = await SubscriptionService._collect_links(session, sub_token, profile, device_uuid)
+        body = "\n".join(link for _, link in pairs)
+        return base64.b64encode(body.encode("utf-8")).decode("utf-8") if body else ""
+
+    @staticmethod
+    async def build_xray_json_subscription(
+        session: AsyncSession,
+        sub_token: str,
+        profile: str | None = None,
+        device_uuid: str | None = None,
+    ) -> str:
+        """Full xray-JSON subscription (array of standalone configs, one per
+        server) for clients that consume it (Happ, v2rayTun, v2rayNG, …). Each
+        config carries the clean default-proxy routing (everything tunneled
+        except RU/CN/private) + DNS resolved DIRECT + the xhttp recovery knobs
+        (hKeepAlivePeriod / tcpKeepAlive), so a Wi-Fi<->cellular switch recovers
+        instead of hanging. Other clients still get the base64 link list.
+        """
+        pairs = await SubscriptionService._collect_links(session, sub_token, profile, device_uuid)
+        configs = [
+            cfg
+            for server, link in pairs
+            if (cfg := SubscriptionService._vless_link_to_xray_config(link, server)) is not None
+        ]
+        return json.dumps(configs, ensure_ascii=False) if configs else ""
+
+    @staticmethod
+    def _vless_link_to_xray_config(link: str, server: Server) -> dict | None:
+        """Parse one normalized vless:// link into a complete, standalone xray
+        client config. Returns None for non-vless links (e.g. a Hysteria2
+        static_uri, which xray-core cannot run as an outbound)."""
+        if not link.startswith("vless://"):
+            return None
+        parts = urlsplit(link)
+        q = dict(parse_qsl(parts.query, keep_blank_values=True))
+        network = (q.get("type") or "tcp").lower()
+        user: dict = {"id": parts.username or "", "encryption": "none", "level": 8}
+        stream: dict = {
+            "network": network,
+            "security": "reality",
+            "realitySettings": {
+                "publicKey": q.get("pbk", ""),
+                "shortId": q.get("sid", ""),
+                "serverName": q.get("sni", ""),
+                "fingerprint": q.get("fp", "firefox"),
+                "show": False,
+            },
+        }
+        if network == "xhttp":
+            stream["xhttpSettings"] = {
+                "host": q.get("host", ""),
+                "path": q.get("path", "/"),
+                "mode": q.get("mode", "auto"),
+                # Primary roaming-recovery knob: the H2 PING health-check fires
+                # in ~15s instead of the 45-60s default, tearing down the dead
+                # download GET fast after a network change.
+                "xmux": {"hKeepAlivePeriod": 15},
+            }
+            stream["sockopt"] = {"tcpKeepAliveIdle": 10, "tcpKeepAliveInterval": 5}
+        elif q.get("flow"):
+            user["flow"] = q["flow"]
+        proxy = {
+            "tag": "proxy",
+            "protocol": "vless",
+            "settings": {"vnext": [{"address": parts.hostname, "port": parts.port or 443, "users": [user]}]},
+            "streamSettings": stream,
+        }
+        return {
+            "remarks": unquote(parts.fragment) if parts.fragment else (server.name or "").strip(),
+            "dns": _XRAY_CLEAN_DNS,
+            "inbounds": _XRAY_CLEAN_INBOUNDS,
+            "outbounds": [
+                proxy,
+                {"tag": "direct", "protocol": "freedom", "settings": {"domainStrategy": "UseIP"}},
+                {"tag": "block", "protocol": "blackhole"},
+            ],
+            "routing": _XRAY_CLEAN_ROUTING,
+        }
 
     @staticmethod
     async def remove_subscription_from_servers(session: AsyncSession, sub: Subscription) -> None:

@@ -118,6 +118,13 @@ def _client_ip(request: web.Request) -> str | None:
     return request.remote
 
 
+# Clients that consume a full xray-JSON config array (routing/DNS baked in)
+# instead of a base64 vless link list. Matched case-insensitively as a substring
+# of the User-Agent. Everything else (Clash, sing-box, browsers, curl) keeps the
+# link list, so this is additive and non-breaking for non-xray clients.
+_XRAY_JSON_CLIENTS = ("happ", "v2raytun", "v2rayng", "v2rayn", "nekobox", "nekoray", "streisand", "foxray")
+
+
 async def subscription_response(request: web.Request, profile: str) -> web.Response:
     sub_token = request.match_info.get("token")
     if not sub_token:
@@ -125,6 +132,9 @@ async def subscription_response(request: web.Request, profile: str) -> web.Respo
 
     ua = request.headers.get("User-Agent", "").strip()
     client_ip = _client_ip(request)
+    # xray clients (Happ, v2rayTun, …) get a full JSON config array with the
+    # routing/DNS baked in; everyone else keeps the base64 link list.
+    wants_xray_json = any(k in ua.lower() for k in _XRAY_JSON_CLIENTS)
 
     async with async_session_maker() as session:
         sub = await SubscriptionService.get_subscription_by_token(session, sub_token)
@@ -136,14 +146,21 @@ async def subscription_response(request: web.Request, profile: str) -> web.Respo
             if not device.is_suspended:
                 device_uuid = device.uuid
 
-        b64_content = await SubscriptionService.get_subscription_vless_links(
-            session, sub_token, profile=profile, device_uuid=device_uuid
-        )
+        if wants_xray_json:
+            body = await SubscriptionService.build_xray_json_subscription(
+                session, sub_token, profile=profile, device_uuid=device_uuid
+            )
+        else:
+            body = await SubscriptionService.get_subscription_vless_links(
+                session, sub_token, profile=profile, device_uuid=device_uuid
+            )
 
-    if not sub or not b64_content:
+    if not sub or not body:
         return web.Response(status=404, text="Subscription not found or inactive")
 
-    response = web.Response(text=b64_content, content_type="text/plain")
+    response = web.Response(
+        text=body, content_type="application/json" if wants_xray_json else "text/plain"
+    )
     title = (
         f"{settings.subscription_title} Fast"
         if profile == SubscriptionService.FAST_PROFILE
