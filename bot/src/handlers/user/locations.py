@@ -1,14 +1,23 @@
 """Per-location settings screen ("Локации").
 
-Lets a user pick the protocol + transport for each of their active locations.
-The choice is persisted as a ``ServerTransportPref`` row (keyed by user+server)
-and re-applied on every subscription fetch — the subscription URL/token never
-changes. A location with no alternative transports (every node except Greece
-today) shows a short "standard only" notice instead of the selectors.
+A drill-down: the per-location screen shows the current protocol (and, on VLESS,
+the current transport) as buttons that open dedicated choosers. The choice is
+persisted as a ``ServerTransportPref`` row (keyed by user+server) and re-applied
+on every subscription fetch — the subscription URL/token never changes. A
+location with no alternative transports (every node except Greece today) shows a
+short "standard only" notice instead of the selectors.
 
 Hysteria2 is shown but disabled: there is no Hy2 backend yet, so tapping it only
 flashes a "coming soon" answer and never persists. The bot therefore can never
 be coerced into emitting a Hy2 config.
+
+Callbacks:
+  loc:<sid>                       per-location screen
+  loc_proto:<sid>                 protocol chooser
+  loc_proto_set:<sid>:<proto>     persist protocol, re-render the location
+  loc_transport:<sid>             transport chooser (vless only)
+  loc_transport_set:<sid>:<tr>    persist transport, re-render the location
+  loc_hy2:<sid>                   disabled-Hy2 alert (never persists)
 """
 
 from aiogram import F, Router, html
@@ -23,7 +32,9 @@ from src.services.subscription_service import SubscriptionService
 
 from .keyboards import (
     location_no_alt_keyboard,
+    location_protocol_keyboard,
     location_settings_keyboard,
+    location_transport_keyboard,
     locations_list_keyboard,
 )
 
@@ -65,8 +76,15 @@ async def cq_locations_open(call: CallbackQuery):
     await call.answer()
 
 
-async def _render_location(call: CallbackQuery, server_id: int, toast: str | None = None) -> None:
-    language = await get_user_language(call.from_user.id)
+async def _load_location(call: CallbackQuery, server_id: int, language: str):
+    """Re-run every access guard and load the current pref for a location.
+
+    Returns ``(server, protocol, transport, available)`` on success, or ``None``
+    after answering the callback with the "no such location" alert — so a user
+    can never poke at a location they lost, an inactive node, or one without alt
+    transports. Every entry point (per-location screen + both choosers + both
+    setters) goes through this so the guards stay identical.
+    """
     async with async_session_maker() as session:
         user = (
             await session.execute(select(User).where(User.tg_id == call.from_user.id))
@@ -74,16 +92,14 @@ async def _render_location(call: CallbackQuery, server_id: int, toast: str | Non
         server = await session.get(Server, server_id)
         if user is None or server is None or not server.is_active:
             await call.answer(t(language, "locations_none"), show_alert=True)
-            return
+            return None
         # Re-check access so a user can't poke at a location they lost.
         accessible = await ServerAccessService.get_accessible_servers_for_user(session, user.id)
         if server.id not in {s.id for s in accessible}:
             await call.answer(t(language, "locations_none"), show_alert=True)
-            return
-
-        label = SubscriptionService.format_server_label(server)
-
+            return None
         if not server.has_alt_transports:
+            label = SubscriptionService.format_server_label(server)
             text = (
                 f"{html.bold(t(language, 'location_settings_title', name=label))}\n\n"
                 f"{t(language, 'location_no_alt')}"
@@ -91,12 +107,20 @@ async def _render_location(call: CallbackQuery, server_id: int, toast: str | Non
             await call.message.edit_text(  # type: ignore[union-attr]
                 text, parse_mode="HTML", reply_markup=location_no_alt_keyboard(language)
             )
-            await call.answer(toast or "")
-            return
-
+            await call.answer()
+            return None
         protocol, transport = await SubscriptionService.get_transport_pref(session, user.id, server.id)
         available = SubscriptionService.available_transports(server)
+        return server, protocol, transport, available
 
+
+async def _render_location(call: CallbackQuery, server_id: int, toast: str | None = None) -> None:
+    language = await get_user_language(call.from_user.id)
+    loaded = await _load_location(call, server_id, language)
+    if loaded is None:
+        return
+    server, protocol, transport, available = loaded
+    label = SubscriptionService.format_server_label(server)
     text = f"{html.bold(t(language, 'location_settings_title', name=label))}"
     await call.message.edit_text(  # type: ignore[union-attr]
         text,
@@ -112,10 +136,52 @@ async def cq_location_open(call: CallbackQuery):
     await _render_location(call, server_id)
 
 
-@router.callback_query(F.data.startswith("loc_set:"))
-async def cq_location_set(call: CallbackQuery):
-    # loc_set:<server_id>:<protocol>:<transport>
-    _, raw_id, protocol, transport = call.data.split(":", 3)  # type: ignore[union-attr]
+@router.callback_query(F.data.startswith("loc_proto:"))
+async def cq_location_protocol(call: CallbackQuery):
+    """Protocol chooser for one location."""
+    server_id = int(call.data.split(":", 1)[1])  # type: ignore[union-attr]
+    language = await get_user_language(call.from_user.id)
+    loaded = await _load_location(call, server_id, language)
+    if loaded is None:
+        return
+    server, protocol, _transport, _available = loaded
+    label = SubscriptionService.format_server_label(server)
+    text = f"{html.bold(t(language, 'location_settings_title', name=label))}"
+    await call.message.edit_text(  # type: ignore[union-attr]
+        text,
+        parse_mode="HTML",
+        reply_markup=location_protocol_keyboard(language, server.id, protocol),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("loc_transport:"))
+async def cq_location_transport(call: CallbackQuery):
+    """Transport chooser — only reachable while the protocol is vless."""
+    server_id = int(call.data.split(":", 1)[1])  # type: ignore[union-attr]
+    language = await get_user_language(call.from_user.id)
+    loaded = await _load_location(call, server_id, language)
+    if loaded is None:
+        return
+    server, protocol, transport, available = loaded
+    # The transport screen has no meaning off VLESS; bounce back to the location.
+    if protocol != SubscriptionService.PROTOCOL_VLESS:
+        await _render_location(call, server_id)
+        return
+    label = SubscriptionService.format_server_label(server)
+    text = f"{html.bold(t(language, 'location_settings_title', name=label))}"
+    await call.message.edit_text(  # type: ignore[union-attr]
+        text,
+        parse_mode="HTML",
+        reply_markup=location_transport_keyboard(language, server.id, transport, available),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("loc_proto_set:"))
+async def cq_location_protocol_set(call: CallbackQuery):
+    # loc_proto_set:<server_id>:<protocol>
+    _, raw_id, protocol = call.data.split(":", 2)  # type: ignore[union-attr]
     server_id = int(raw_id)
     language = await get_user_language(call.from_user.id)
 
@@ -124,18 +190,20 @@ async def cq_location_set(call: CallbackQuery):
         await call.answer(t(language, "location_hy2_unavailable"), show_alert=True)
         return
 
+    loaded = await _load_location(call, server_id, language)
+    if loaded is None:
+        return
+    server, _protocol, transport, _available = loaded
     async with async_session_maker() as session:
         user = (
             await session.execute(select(User).where(User.tg_id == call.from_user.id))
         ).scalar_one_or_none()
-        server = await session.get(Server, server_id)
-        if user is None or server is None or not server.has_alt_transports:
+        if user is None:
             await call.answer(t(language, "locations_none"), show_alert=True)
             return
-        # Only accept a transport the server actually serves; anything else is
-        # ignored (the resolver would fall back to xhttp anyway).
-        if transport not in SubscriptionService.available_transports(server):
-            transport = SubscriptionService.DEFAULT_TRANSPORT
+        # Selecting vless keeps the current transport (which is always vless's own
+        # since hy2 never persists); set_transport_pref collapses vless/xhttp to
+        # "no row" automatically.
         await SubscriptionService.set_transport_pref(
             session, user.id, server.id, SubscriptionService.PROTOCOL_VLESS, transport
         )
@@ -143,16 +211,33 @@ async def cq_location_set(call: CallbackQuery):
     await _render_location(call, server_id, toast=t(language, "location_saved"))
 
 
-@router.callback_query(F.data.startswith("loc_reset:"))
-async def cq_location_reset(call: CallbackQuery):
-    server_id = int(call.data.split(":", 1)[1])  # type: ignore[union-attr]
+@router.callback_query(F.data.startswith("loc_transport_set:"))
+async def cq_location_transport_set(call: CallbackQuery):
+    # loc_transport_set:<server_id>:<transport>
+    _, raw_id, transport = call.data.split(":", 2)  # type: ignore[union-attr]
+    server_id = int(raw_id)
     language = await get_user_language(call.from_user.id)
+
+    loaded = await _load_location(call, server_id, language)
+    if loaded is None:
+        return
+    server, _protocol, _transport, available = loaded
+    # Only accept a transport the server actually serves; anything else is
+    # ignored (the resolver would fall back to xhttp anyway). Selecting xhttp is
+    # the reset — set_transport_pref deletes the row for the plain default.
+    if transport not in available:
+        transport = SubscriptionService.DEFAULT_TRANSPORT
     async with async_session_maker() as session:
         user = (
             await session.execute(select(User).where(User.tg_id == call.from_user.id))
         ).scalar_one_or_none()
-        if user is not None:
-            await SubscriptionService.reset_transport_pref(session, user.id, server_id)
+        if user is None:
+            await call.answer(t(language, "locations_none"), show_alert=True)
+            return
+        await SubscriptionService.set_transport_pref(
+            session, user.id, server.id, SubscriptionService.PROTOCOL_VLESS, transport
+        )
+
     await _render_location(call, server_id, toast=t(language, "location_saved"))
 
 

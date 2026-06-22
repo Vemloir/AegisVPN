@@ -161,8 +161,8 @@ for inbound in existing_vless:
         client_id = client.get("id")
         if client_id:
             record = dict(client)
-            # Drop any legacy xtls-rprx-vision flow: every transport is flow-less
-            # now (ТСПУ bans vision), so client records carry only id + email.
+            # Normalize to a flow-less id+email here; build_inbound re-applies the
+            # per-inbound flow (vision on tcp, none on xhttp/grpc).
             record.pop("flow", None)
             client_map[client_id] = record
 
@@ -175,12 +175,16 @@ def build_inbound(port: int, transport: str, tag: str) -> dict:
 
     settings = inbound.setdefault("settings", {})
     settings["decryption"] = "none"
-    # Clients are shared across all inbounds and flow-less on every transport
-    # (xhttp/tcp/grpc) — vision is gone, so no per-transport flow rewrite.
+    # Clients are shared across all inbounds (same id+email), but the flow is set
+    # PER INBOUND: tcp/REALITY carries the vision flow (xtls-rprx-vision), while
+    # xhttp/grpc stay flow-less. Greece shares one reality keypair across
+    # inbounds; only this per-client flow differs.
     clients = []
     for client in client_map.values():
         client_copy = dict(client)
         client_copy.pop("flow", None)
+        if transport == "tcp":
+            client_copy["flow"] = "xtls-rprx-vision"
         clients.append(client_copy)
     settings["clients"] = clients
 

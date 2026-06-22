@@ -164,16 +164,22 @@ def test_default_transport_is_byte_identical():
     assert "flow=" not in with_none
 
 
-def test_tcp_transport_uses_tcp_port_no_flow():
+def test_tcp_transport_uses_tcp_port_and_vision_flow():
     server = _greece_server()
     link = SubscriptionService.normalize_vless_uri(_AGENT_RAW, server, transport="tcp")
     assert "type=tcp" in link
     assert "@45.142.31.13:2053" in link  # server.tcp_port
     assert "headerType=none" in link
-    assert "flow=" not in link  # Greece tcp alt-transport carries NO vision flow
+    # Greece tcp alt-transport runs TCP+REALITY with the vision flow (must match
+    # the agent's vless-in-tcp inbound clients).
+    assert "flow=xtls-rprx-vision" in link
     cfg = SubscriptionService._vless_link_to_xray_config(link, server)
-    assert cfg["outbounds"][0]["streamSettings"]["network"] == "tcp"
-    assert "flow" not in cfg["outbounds"][0]["settings"]["vnext"][0]["users"][0]
+    stream = cfg["outbounds"][0]["streamSettings"]
+    assert stream["network"] == "tcp"
+    assert cfg["outbounds"][0]["settings"]["vnext"][0]["users"][0]["flow"] == "xtls-rprx-vision"
+    # No Mux/xudp anywhere — Mux breaks the vision flow.
+    assert "mux" not in cfg["outbounds"][0]
+    assert "xudp" not in cfg["outbounds"][0]["settings"]
 
 
 def test_xhttp_only_server_offers_no_transport_choice():

@@ -302,7 +302,7 @@ class SubscriptionService:
         produced link is byte-identical to before this change. An explicit
         ``"tcp"`` retargets the port + stream params to the Greece node's
         alternative inbound, reusing the same reality keypair and emitting
-        no flow.
+        flow=xtls-rprx-vision (matching that inbound's clients).
         """
         parts = urlsplit(raw_uri)
         userinfo, _, _ = parts.netloc.rpartition("@")
@@ -325,7 +325,10 @@ class SubscriptionService:
         if is_tcp:
             query["type"] = "tcp"
             query["headerType"] = "none"
-            query.pop("flow", None)
+            # The Greece tcp alt-transport runs TCP+REALITY with the vision flow
+            # (must match the agent's vless-in-tcp inbound, whose clients carry
+            # flow=xtls-rprx-vision). No Mux/xudp — vision breaks under Mux.
+            query["flow"] = "xtls-rprx-vision"
             query.pop("path", None)
             query.pop("mode", None)
             query.pop("host", None)
@@ -556,8 +559,9 @@ class SubscriptionService:
             }
             stream["sockopt"] = {"tcpKeepAliveIdle": 10, "tcpKeepAliveInterval": 5}
         elif q.get("flow"):
-            # Plain tcp/REALITY with the vision flow (legacy tcp inbound). The
-            # Greece tcp alt-transport carries no flow, so it skips this branch.
+            # tcp/REALITY with the vision flow (the Greece tcp alt-transport, and
+            # any legacy tcp inbound). Plain reality stream settings, no Mux/xudp —
+            # Mux breaks xtls-rprx-vision (see the note in main.py).
             user["flow"] = q["flow"]
         proxy = {
             "tag": "proxy",

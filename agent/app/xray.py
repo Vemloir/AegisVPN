@@ -43,12 +43,16 @@ def find_vless_inbound(config: dict, preferred_network: str | None = None) -> di
 
 
 def build_client_record(uuid: str, email: str, inbound: dict) -> dict:
-    # No flow on any transport: xhttp/tcp/grpc all run flow-less REALITY now
-    # (xtls-rprx-vision is dropped — ТСПУ bans it).
-    return {
+    # tcp/REALITY clients carry the vision flow (xtls-rprx-vision); xhttp/grpc
+    # stay flow-less. Greece shares ONE reality keypair across inbounds — only
+    # the per-client flow differs, set per the inbound the client lands on.
+    record = {
         "id": uuid,
         "email": email,
     }
+    if get_transport_type(inbound) == "tcp":
+        record["flow"] = "xtls-rprx-vision"
+    return record
 
 
 def build_subscription_query(inbound: dict) -> list[tuple[str, str]]:
@@ -78,9 +82,9 @@ def build_subscription_query(inbound: dict) -> list[tuple[str, str]]:
         query.append(("serviceName", grpc_settings.get("serviceName") or settings.grpc_service_name))
         # "gun" = single gRPC stream (vs "multi"); standard v2ray grpc link param.
         query.append(("mode", "gun"))
-    else:  # raw tcp — flow-less REALITY, no header
+    else:  # tcp/REALITY with the vision flow (xtls-rprx-vision)
         query.append(("headerType", "none"))
-    # No flow on any transport now.
+        query.append(("flow", "xtls-rprx-vision"))
     if settings.packet_encoding:
         query.append(("packetEncoding", settings.packet_encoding))
     return query

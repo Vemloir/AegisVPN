@@ -89,6 +89,18 @@ def location_no_alt_keyboard(language: str) -> InlineKeyboardMarkup:
     )
 
 
+# Localized labels for one protocol / transport value, used both inside the
+# drill-down choosers and to render the current value on the per-location screen.
+_PROTOCOL_LABEL_KEYS = {
+    "vless": "location_proto_vless",
+    "hy2": "location_proto_hy2",
+}
+_TRANSPORT_LABEL_KEYS = {
+    "xhttp": "location_transport_xhttp",
+    "tcp": "location_transport_tcp",
+}
+
+
 def location_settings_keyboard(
     language: str,
     server_id: int,
@@ -96,53 +108,83 @@ def location_settings_keyboard(
     transport: str,
     available_transports: list[str],
 ) -> InlineKeyboardMarkup:
-    """Protocol + transport selectors for one location.
+    """Per-location drill-down screen.
 
-    The current choice is marked with a localized text tag (no emoji). Hysteria2
-    is shown but disabled — tapping it only flashes a 'coming soon' answer and
-    never persists, so the bot can never be coerced into emitting a Hy2 config.
+    Shows the current protocol (and, while on VLESS, the current transport) as
+    button labels that open the dedicated choosers. No '[current]' markers here —
+    the value itself is on the button.
     """
-    mark = t(language, "location_current_mark")
-
-    def label(key: str, selected: bool) -> str:
-        return t(language, key) + (mark if selected else "")
-
-    rows: list[list[InlineKeyboardButton]] = []
-    # Protocol row(s).
-    # Selecting "VLESS" keeps the current transport (or xhttp when switching back
-    # from a future non-vless protocol).
-    vless_transport = transport if protocol == "vless" else "xhttp"
-    rows.append([
-        InlineKeyboardButton(
-            text=label("location_proto_vless", protocol == "vless"),
-            callback_data=f"loc_set:{server_id}:vless:{vless_transport}",
-        )
-    ])
-    rows.append([
-        InlineKeyboardButton(
-            text=label("location_proto_hy2", protocol == "hy2"),
-            # Disabled: routes to a no-op handler that only shows "coming soon".
-            callback_data=f"loc_hy2:{server_id}",
-        )
-    ])
-    # Transport row (VLESS only) — one button per available transport.
-    transport_keys = {
-        "xhttp": "location_transport_xhttp",
-        "tcp": "location_transport_tcp",
-    }
-    for tr in available_transports:
+    proto_label = t(language, _PROTOCOL_LABEL_KEYS.get(protocol, "location_proto_vless"))
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text=t(language, "location_protocol_value_btn", value=proto_label),
+                callback_data=f"loc_proto:{server_id}",
+            )
+        ],
+    ]
+    # The transport selector only makes sense for VLESS (the only protocol with a
+    # backend); a future non-vless protocol would hide it.
+    if protocol == "vless":
+        transport_label = t(language, _TRANSPORT_LABEL_KEYS.get(transport, "location_transport_xhttp"))
         rows.append([
             InlineKeyboardButton(
-                text=label(transport_keys[tr], protocol == "vless" and transport == tr),
-                callback_data=f"loc_set:{server_id}:vless:{tr}",
+                text=t(language, "location_transport_value_btn", value=transport_label),
+                callback_data=f"loc_transport:{server_id}",
             )
         ])
     rows.append([
-        InlineKeyboardButton(text=t(language, "location_reset_btn"), callback_data=f"loc_reset:{server_id}")
-    ])
-    rows.append([
         InlineKeyboardButton(text=t(language, "back_to_locations"), callback_data="locations_open")
     ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def location_protocol_keyboard(
+    language: str,
+    server_id: int,
+    protocol: str,
+) -> InlineKeyboardMarkup:
+    """Protocol chooser. Hysteria2 is shown but disabled — tapping it only flashes
+    a 'coming soon' answer and never persists, so the bot can never be coerced
+    into emitting a Hy2 config."""
+    mark = t(language, "location_selected_mark")
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text=t(language, "location_proto_vless") + (mark if protocol == "vless" else ""),
+                callback_data=f"loc_proto_set:{server_id}:vless",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                # Disabled: routes to a no-op handler that only shows "coming soon".
+                text=t(language, "location_proto_hy2"),
+                callback_data=f"loc_hy2:{server_id}",
+            )
+        ],
+        [InlineKeyboardButton(text=t(language, "back"), callback_data=f"loc:{server_id}")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def location_transport_keyboard(
+    language: str,
+    server_id: int,
+    transport: str,
+    available_transports: list[str],
+) -> InlineKeyboardMarkup:
+    """Transport chooser (reachable only while protocol == vless). One button per
+    transport the server can actually serve; the current one carries a marker."""
+    mark = t(language, "location_selected_mark")
+    rows: list[list[InlineKeyboardButton]] = []
+    for tr in available_transports:
+        rows.append([
+            InlineKeyboardButton(
+                text=t(language, _TRANSPORT_LABEL_KEYS[tr]) + (mark if transport == tr else ""),
+                callback_data=f"loc_transport_set:{server_id}:{tr}",
+            )
+        ])
+    rows.append([InlineKeyboardButton(text=t(language, "back"), callback_data=f"loc:{server_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

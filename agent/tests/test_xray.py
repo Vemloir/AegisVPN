@@ -8,12 +8,18 @@ def test_get_transport_type():
     assert get_transport_type({}) == "tcp"  # default
 
 
-def test_build_client_record_tcp_has_no_flow():
-    # vision is gone: raw-tcp clients are now flow-less REALITY.
+def test_build_client_record_tcp_has_vision_flow():
+    # tcp/REALITY clients carry xtls-rprx-vision (must match the bot's tcp link).
     record = build_client_record("uuid-1", "user@x", {"streamSettings": {"network": "tcp"}})
     assert record["id"] == "uuid-1"
     assert record["email"] == "user@x"
-    assert "flow" not in record
+    assert record["flow"] == "xtls-rprx-vision"
+
+
+def test_build_client_record_default_network_has_vision_flow():
+    # No streamSettings -> get_transport_type defaults to tcp -> vision flow.
+    record = build_client_record("uuid-0", "user@x", {})
+    assert record["flow"] == "xtls-rprx-vision"
 
 
 def test_build_client_record_grpc_has_no_flow():
@@ -38,7 +44,7 @@ def test_build_subscription_query_tcp():
     assert query["type"] == "tcp"
     assert query["security"] == "reality"
     assert query["headerType"] == "none"
-    assert "flow" not in query
+    assert query["flow"] == "xtls-rprx-vision"
     assert query["sni"] == "example.com"
 
 
