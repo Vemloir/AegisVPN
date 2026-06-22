@@ -53,25 +53,63 @@ async def test_version_bump_reprompts():
     assert await UserService.is_terms_accepted(900002) is False
 
 
-async def test_legacy_privacy_user_is_grandfathered():
+async def test_grandfather_backfill_no_longer_silently_reaccepts():
+    """The grandfather post_sql has been removed: adding the acceptance columns
+    must NOT silently re-accept legacy privacy users. Explicit acceptance only."""
     await _reset_users()
-    # A pre-gate user who accepted only the old privacy flow.
     async with async_session_maker() as session:
         session.add(User(tg_id=900003, username="legacy", privacy_accepted=True))
         session.add(User(tg_id=900004, username="never", privacy_accepted=False))
         await session.commit()
-        # The migration's backfill statement, applied on upgrade:
+
+    # No backfill is applied by the migration anymore, so neither is accepted.
+    assert await UserService.is_terms_accepted(900003) is False
+    assert await UserService.is_terms_accepted(900004) is False
+
+
+async def test_force_reset_migration_nulls_acceptance():
+    """The one-shot force-reacceptance migration NULLs every user's acceptance,
+    even users the original grandfather migration already marked accepted."""
+    await _reset_users()
+    # Two users that look accepted (as prod is today after grandfathering).
+    async with async_session_maker() as session:
+        session.add(
+            User(tg_id=900010, privacy_accepted=True, accepted_terms_version=TERMS_VERSION)
+        )
+        session.add(
+            User(tg_id=900011, privacy_accepted=True, accepted_terms_version=TERMS_VERSION)
+        )
+        # Force the one-shot to be considered un-applied on this DB.
+        await session.execute(text("DELETE FROM schema_meta"))
+        await session.commit()
+
+    assert await UserService.is_terms_accepted(900010) is True  # accepted before reset
+
+    await run_migrations()  # applies the one-shot reset
+
+    # Everyone is now NULLed -> re-gated on next interaction.
+    assert await UserService.is_terms_accepted(900010) is False
+    assert await UserService.is_terms_accepted(900011) is False
+    async with async_session_maker() as session:
+        rows = (
+            await session.execute(
+                text("SELECT accepted_terms_version, accepted_terms_at, privacy_accepted FROM users")
+            )
+        ).fetchall()
+    for version, at, privacy in rows:
+        assert version is None and at is None
+        assert bool(privacy) is False
+
+    # And it is one-shot: running migrations again does NOT re-run (idempotent),
+    # so a user who just re-accepts is not wiped on the next restart.
+    async with async_session_maker() as session:
         await session.execute(
-            text(
-                "UPDATE users SET accepted_terms_version = :v, accepted_terms_at = CURRENT_TIMESTAMP "
-                "WHERE privacy_accepted = 1 AND accepted_terms_version IS NULL"
-            ),
+            text("UPDATE users SET accepted_terms_version = :v WHERE tg_id = 900010"),
             {"v": TERMS_VERSION},
         )
         await session.commit()
-
-    assert await UserService.is_terms_accepted(900003) is True  # grandfathered
-    assert await UserService.is_terms_accepted(900004) is False  # never accepted -> gated
+    await run_migrations()
+    assert await UserService.is_terms_accepted(900010) is True
 
 
 async def test_register_on_start_reports_terms_state():

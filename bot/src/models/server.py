@@ -27,6 +27,17 @@ class Server(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     display_order: Mapped[int] = mapped_column(Integer, default=0)
     mtproxy_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Alternative VLESS+REALITY transport port on the SAME reality keypair
+    # (public_key / short_id). NULL means the node serves xhttp/443 only and
+    # offers no transport choice. Only the Greece node carries this today.
+    tcp_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    @property
+    def has_alt_transports(self) -> bool:
+        """True when this node exposes an alternative VLESS transport (raw-tcp)
+        beyond the default xhttp inbound, so a per-location transport choice is
+        meaningful. Today only the Greece node qualifies."""
+        return self.tcp_port is not None
 
     subscription_servers: Mapped[list["SubscriptionServer"]] = relationship(
         back_populates="server", cascade="all, delete-orphan"

@@ -1,0 +1,51 @@
+# Hysteria2 "gaming" server for AegisVPN. Provisioning fills the __PLACEHOLDERS__
+# into ./data/hysteria/config.yaml on the node (secrets + self-signed cert never
+# touch the repo). Tuned for low gaming jitter (CS2) and RU/ТСПУ survival.
+#
+# - Salamander obfs is MANDATORY: bare foreign QUIC is dropped on the RU Initial
+#   packet. Same password must be in the client config (delivered in the sub).
+# - Brutal CC turns on because we advertise a FIXED bandwidth on BOTH ends
+#   (~80% of the node's real uplink); it never backs off on loss, beating
+#   TCP/VLESS head-of-line stalls on throttled RU UDP paths. Too-high values
+#   make Brutal over-send and ADD jitter — keep it honest.
+# - Small QUIC receive windows kill bufferbloat (Hy2's 8MB/20MB defaults are
+#   throughput-oriented and worsen twitch-game jitter).
+# - Per-user auth + kick + traffic stats all go through the aegis-vpn agent on
+#   loopback, so the bot lifecycle (add/remove/expiry/block/conn-limit) drives
+#   Hy2 exactly like xray. The user's xray UUID is the Hy2 auth secret.
+
+listen: :36500   # single high UDP port; nftables redirects the hop range to it
+
+tls:
+  cert: /etc/hysteria/cert.pem
+  key: /etc/hysteria/key.pem
+
+obfs:
+  type: salamander
+  salamander:
+    password: __OBFS_PASSWORD__
+
+auth:
+  type: http
+  http:
+    url: http://127.0.0.1:8444/hy2/auth
+
+trafficStats:
+  listen: 127.0.0.1:9999
+  secret: __STATS_SECRET__
+
+bandwidth:
+  up: __BW_UP__       # ~80% of real uplink, e.g. "200 mbps"; enables Brutal
+  down: __BW_DOWN__
+ignoreClientBandwidth: false   # keep Brutal (true would force BBR)
+
+quic:
+  initStreamReceiveWindow: 4194304     # 4 MB  (default 8 MB -> bufferbloat)
+  maxStreamReceiveWindow: 4194304
+  initConnReceiveWindow: 10485760      # 10 MB (default 20 MB)
+  maxConnReceiveWindow: 10485760
+  maxIdleTimeout: 30s
+  disablePathMTUDiscovery: false
+
+masquerade:        # defense-in-depth if obfs is ever off: a raw probe gets 404
+  type: 404

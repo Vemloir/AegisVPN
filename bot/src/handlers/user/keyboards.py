@@ -55,9 +55,95 @@ def settings_keyboard(
                 callback_data="devices_open",
             )
         ])
+        buttons.append([InlineKeyboardButton(text=t(language, "locations_btn"), callback_data="locations_open")])
         buttons.append([InlineKeyboardButton(text=t(language, "reissue_subscription"), callback_data="reissue_subscription")])
     buttons.append([InlineKeyboardButton(text=t(language, "delete_account"), callback_data="account_delete")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def locations_list_keyboard(language: str, servers: list) -> InlineKeyboardMarkup:
+    """One button per active location (flag + name), then back-to-settings."""
+    from src.services.subscription_service import SubscriptionService
+
+    rows: list[list[InlineKeyboardButton]] = []
+    duplicate_keys: set[str] = set()
+    seen: dict[str, int] = {}
+    for s in servers:
+        key = (s.name or "").strip().casefold()
+        if key:
+            seen[key] = seen.get(key, 0) + 1
+    duplicate_keys = {k for k, c in seen.items() if c > 1}
+    for s in servers:
+        label = SubscriptionService.format_server_label(s, duplicate_keys)
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"loc:{s.id}")])
+    rows.append([InlineKeyboardButton(text=t(language, "back_to_settings"), callback_data="settings_open")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def location_no_alt_keyboard(language: str) -> InlineKeyboardMarkup:
+    """Back button for a location without alternative transports."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=t(language, "back_to_locations"), callback_data="locations_open")],
+        ]
+    )
+
+
+def location_settings_keyboard(
+    language: str,
+    server_id: int,
+    protocol: str,
+    transport: str,
+    available_transports: list[str],
+) -> InlineKeyboardMarkup:
+    """Protocol + transport selectors for one location.
+
+    The current choice is marked with a localized text tag (no emoji). Hysteria2
+    is shown but disabled — tapping it only flashes a 'coming soon' answer and
+    never persists, so the bot can never be coerced into emitting a Hy2 config.
+    """
+    mark = t(language, "location_current_mark")
+
+    def label(key: str, selected: bool) -> str:
+        return t(language, key) + (mark if selected else "")
+
+    rows: list[list[InlineKeyboardButton]] = []
+    # Protocol row(s).
+    # Selecting "VLESS" keeps the current transport (or xhttp when switching back
+    # from a future non-vless protocol).
+    vless_transport = transport if protocol == "vless" else "xhttp"
+    rows.append([
+        InlineKeyboardButton(
+            text=label("location_proto_vless", protocol == "vless"),
+            callback_data=f"loc_set:{server_id}:vless:{vless_transport}",
+        )
+    ])
+    rows.append([
+        InlineKeyboardButton(
+            text=label("location_proto_hy2", protocol == "hy2"),
+            # Disabled: routes to a no-op handler that only shows "coming soon".
+            callback_data=f"loc_hy2:{server_id}",
+        )
+    ])
+    # Transport row (VLESS only) — one button per available transport.
+    transport_keys = {
+        "xhttp": "location_transport_xhttp",
+        "tcp": "location_transport_tcp",
+    }
+    for tr in available_transports:
+        rows.append([
+            InlineKeyboardButton(
+                text=label(transport_keys[tr], protocol == "vless" and transport == tr),
+                callback_data=f"loc_set:{server_id}:vless:{tr}",
+            )
+        ])
+    rows.append([
+        InlineKeyboardButton(text=t(language, "location_reset_btn"), callback_data=f"loc_reset:{server_id}")
+    ])
+    rows.append([
+        InlineKeyboardButton(text=t(language, "back_to_locations"), callback_data="locations_open")
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def reissue_subscription_keyboard(language: str) -> InlineKeyboardMarkup:

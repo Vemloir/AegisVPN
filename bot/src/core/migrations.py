@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import settings
 from src.core.database import async_session_maker
-from src.core.terms import TERMS_VERSION
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,20 +30,13 @@ MIGRATIONS: dict[str, list[Column]] = {
         Column("trial_used", "BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE"),
         Column("privacy_accepted", "BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE"),
         Column("conn_limit", "INTEGER", "INTEGER"),
-        # Legal-acceptance gate (Privacy Policy + Terms of Service). Users who
-        # already accepted the old privacy-only flow are grandfathered into the
-        # current TERMS_VERSION so they are not force-re-prompted on rollout.
+        # Legal-acceptance gate (Privacy Policy + Terms of Service). The grandfather
+        # backfill that silently re-accepted old privacy-only users has been removed:
+        # the policy is now "explicit acceptance required". The one-shot reset in
+        # ONE_SHOT_DATA_MIGRATIONS forces EVERY user (including those the original
+        # grandfather migration already marked accepted in prod) to re-accept.
         Column("accepted_terms_at", "TIMESTAMP", "TIMESTAMP"),
-        Column(
-            "accepted_terms_version",
-            "VARCHAR(32)",
-            "VARCHAR(32)",
-            post_sql=(
-                "UPDATE users SET accepted_terms_version = "
-                f"'{TERMS_VERSION}', accepted_terms_at = CURRENT_TIMESTAMP "
-                "WHERE privacy_accepted = 1 AND accepted_terms_version IS NULL"
-            ),
-        ),
+        Column("accepted_terms_version", "VARCHAR(32)", "VARCHAR(32)"),
     ],
     "subscriptions": [
         Column("legacy_sub_token", "VARCHAR(255)", "VARCHAR(255)"),
@@ -77,8 +69,35 @@ MIGRATIONS: dict[str, list[Column]] = {
         ),
         Column("display_order", "INTEGER DEFAULT 0", "INTEGER DEFAULT 0"),
         Column("mtproxy_secret", "VARCHAR(64)", "VARCHAR(64)"),
+        # Alternative VLESS+REALITY transport port (same reality keypair). NULL =
+        # xhttp/443 only, no transport choice. ONLY the Greece node is backfilled
+        # here; every other server stays NULL. This is the single allowed
+        # prod-DB effect for the per-location-transport feature.
+        Column(
+            "tcp_port",
+            "INTEGER",
+            "INTEGER",
+            post_sql="UPDATE servers SET tcp_port = 2053 WHERE host = '45.142.31.13'",
+        ),
     ],
 }
+
+
+# One-shot data migrations: run exactly once per database, tracked in the
+# ``schema_meta`` marker table. Unlike Column.post_sql (which fires only when its
+# column is first added), these run on the FIRST boot that sees them and never
+# again — so a force-reset does not re-trigger on every restart and re-gate users
+# who just re-accepted. Ordered; each runs after all column adds above.
+ONE_SHOT_DATA_MIGRATIONS: list[tuple[str, str]] = [
+    # Force EVERY existing user to re-accept the current ToS + Privacy. The
+    # earlier grandfather migration already ran in prod and marked the existing
+    # users accepted; this clears that so they are re-gated on next interaction.
+    (
+        "force_terms_reacceptance_2026_06_22",
+        "UPDATE users SET accepted_terms_version = NULL, accepted_terms_at = NULL, "
+        "privacy_accepted = 0",
+    ),
+]
 
 
 # Ordered table -> columns to drop from older databases (legacy/removed features).
@@ -130,4 +149,20 @@ async def run_migrations() -> None:
                 if name not in existing:
                     continue
                 await session.execute(text(f"ALTER TABLE {table} DROP COLUMN {name}"))
+
+        # One-shot data migrations run AFTER every column add/drop above, each
+        # exactly once, tracked in schema_meta. This is what actually forces the
+        # terms re-acceptance on deploy.
+        await session.execute(
+            text("CREATE TABLE IF NOT EXISTS schema_meta (key VARCHAR(128) PRIMARY KEY)")
+        )
+        applied = {
+            row[0]
+            for row in (await session.execute(text("SELECT key FROM schema_meta"))).fetchall()
+        }
+        for key, sql in ONE_SHOT_DATA_MIGRATIONS:
+            if key in applied:
+                continue
+            await session.execute(text(sql))
+            await session.execute(text("INSERT INTO schema_meta (key) VALUES (:k)"), {"k": key})
         await session.commit()

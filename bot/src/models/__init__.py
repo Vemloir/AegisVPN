@@ -6,6 +6,7 @@ from .referral import Referral
 from .server import Server
 from .server_access import ServerAccessGrant
 from .subscription import Subscription, SubscriptionServer
+from .transport_pref import ServerTransportPref
 from .user import User
 
 __all__ = [
@@ -16,6 +17,7 @@ __all__ = [
     "Plan",
     "Subscription",
     "SubscriptionServer",
+    "ServerTransportPref",
     "Device",
     "Payment",
     "Referral",

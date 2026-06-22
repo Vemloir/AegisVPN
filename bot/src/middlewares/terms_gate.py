@@ -64,7 +64,7 @@ class TermsGateMiddleware(BaseMiddleware):
                 await event.message.answer(
                     await gate_text(language, tg_user.first_name),
                     parse_mode="HTML",
-                    reply_markup=gate_keyboard(language),
+                    reply_markup=await gate_keyboard(language),
                     disable_web_page_preview=True,
                 )
             return None

@@ -75,3 +75,20 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./data/caddy:/data
       - ./config/caddy:/config
+
+  # Hysteria2 "gaming" data plane — opt-in via the `hysteria` profile, so nodes
+  # without it run nothing extra. apernet/hysteria on its own UDP port; per-user
+  # auth/kick/stats go through the agent on loopback (host net), so the bot
+  # lifecycle drives it like xray. Config + self-signed cert + secrets are
+  # generated per node into ./data/hysteria/ (never in the repo).
+  hysteria:
+    image: ghcr.io/apernet/hysteria:latest
+    container_name: aegis-hysteria
+    restart: unless-stopped
+    network_mode: host
+    command: ["server", "-c", "/etc/hysteria/config.yaml"]
+    volumes:
+      - ./data/hysteria:/etc/hysteria
+    logging: *default-logging
+    profiles:
+      - hysteria

@@ -75,6 +75,27 @@ TEXTS: dict[str, dict[str, str]] = {
         "language_russian": "Русский",
         "language_english": "English",
         "change_language": "Сменить язык",
+        # Per-location transport settings ("Локации").
+        "locations_btn": "Локации",
+        "locations_title": "Локации",
+        "locations_intro": "Выберите локацию, чтобы настроить протокол и транспорт.",
+        "locations_none": "Сейчас для вашей подписки нет доступных локаций.",
+        "location_no_alt": (
+            "Для этой локации доступен только стандартный транспорт. "
+            "Настройка появится позже."
+        ),
+        "location_settings_title": "Настройки локации: {name}",
+        "location_protocol_label": "Протокол",
+        "location_transport_label": "Тип транспорта",
+        "location_proto_vless": "VLESS + Reality",
+        "location_proto_hy2": "Hysteria2 (скоро — как запустим гейминг-локацию)",
+        "location_transport_xhttp": "XHTTP (рекомендуется)",
+        "location_transport_tcp": "TCP",
+        "location_current_mark": " [текущий]",
+        "location_reset_btn": "Сбросить (по умолчанию)",
+        "location_saved": "Сохранено",
+        "location_hy2_unavailable": "Hysteria2 пока недоступен — скоро.",
+        "back_to_locations": "Назад к локациям",
         "back_to_settings": "Назад к настройкам",
         "delete_account": "Удалить аккаунт",
         "delete_account_warning": (
@@ -234,6 +255,27 @@ TEXTS: dict[str, dict[str, str]] = {
         "language_russian": "Russian",
         "language_english": "English",
         "change_language": "Change language",
+        # Per-location transport settings ("Locations").
+        "locations_btn": "Locations",
+        "locations_title": "Locations",
+        "locations_intro": "Pick a location to configure its protocol and transport.",
+        "locations_none": "There are currently no locations available for your subscription.",
+        "location_no_alt": (
+            "This location only offers the standard transport. "
+            "Configuration will be available later."
+        ),
+        "location_settings_title": "Location settings: {name}",
+        "location_protocol_label": "Protocol",
+        "location_transport_label": "Transport type",
+        "location_proto_vless": "VLESS + Reality",
+        "location_proto_hy2": "Hysteria2 (soon — once the gaming location launches)",
+        "location_transport_xhttp": "XHTTP (recommended)",
+        "location_transport_tcp": "TCP",
+        "location_current_mark": " [текущий]",
+        "location_reset_btn": "Reset (default)",
+        "location_saved": "Saved",
+        "location_hy2_unavailable": "Hysteria2 is not available yet — coming soon.",
+        "back_to_locations": "Back to locations",
         "back_to_settings": "Back to settings",
         "delete_account": "Delete account",
         "delete_account_warning": (

@@ -75,24 +75,41 @@ async def doc_links_block(language: str) -> str:
 
 
 async def gate_text(language: str, name: str | None = None) -> str:
+    # The two documents are now URL BUTTONS (see gate_keyboard), so the body is
+    # just the greeting + intro — no inline doc links.
     greeting = t(language, "terms_gate_greeting", name=html.bold(name or ""))
-    return f"{greeting}\n\n{t(language, 'terms_gate_intro')}\n\n{await doc_links_block(language)}"
+    return f"{greeting}\n\n{t(language, 'terms_gate_intro')}"
 
 
-def gate_keyboard(language: str) -> InlineKeyboardMarkup:
-    # A single inline button. The documents are TEXT links in the body above,
-    # NOT buttons (Telegram forbids inline + reply keyboards on one message).
-    return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text=t(language, "terms_accept_button"), callback_data=ACCEPT_CALLBACK)]]
-    )
+async def gate_keyboard(language: str) -> InlineKeyboardMarkup:
+    """Two document URL buttons (Privacy + ToS) on one row, then Accept.
+
+    The Telegraph URLs are resolved (and published-on-demand) here; if either
+    fails to resolve we simply omit that button rather than crash the gate — the
+    Accept button is always present so the user can never deadlock.
+    """
+    privacy_url = await resolve_privacy_url(language)
+    tos_url = await resolve_tos_url()
+
+    doc_row: list[InlineKeyboardButton] = []
+    if privacy_url:
+        doc_row.append(InlineKeyboardButton(text=t(language, "doc_privacy_label"), url=privacy_url))
+    if tos_url:
+        doc_row.append(InlineKeyboardButton(text=t(language, "doc_tos_label"), url=tos_url))
+
+    rows: list[list[InlineKeyboardButton]] = []
+    if doc_row:
+        rows.append(doc_row)
+    rows.append([InlineKeyboardButton(text=t(language, "terms_accept_button"), callback_data=ACCEPT_CALLBACK)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 async def show_gate(message: Message, language: str, name: str | None = None) -> None:
-    """Render the acceptance gate as a single HTML message."""
+    """Render the acceptance gate as a single HTML message with doc buttons."""
     await message.answer(
         await gate_text(language, name),
         parse_mode="HTML",
-        reply_markup=gate_keyboard(language),
+        reply_markup=await gate_keyboard(language),
         disable_web_page_preview=True,
     )
 
