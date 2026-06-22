@@ -79,6 +79,48 @@ MIGRATIONS: dict[str, list[Column]] = {
             "INTEGER",
             post_sql="UPDATE servers SET tcp_port = 2053 WHERE host = '45.142.31.13'",
         ),
+        # --- Hysteria2 capability. ONLY the Greece node is backfilled, and the
+        # obfs password (a secret) is deliberately LEFT NULL: until the operator
+        # sets it via a direct DB UPDATE, hy2_capable is False and the bot falls
+        # back to vless rather than shipping a broken Hy2 link.
+        Column(
+            "hy2_enabled",
+            "BOOLEAN DEFAULT 0",
+            "BOOLEAN DEFAULT FALSE",
+            post_sql="UPDATE servers SET hy2_enabled = 1 WHERE host = '45.142.31.13'",
+        ),
+        Column(
+            "hy2_port",
+            "INTEGER",
+            "INTEGER",
+            post_sql="UPDATE servers SET hy2_port = 36500 WHERE host = '45.142.31.13'",
+        ),
+        Column(
+            "hy2_hop_start",
+            "INTEGER",
+            "INTEGER",
+            post_sql="UPDATE servers SET hy2_hop_start = 20000 WHERE host = '45.142.31.13'",
+        ),
+        Column(
+            "hy2_hop_end",
+            "INTEGER",
+            "INTEGER",
+            post_sql="UPDATE servers SET hy2_hop_end = 50000 WHERE host = '45.142.31.13'",
+        ),
+        # No post_sql: the obfs password is a secret, set out-of-band by the operator.
+        Column("hy2_obfs_password", "VARCHAR(255)", "VARCHAR(255)"),
+        Column(
+            "hy2_up",
+            "VARCHAR(32)",
+            "VARCHAR(32)",
+            post_sql="UPDATE servers SET hy2_up = '100 mbps' WHERE host = '45.142.31.13'",
+        ),
+        Column(
+            "hy2_down",
+            "VARCHAR(32)",
+            "VARCHAR(32)",
+            post_sql="UPDATE servers SET hy2_down = '100 mbps' WHERE host = '45.142.31.13'",
+        ),
     ],
 }
 

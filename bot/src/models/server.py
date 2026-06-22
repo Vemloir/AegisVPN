@@ -32,12 +32,36 @@ class Server(Base):
     # offers no transport choice. Only the Greece node carries this today.
     tcp_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # --- Hysteria2 capability (a separate process; xray-core cannot speak it) ---
+    # A node is Hy2-capable only when hy2_enabled AND an obfs password is set.
+    # The obfs password is a secret, never shipped in the migration: the operator
+    # sets it via a direct DB update, and emission falls back to vless until it is.
+    hy2_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Client target port (the Hy2 server :listen port); the port-hop range start
+    # in mport lets the client rotate UDP ports against ТСПУ throttling.
+    hy2_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    hy2_hop_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    hy2_hop_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    hy2_obfs_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    hy2_up: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    hy2_down: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
     @property
     def has_alt_transports(self) -> bool:
         """True when this node exposes an alternative VLESS transport (raw-tcp)
-        beyond the default xhttp inbound, so a per-location transport choice is
-        meaningful. Today only the Greece node qualifies."""
-        return self.tcp_port is not None
+        beyond the default xhttp inbound, OR can serve Hysteria2 — i.e. a
+        per-location protocol/transport choice is meaningful. Today only the
+        Greece node qualifies on either count."""
+        return self.tcp_port is not None or self.hy2_capable
+
+    @property
+    def hy2_capable(self) -> bool:
+        """True only when the node can emit a USABLE Hy2 link: Hy2 is enabled,
+        a client target port is set, and the obfs password (a secret left out of
+        the migration) has been provisioned. A misconfigured node (enabled but
+        no password) is NOT capable, so emission falls back to vless instead of
+        shipping a broken Hy2 link."""
+        return bool(self.hy2_enabled and self.hy2_port and self.hy2_obfs_password)
 
     subscription_servers: Mapped[list["SubscriptionServer"]] = relationship(
         back_populates="server", cascade="all, delete-orphan"

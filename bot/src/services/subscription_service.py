@@ -7,7 +7,7 @@ import secrets
 import uuid as _uuid_mod
 from collections import Counter
 from datetime import UTC, datetime, timedelta
-from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -91,7 +91,7 @@ class SubscriptionService:
 
     # Per-location protocol/transport preferences.
     PROTOCOL_VLESS = "vless"
-    PROTOCOL_HY2 = "hy2"  # future; NEVER emitted until a Hy2 backend exists.
+    PROTOCOL_HY2 = "hy2"  # emitted only for an hy2_capable server (see build_hy2_link).
     DEFAULT_PROTOCOL = PROTOCOL_VLESS
     TRANSPORT_XHTTP = "xhttp"
     TRANSPORT_TCP = "tcp"
@@ -111,17 +111,67 @@ class SubscriptionService:
         return transports
 
     @staticmethod
+    def resolve_protocol(server: Server, protocol: str | None) -> str:
+        """The concrete protocol to emit for a location. ``hy2`` only resolves to
+        Hy2 when the server is actually Hy2-capable (enabled + port + obfs
+        password); otherwise (a stale pref, a misconfigured node, or any future
+        protocol) it falls back to vless so a broken link can never ship."""
+        if (
+            protocol == SubscriptionService.PROTOCOL_HY2
+            and getattr(server, "hy2_capable", False)
+        ):
+            return SubscriptionService.PROTOCOL_HY2
+        return SubscriptionService.PROTOCOL_VLESS
+
+    @staticmethod
     def resolve_transport(server: Server, protocol: str | None, transport: str | None) -> str:
         """Collapse a stored (protocol, transport) preference into the concrete
-        VLESS transport to emit. Anything unsupported (hy2 — no backend; a
-        tcp pref on a server that lost the capability) falls back to the
-        byte-identical default xhttp."""
+        VLESS transport to emit. Hy2 (handled separately) and a tcp pref on a
+        server that lost the capability fall back to the byte-identical default
+        xhttp."""
         if protocol and protocol != SubscriptionService.PROTOCOL_VLESS:
-            # hy2 (or any future non-vless protocol) has no backend yet.
+            # hy2 (or any future non-vless protocol) is not a VLESS transport.
             return SubscriptionService.DEFAULT_TRANSPORT
         if transport in SubscriptionService.available_transports(server):
             return transport
         return SubscriptionService.DEFAULT_TRANSPORT
+
+    @staticmethod
+    def build_hy2_link(
+        server: Server,
+        device_uuid: str,
+        duplicate_name_keys: set[str] | None = None,
+    ) -> str | None:
+        """A ``hysteria2://`` URI for an hy2_capable server, or None.
+
+        The auth secret is the SAME per-device UUID the vless link carries, so
+        device suspension / conn-limit / re-issue key identically on the node
+        (Hy2 auth maps that UUID -> the device's email via the agent). salamander
+        obfs + the port-hop range (mport) help evade ТСПУ; the self-signed cert
+        forces insecure=1. Returns None when the server is not Hy2-capable so the
+        caller falls back to a vless link.
+        """
+        if not getattr(server, "hy2_capable", False) or not device_uuid:
+            return None
+        # A plausible SNI for the self-signed cert: reuse the REALITY serverName
+        # if the agent baked one onto the node, else a stable fixed value.
+        sni = getattr(server, "reality_server_name", None) or "www.microsoft.com"
+        query = {
+            "obfs": "salamander",
+            "obfs-password": server.hy2_obfs_password or "",
+            "insecure": "1",
+            "sni": sni,
+        }
+        if server.hy2_up:
+            query["up"] = server.hy2_up
+        if server.hy2_down:
+            query["down"] = server.hy2_down
+        if server.hy2_hop_start and server.hy2_hop_end:
+            query["mport"] = f"{server.hy2_hop_start}-{server.hy2_hop_end}"
+        userinfo = quote(device_uuid, safe="")
+        fragment = SubscriptionService.format_server_label(server, duplicate_name_keys)
+        netloc = f"{userinfo}@{server.host}:{server.hy2_port}"
+        return urlunsplit(("hysteria2", netloc, "", urlencode(query), fragment))
 
     @staticmethod
     async def get_transport_pref(
@@ -205,6 +255,39 @@ class SubscriptionService:
             resolved = SubscriptionService.resolve_transport(server, pref.protocol, pref.transport)
             if resolved != SubscriptionService.DEFAULT_TRANSPORT:
                 result[pref.server_id] = resolved
+        return result
+
+    @staticmethod
+    async def _hy2_servers_for_user(
+        session: AsyncSession, user_id: int, server_ids: list[int]
+    ) -> set[int]:
+        """The subset of ``server_ids`` whose stored preference resolves to Hy2.
+
+        A server is included only when the user picked protocol=hy2 AND the
+        server is Hy2-capable (enabled + port + obfs password). A stale hy2 pref
+        on a node that is not capable resolves to vless and is omitted, so the
+        caller emits a vless link there instead of a broken Hy2 one."""
+        if not server_ids:
+            return set()
+        rows = (
+            await session.execute(
+                select(ServerTransportPref).where(
+                    ServerTransportPref.user_id == user_id,
+                    ServerTransportPref.server_id.in_(server_ids),
+                    ServerTransportPref.protocol == SubscriptionService.PROTOCOL_HY2,
+                )
+            )
+        ).scalars().all()
+        result: set[int] = set()
+        for pref in rows:
+            server = await session.get(Server, pref.server_id)
+            if server is None:
+                continue
+            if (
+                SubscriptionService.resolve_protocol(server, pref.protocol)
+                == SubscriptionService.PROTOCOL_HY2
+            ):
+                result.add(pref.server_id)
         return result
 
     @staticmethod
@@ -464,11 +547,30 @@ class SubscriptionService:
         # Per-location transport preferences for this user. A missing row means
         # the default (vless/xhttp) — i.e. byte-identical to the legacy path —
         # so an empty map leaves every server on its default transport.
+        server_ids = [server.id for server in servers]
         transport_by_server = await SubscriptionService._transport_prefs_for_user(
-            session, sub.user_id, [server.id for server in servers]
+            session, sub.user_id, server_ids
+        )
+        # Locations the user pinned to Hysteria2 (only those that are actually
+        # Hy2-capable; a stale/misconfigured pref is dropped so the vless path
+        # below runs instead).
+        hy2_server_ids = await SubscriptionService._hy2_servers_for_user(
+            session, sub.user_id, server_ids
         )
 
         async def fetch_link(server: Server) -> str:
+            # Hy2-picked location: emit a hysteria2:// link directly. xray-core
+            # cannot speak Hy2, so this never goes through the agent's vless
+            # /sub endpoint. Same auth (effective_uuid = device or sub UUID) as
+            # vless, so suspension / conn-limit / re-issue key identically.
+            if server.id in hy2_server_ids:
+                hy2 = SubscriptionService.build_hy2_link(
+                    server, effective_uuid, duplicate_name_keys
+                )
+                if hy2:
+                    return hy2
+                # Capability lost between pref-resolution and emission: fall back
+                # to a vless link rather than ship nothing.
             client = AgentClient(server.agent_url, server.agent_token)
             target_profile = (
                 SubscriptionService.FAST_PROFILE
@@ -509,21 +611,35 @@ class SubscriptionService:
         sub_token: str,
         profile: str | None = None,
         device_uuid: str | None = None,
-    ) -> str:
-        """Full xray-JSON subscription (array of standalone configs, one per
-        server) for clients that consume it (Happ, v2rayTun, v2rayNG, …). Each
-        config carries the clean default-proxy routing (everything tunneled
-        except RU/CN/private) + DNS resolved DIRECT + the xhttp recovery knobs
-        (hKeepAlivePeriod / tcpKeepAlive), so a Wi-Fi<->cellular switch recovers
-        instead of hanging. Other clients still get the base64 link list.
+    ) -> tuple[str, str]:
+        """Subscription for xray-JSON clients (Happ, v2rayTun, v2rayNG, …).
+
+        Returns ``(kind, body)`` where ``kind`` is ``"json"`` for the xray-JSON
+        config array, or ``"links"`` when the subscription contains a Hysteria2
+        location. Each JSON config carries the clean default-proxy routing
+        (everything tunneled except RU/CN/private) + DNS resolved DIRECT + the
+        xhttp recovery knobs (hKeepAlivePeriod / tcpKeepAlive), so a
+        Wi-Fi<->cellular switch recovers instead of hanging.
+
+        xray-core cannot run a hysteria2:// entry as an outbound, and a
+        hysteria2:// URI is not a valid xray-JSON config object — so a JSON-only
+        response would silently DROP a Hy2-picked location for these clients.
+        When any Hy2 link is present we therefore fall the WHOLE subscription
+        back to the base64 link list (vless:// + hysteria2:// URIs), which
+        Happ/v2rayTun parse natively too, so the Hy2 location always reaches the
+        client as a usable hysteria2:// entry. Non-Hy2 subscriptions are
+        byte-identical to before.
         """
         pairs = await SubscriptionService._collect_links(session, sub_token, profile, device_uuid)
+        if any(link.startswith("hysteria2://") for _, link in pairs):
+            body = "\n".join(link for _, link in pairs)
+            return "links", (base64.b64encode(body.encode("utf-8")).decode("utf-8") if body else "")
         configs = [
             cfg
             for server, link in pairs
             if (cfg := SubscriptionService._vless_link_to_xray_config(link, server)) is not None
         ]
-        return json.dumps(configs, ensure_ascii=False) if configs else ""
+        return "json", (json.dumps(configs, ensure_ascii=False) if configs else "")
 
     @staticmethod
     def _vless_link_to_xray_config(link: str, server: Server) -> dict | None:

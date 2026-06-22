@@ -9,6 +9,7 @@ import asyncio
 import json
 import os
 
+from . import hysteria
 from .config import settings
 from .xray import api_server, run_xray_api
 
@@ -101,25 +102,57 @@ async def online_ips(email: str) -> dict[str, int]:
 
 
 async def enforce_conn_limit_once() -> int:
-    """Block source IPs that exceed the per-subscription limit.
+    """Block source IPs that exceed the per-subscription limit, across BOTH
+    xray (VLESS) and Hysteria2.
 
-    For each online user with more than `conn_limit` distinct IPs, keep the
-    `conn_limit` most-recently-seen IPs and block the rest. The block list is
-    rebuilt every cycle with `sib -reset`, so an IP that stops being excess is
-    automatically unblocked next cycle. Returns the count of blocked IPs.
+    The limit is enforced over the COMBINED simultaneous sessions of a user:
+    xray contributes its distinct online source IPs, Hy2 contributes its live
+    session COUNT (Hy2's trafficStats exposes a per-user count, not source IPs).
+    For each user whose xray-IPs + Hy2-sessions exceed the limit we:
+
+      * cap xray to ``max(0, limit - hy2_count)`` newest source IPs and block the
+        overflow (the block list is rebuilt every cycle with ``sib -reset``, so
+        an IP that stops being excess is auto-unblocked next cycle), and
+      * kick the user's Hy2 sessions when Hy2 is contributing to the overage —
+        Hy2's kick is all-or-nothing per user, so legitimate clients reconnect
+        and re-auth, converging back under the limit (xray now leaves room).
+
+    Returns the count of blocked xray IPs.
     """
     global _prev_had_excess
+    # Hy2 live-session counts for this cycle (empty when Hy2 is disabled, so on a
+    # node without Hysteria2 this is byte-identical to the xray-only behavior).
+    hy2_counts = await hysteria.online_counts()
+    # Consider every user seen on either protocol (a Hy2-only user with no xray
+    # session still counts toward — and can exceed — the limit).
+    emails = set(await online_users()) | set(hy2_counts)
     excess: list[str] = []
-    for email in await online_users():
+    hy2_kick: list[str] = []
+    for email in emails:
         limit = _limit_for(email)  # per-user override, else node default
         if limit <= 0:  # 0 = unlimited (default disabled or per-user "no limit")
             continue
+        hy2_count = hy2_counts.get(email, 0)
         ips = await online_ips(email)
-        if len(ips) <= limit:
+        combined = len(ips) + hy2_count
+        if combined <= limit:
             continue
-        # keep the `limit` newest by timestamp, block the older overflow
-        ordered = sorted(ips.items(), key=lambda kv: kv[1], reverse=True)
-        excess.extend(ip for ip, _ in ordered[limit:])
+        # Cap xray to whatever the limit leaves after Hy2's slots; block the rest.
+        xray_keep = max(0, limit - hy2_count)
+        if len(ips) > xray_keep:
+            ordered = sorted(ips.items(), key=lambda kv: kv[1], reverse=True)
+            excess.extend(ip for ip, _ in ordered[xray_keep:])
+        # Hy2 is part of the overage and can't be trimmed per-IP: kick it so the
+        # user falls back under the combined limit on reconnect.
+        if hy2_count > 0:
+            hy2_kick.append(email)
+
+    # Drop the over-limit Hy2 sessions. refresh_from_config already keeps the
+    # valid Hy2 user set in sync with the live xray clients, so a kicked user who
+    # is still authorized may reconnect — but only up to the limit, since the
+    # next cycle re-evaluates the combined count.
+    if hy2_kick:
+        await hysteria.kick(hy2_kick)
 
     # Skip sib entirely when nothing was blocked and nothing needs clearing —
     # calling sib with no IPs causes xray to read from stdin and log errors.

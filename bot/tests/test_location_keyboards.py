@@ -51,6 +51,7 @@ def test_location_screen_hides_transport_button_off_vless():
 
 
 def test_protocol_chooser_buttons_and_disabled_hy2():
+    # Non-Hy2 node (default): Hy2 routes to the disabled alert, never a set.
     kb = location_protocol_keyboard("ru", 7, "vless")
     cbs = _callbacks(kb)
     # VLESS persists; Hy2 routes to the disabled alert (NEVER a set callback);
@@ -59,6 +60,22 @@ def test_protocol_chooser_buttons_and_disabled_hy2():
     assert not any(c.startswith("loc_proto_set:7:hy2") for c in cbs)
     # The current protocol carries the localized "(текущий)" marker.
     assert "(текущий)" in _texts(kb)[0]
+
+
+def test_protocol_chooser_hy2_selectable_on_capable_node():
+    # Greece (hy2_capable): Hy2 becomes a real set callback, not the alert.
+    kb = location_protocol_keyboard("ru", 7, "vless", hy2_capable=True)
+    cbs = _callbacks(kb)
+    assert cbs == ["loc_proto_set:7:vless", "loc_proto_set:7:hy2", "loc:7"]
+    assert "loc_hy2:7" not in cbs
+
+
+def test_protocol_chooser_hy2_marked_when_current():
+    # When the location is already on Hy2, the Hy2 button carries the marker.
+    kb = location_protocol_keyboard("ru", 7, "hy2", hy2_capable=True)
+    texts = _texts(kb)
+    assert "(текущий)" in texts[1]  # Hy2 button is the 2nd row
+    assert "(текущий)" not in texts[0]  # VLESS is not current
 
 
 # --- transport chooser -------------------------------------------------------

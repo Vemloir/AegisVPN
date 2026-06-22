@@ -106,19 +106,37 @@ async def traffic() -> dict[str, dict[str, int]]:
     return out
 
 
-async def online() -> list[str]:
-    """Hy2 ids (emails) with at least one live session right now."""
+async def online_counts() -> dict[str, int]:
+    """Hy2 live-session COUNT per id (email), from the trafficStats /online API.
+
+    Hysteria2's trafficStats answers ``{id: connectionCount}`` — a count, NOT a
+    set of source IPs (unlike xray, Hy2 does not expose per-session client IPs).
+    The conn-limiter uses these counts as occupied slots alongside xray's
+    distinct online IPs. Empty when Hy2 is disabled or the API can't answer.
+    """
     if not settings.hy2_enabled:
-        return []
+        return {}
     raw = await asyncio.to_thread(_request, "GET", "/online")
     if not raw:
-        return []
+        return {}
     try:
         data = json.loads(raw)
     except (ValueError, TypeError):
-        return []
+        return {}
     if isinstance(data, dict):
-        return list(data.keys())
+        out: dict[str, int] = {}
+        for email, count in data.items():
+            try:
+                out[str(email)] = max(0, int(count))
+            except (ValueError, TypeError):
+                out[str(email)] = 1  # present but unparseable count => at least one
+        return out
     if isinstance(data, list):
-        return [str(x) for x in data]
-    return []
+        # Defensive: a bare list of ids => one session each.
+        return {str(x): 1 for x in data}
+    return {}
+
+
+async def online() -> list[str]:
+    """Hy2 ids (emails) with at least one live session right now."""
+    return list((await online_counts()).keys())

@@ -7,9 +7,11 @@ on every subscription fetch — the subscription URL/token never changes. A
 location with no alternative transports (every node except Greece today) shows a
 short "standard only" notice instead of the selectors.
 
-Hysteria2 is shown but disabled: there is no Hy2 backend yet, so tapping it only
-flashes a "coming soon" answer and never persists. The bot therefore can never
-be coerced into emitting a Hy2 config.
+Hysteria2 is SELECTABLE on an Hy2-capable node (Greece): tapping it persists
+protocol=hy2 and the subscription then carries a hysteria2:// link for that
+location (Hy2 has no transport sub-choice). On every other node Hy2 is shown but
+disabled — tapping it only flashes a "not available" answer and never persists,
+so the bot can never be coerced into emitting a Hy2 config a node can't serve.
 
 Callbacks:
   loc:<sid>                       per-location screen
@@ -150,7 +152,9 @@ async def cq_location_protocol(call: CallbackQuery):
     await call.message.edit_text(  # type: ignore[union-attr]
         text,
         parse_mode="HTML",
-        reply_markup=location_protocol_keyboard(language, server.id, protocol),
+        reply_markup=location_protocol_keyboard(
+            language, server.id, protocol, hy2_capable=server.hy2_capable
+        ),
     )
     await call.answer()
 
@@ -185,8 +189,8 @@ async def cq_location_protocol_set(call: CallbackQuery):
     server_id = int(raw_id)
     language = await get_user_language(call.from_user.id)
 
-    # Defense-in-depth: never persist a non-vless protocol (no Hy2 backend).
-    if protocol != SubscriptionService.PROTOCOL_VLESS:
+    # Only vless and hy2 are valid; anything else is rejected outright.
+    if protocol not in (SubscriptionService.PROTOCOL_VLESS, SubscriptionService.PROTOCOL_HY2):
         await call.answer(t(language, "location_hy2_unavailable"), show_alert=True)
         return
 
@@ -194,6 +198,15 @@ async def cq_location_protocol_set(call: CallbackQuery):
     if loaded is None:
         return
     server, _protocol, transport, _available = loaded
+
+    # Defense-in-depth: hy2 only persists on an Hy2-capable node. On a node that
+    # can't serve Hy2 (every node except Greece today, or one missing its obfs
+    # password) tapping it just flashes "not available" and changes nothing — so
+    # the bot can never be coerced into emitting a Hy2 link a node can't honor.
+    if protocol == SubscriptionService.PROTOCOL_HY2 and not server.hy2_capable:
+        await call.answer(t(language, "location_hy2_unavailable"), show_alert=True)
+        return
+
     async with async_session_maker() as session:
         user = (
             await session.execute(select(User).where(User.tg_id == call.from_user.id))
@@ -201,11 +214,16 @@ async def cq_location_protocol_set(call: CallbackQuery):
         if user is None:
             await call.answer(t(language, "locations_none"), show_alert=True)
             return
-        # Selecting vless keeps the current transport (which is always vless's own
-        # since hy2 never persists); set_transport_pref collapses vless/xhttp to
-        # "no row" automatically.
+        # vless keeps the current transport; hy2 has no transport sub-choice, so
+        # the transport field is left at its default. set_transport_pref collapses
+        # the plain vless/xhttp default to "no row" automatically.
+        stored_transport = (
+            transport
+            if protocol == SubscriptionService.PROTOCOL_VLESS
+            else SubscriptionService.DEFAULT_TRANSPORT
+        )
         await SubscriptionService.set_transport_pref(
-            session, user.id, server.id, SubscriptionService.PROTOCOL_VLESS, transport
+            session, user.id, server.id, protocol, stored_transport
         )
 
     await _render_location(call, server_id, toast=t(language, "location_saved"))

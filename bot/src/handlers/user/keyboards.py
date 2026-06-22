@@ -143,11 +143,25 @@ def location_protocol_keyboard(
     language: str,
     server_id: int,
     protocol: str,
+    hy2_capable: bool = False,
 ) -> InlineKeyboardMarkup:
-    """Protocol chooser. Hysteria2 is shown but disabled — tapping it only flashes
-    a 'coming soon' answer and never persists, so the bot can never be coerced
-    into emitting a Hy2 config."""
+    """Protocol chooser. On an Hy2-capable node (Greece) Hysteria2 is selectable
+    and routes to ``loc_proto_set:<sid>:hy2``; the current option carries the
+    marker. On every other node Hy2 is shown but disabled — tapping it only
+    flashes a 'not available' answer and never persists, so the bot can never be
+    coerced into emitting a Hy2 config for a node that can't serve it."""
     mark = t(language, "location_selected_mark")
+    if hy2_capable:
+        hy2_button = InlineKeyboardButton(
+            text=t(language, "location_proto_hy2") + (mark if protocol == "hy2" else ""),
+            callback_data=f"loc_proto_set:{server_id}:hy2",
+        )
+    else:
+        # Disabled: routes to a no-op handler that only shows "not available".
+        hy2_button = InlineKeyboardButton(
+            text=t(language, "location_proto_hy2"),
+            callback_data=f"loc_hy2:{server_id}",
+        )
     rows: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(
@@ -155,13 +169,7 @@ def location_protocol_keyboard(
                 callback_data=f"loc_proto_set:{server_id}:vless",
             )
         ],
-        [
-            InlineKeyboardButton(
-                # Disabled: routes to a no-op handler that only shows "coming soon".
-                text=t(language, "location_proto_hy2"),
-                callback_data=f"loc_hy2:{server_id}",
-            )
-        ],
+        [hy2_button],
         [InlineKeyboardButton(text=t(language, "back"), callback_data=f"loc:{server_id}")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)

@@ -149,9 +149,13 @@ async def subscription_response(request: web.Request, profile: str) -> web.Respo
                 device_uuid = device.uuid
 
         if wants_xray_json:
-            body = await SubscriptionService.build_xray_json_subscription(
+            # The builder may downgrade to a base64 link list when the sub
+            # contains a Hysteria2 location (xray-core can't run hysteria2://),
+            # so the actual response kind comes back with the body.
+            kind, body = await SubscriptionService.build_xray_json_subscription(
                 session, sub_token, profile=profile, device_uuid=device_uuid
             )
+            wants_xray_json = kind == "json"
         else:
             body = await SubscriptionService.get_subscription_vless_links(
                 session, sub_token, profile=profile, device_uuid=device_uuid
