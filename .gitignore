@@ -18,3 +18,7 @@ __pycache__/
 .codex_tmp/
 .codex
 Client/
+.claude/
+.serena/
+graphify-out/
+CLAUDE.md
