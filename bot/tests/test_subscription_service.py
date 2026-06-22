@@ -93,10 +93,16 @@ def test_vless_link_to_xray_config_xhttp_has_recovery_knobs_and_clean_routing():
     assert ss["sockopt"]["tcpKeepAliveIdle"] == 10
     assert ss["realitySettings"]["publicKey"] == "PUBKEY"
     assert cfg["outbounds"][0]["settings"]["vnext"][0]["users"][0]["id"] == "0146ca3d-e9b9-459a-8e54-b611dc601bec"
-    # clean routing: ru/cn direct, rest falls through to proxy
-    assert cfg["routing"]["domainStrategy"] == "IPIfNonMatch"
+    # clean iOS-safe routing: ru/cn direct via a static suffix list, AsIs so the
+    # geo .dat files are never loaded (they blow the iOS ~50 MB tunnel cap).
+    assert cfg["routing"]["domainStrategy"] == "AsIs"
     ru_cn = {d for r in cfg["routing"]["rules"] for d in r.get("domain", [])}
-    assert {"geosite:category-ru", "geosite:cn"} <= ru_cn
+    assert {"domain:ru", "domain:cn"} <= ru_cn
+    assert not any(
+        "geosite" in v or "geoip" in v
+        for r in cfg["routing"]["rules"]
+        for v in (r.get("domain", []) + r.get("ip", []))
+    )
     # DNS resolves DIRECT (https+local), never through the proxy -> recovery works
     assert all(
         (s if isinstance(s, str) else s["address"]).startswith("https+local://")

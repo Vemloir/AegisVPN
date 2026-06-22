@@ -7,7 +7,7 @@ import secrets
 import uuid as _uuid_mod
 from collections import Counter
 from datetime import UTC, datetime, timedelta
-from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,13 +36,12 @@ _UA_MAC_VER_RE = re.compile(r"Mac OS X[/ ]([\d_]+)", re.IGNORECASE)
 # Wi-Fi<->cellular switch — the #1 cause of "internet doesn't come back".
 _XRAY_CLEAN_DNS = {
     "queryStrategy": "UseIPv4",
+    # iOS-safe: no geosite/geoip DNS split — those pull the geo .dat files into
+    # the tunnel and blow the ~50 MB iOS Network Extension cap (XrayCore dies
+    # with "tunnel memory limit exceeded"). Yandex primary (good RU CDN
+    # resolution), Cloudflare fallback.
     "servers": [
-        {
-            "address": "https+local://77.88.8.8/dns-query",
-            "domains": ["geosite:category-ru", "geosite:cn"],
-            "expectedIPs": ["geoip:ru", "geoip:cn"],
-            "skipFallback": True,
-        },
+        "https+local://77.88.8.8/dns-query",
         "https+local://1.1.1.1/dns-query",
     ],
 }
@@ -57,13 +56,29 @@ _XRAY_CLEAN_INBOUNDS = [
         "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"]},
     },
 ]
+# Private/reserved ranges as explicit CIDRs so the config never loads geoip.dat.
+_PRIVATE_CIDRS = [
+    "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+    "169.254.0.0/16", "::1/128", "fc00::/7", "fe80::/10",
+]
+# RU/CN kept off the tunnel as a small static suffix list instead of
+# geosite:category-ru / geosite:cn (those .dat files blow the iOS 50 MB cap).
+# National TLDs + a couple of big RU services that aren't on a .ru TLD.
+_RU_CN_DIRECT_DOMAINS = [
+    "domain:ru", "domain:su", "domain:рф", "domain:moscow",
+    "domain:cn", "domain:中国",
+    "domain:vk.com", "domain:yandex.net",
+]
 _XRAY_CLEAN_ROUTING = {
-    "domainStrategy": "IPIfNonMatch",
+    # AsIs: never resolve a domain to an IP for matching, so geoip.dat is never
+    # loaded. With the geosite-free rules below the whole config stays well under
+    # the iOS Network Extension ~50 MB cap — geo .dat files were the cause of
+    # "XrayCore: tunnel memory limit exceeded (50 MB)" on iPhone clients.
+    "domainStrategy": "AsIs",
     "rules": [
         {"type": "field", "protocol": ["bittorrent"], "outboundTag": "direct"},
-        {"type": "field", "ip": ["geoip:private"], "outboundTag": "direct"},
-        {"type": "field", "domain": ["geosite:category-ru", "geosite:cn"], "outboundTag": "direct"},
-        {"type": "field", "ip": ["geoip:ru", "geoip:cn"], "outboundTag": "direct"},
+        {"type": "field", "ip": _PRIVATE_CIDRS, "outboundTag": "direct"},
+        {"type": "field", "domain": _RU_CN_DIRECT_DOMAINS, "outboundTag": "direct"},
     ],
 }
 
@@ -314,7 +329,7 @@ class SubscriptionService:
             return ""
 
         links = await asyncio.gather(*(fetch_link(server) for server in servers))
-        return [(server, link) for server, link in zip(servers, links) if link]
+        return [(server, link) for server, link in zip(servers, links, strict=False) if link]
 
     @staticmethod
     async def get_subscription_vless_links(
