@@ -38,7 +38,7 @@
     "levels": {
       "0": {
         "handshake": 4,
-        "connIdle": 60,
+        "connIdle": 30,
         "statsUserUplink": true,
         "statsUserDownlink": true,
         "statsUserOnline": true

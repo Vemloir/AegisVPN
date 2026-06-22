@@ -54,7 +54,7 @@ XHTTP_PATH=${XHTTP_PATH:-"/"}
 # a client over direct REALITY resolve to stream-one (single full-duplex stream,
 # less overhead than packet-up's many POSTs — packet-up only helps behind a CDN).
 XHTTP_MODE=${XHTTP_MODE:-"auto"}
-XRAY_CONN_IDLE=${XRAY_CONN_IDLE:-60}
+XRAY_CONN_IDLE=${XRAY_CONN_IDLE:-30}
 REALITY_TCP_DEST=${REALITY_TCP_DEST:-$REALITY_DEST}
 REALITY_TCP_SERVER_NAME=${REALITY_TCP_SERVER_NAME:-$REALITY_SERVER_NAME}
 TCP_KEYS=$(xray x25519 2>&1)
@@ -132,10 +132,10 @@ def _int_env(name: str, default: int) -> int:
 # either direction; the timer resets on every byte, so active tunnels are never
 # cut — it just frees ghost sessions (e.g. a half-open socket left behind after
 # a client roamed Wi-Fi<->cellular) faster, which also releases conn-limit slots.
-conn_idle = _int_env("XRAY_CONN_IDLE", 60)
+conn_idle = _int_env("XRAY_CONN_IDLE", 30)
 # TCP keepalive on the inbound socket detects a dead/half-open peer at the kernel
 # level (idle a bit under connIdle so it can probe before connIdle reaps).
-keepalive_idle = _int_env("XRAY_KEEPALIVE_IDLE", 30)
+keepalive_idle = _int_env("XRAY_KEEPALIVE_IDLE", 20)
 keepalive_interval = _int_env("XRAY_KEEPALIVE_INTERVAL", 10)
 
 with open(config_path, "r", encoding="utf-8") as fh:
