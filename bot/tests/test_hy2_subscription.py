@@ -88,17 +88,18 @@ def test_build_hy2_link_shape():
     # Auth is the device/sub UUID (so suspension/conn-limit/re-issue key the same
     # as vless), host + client target port from the server.
     assert parts.username == uuid
-    assert parts.hostname == "45.142.31.13"
-    assert parts.port == 36500
+    # Spec form: port hopping lives in the ADDRESS (host:port,start-end); the
+    # port can't be read via parts.port because of the comma.
+    assert "@45.142.31.13:36500,20000-50000?" in link
     q = parse_qs(parts.query)
     assert q["obfs"] == ["salamander"]
     assert q["obfs-password"] == ["s3cr3t-obfs"]
     assert q["insecure"] == ["1"]
     assert q["sni"]  # a plausible SNI is always present
-    # Port-hop range as mport=start-end.
-    assert q["mport"] == ["20000-50000"]
-    assert q["up"] == ["200 mbps"]
-    assert q["down"] == ["200 mbps"]
+    # Bandwidth (up/down) and mport are spec-forbidden in a hysteria2:// URI —
+    # emitting them made the hysteria/sing-box core reject the profile locally.
+    assert "up=" not in link and "down=" not in link
+    assert "mport" not in link
     # The flag/name fragment is preserved (Happ shows it).
     assert "Greece" in link
 
@@ -110,10 +111,12 @@ def test_build_hy2_link_none_when_not_capable():
     assert SubscriptionService.build_hy2_link(_greece(), "") is None
 
 
-def test_build_hy2_link_omits_mport_without_full_range():
+def test_build_hy2_link_no_address_range_without_full_hop_range():
     link = SubscriptionService.build_hy2_link(_greece(hy2_hop_end=None), "uuid")
     assert link is not None
-    assert "mport=" not in link
+    # No full range -> plain host:port address, no ",start-end" appended.
+    assert ":36500," not in link
+    assert "mport" not in link
 
 
 # --- end-to-end delivery -----------------------------------------------------

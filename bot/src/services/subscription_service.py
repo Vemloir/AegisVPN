@@ -156,21 +156,27 @@ class SubscriptionService:
         # A plausible SNI for the self-signed cert: reuse the REALITY serverName
         # if the agent baked one onto the node, else a stable fixed value.
         sni = getattr(server, "reality_server_name", None) or "www.microsoft.com"
+        # A hysteria2:// URI accepts ONLY the spec-defined query params
+        # (obfs / obfs-password / sni / insecure / pinSHA256). Bandwidth (up/down)
+        # is FORBIDDEN in the URI — it lives only in a config file, and a
+        # "100 mbps" string is unparseable — and port hopping is encoded in the
+        # ADDRESS as host:port,start-end, NOT as a query key. Emitting up/down +
+        # mport in the query made the sing-box/hysteria core reject the profile
+        # locally on dial (instant "N/D", no network I/O). Server-side Brutal/BBR
+        # is advertised by the SERVER config, so the client needs no bandwidth.
         query = {
             "obfs": "salamander",
             "obfs-password": server.hy2_obfs_password or "",
             "insecure": "1",
             "sni": sni,
         }
-        if server.hy2_up:
-            query["up"] = server.hy2_up
-        if server.hy2_down:
-            query["down"] = server.hy2_down
-        if server.hy2_hop_start and server.hy2_hop_end:
-            query["mport"] = f"{server.hy2_hop_start}-{server.hy2_hop_end}"
         userinfo = quote(device_uuid, safe="")
         fragment = SubscriptionService.format_server_label(server, duplicate_name_keys)
-        netloc = f"{userinfo}@{server.host}:{server.hy2_port}"
+        host_port = f"{server.host}:{server.hy2_port}"
+        if server.hy2_hop_start and server.hy2_hop_end:
+            # Port hopping belongs in the address (host:port,start-end), not query.
+            host_port = f"{host_port},{server.hy2_hop_start}-{server.hy2_hop_end}"
+        netloc = f"{userinfo}@{host_port}"
         return urlunsplit(("hysteria2", netloc, "", urlencode(query), fragment))
 
     @staticmethod
