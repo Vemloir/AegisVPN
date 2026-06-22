@@ -548,10 +548,12 @@ def provision_hysteria(
 
     # --- start (or restart) the hysteria container ---
     print(f"  [{host}] hysteria: docker compose up -d hysteria")
+    # No `| tail` here: a pipe masks docker-compose's exit code, so a failed
+    # image pull would slip through unnoticed. Capture the real exit status.
     run(c,
         "cd /root/aegis/deploy/vps && "
-        "docker compose --profile hysteria up -d hysteria 2>&1 | tail -3",
-        "hysteria up", timeout=120)
+        "docker compose --profile hysteria up -d hysteria 2>&1",
+        "hysteria up", timeout=180)
     return obfs_password
 
 
@@ -680,13 +682,17 @@ def verify_stack(c: paramiko.SSHClient, host: str) -> None:
     print(f"    {out.strip()}")
 
     print(f"  [{host}] verify: /hy2/auth reachable on the agent…")
-    # A bare POST returns a JSON {ok:false} (no valid secret) but proves the
-    # endpoint is up; we only assert we got an HTTP response, not its body.
+    # The agent container restarted in step C; retry a few times so it has time
+    # to come up. A non-000 code proves the endpoint is up. Do NOT use
+    # `|| echo 000` — it doubles curl's own 000 into "000000" and slips the check.
     code = run(c,
-        "curl -s -o /dev/null -w '%{http_code}' -m 5 -X POST "
+        "for i in 1 2 3 4 5 6; do "
+        "c=$(curl -s -o /dev/null -w '%{http_code}' -m 5 -X POST "
         "http://127.0.0.1:8444/hy2/auth -H 'Content-Type: application/json' "
-        "-d '{\"auth\":\"x\",\"addr\":\"127.0.0.1:0\",\"tx\":0}' || echo 000",
-        "curl hy2/auth", timeout=20).strip()
+        "-d '{\"auth\":\"x\",\"tx\":0}'); "
+        "[ \"$c\" != \"000\" ] && { echo \"$c\"; break; }; sleep 2; done",
+        "curl hy2/auth", timeout=45).strip()
+    code = code.splitlines()[-1].strip() if code else ""
     if not code or code == "000":
         raise SystemExit(f"[{host}] /hy2/auth unreachable (http_code={code!r})")
     print(f"    /hy2/auth http_code={code}")
@@ -719,6 +725,13 @@ def provision_stack(
     the multi-inbound config including the :2053 tcp+VISION inbound, then reloads
     xray). The bot DB sync (D) runs separately on the main host.
     """
+    # Upload the compose FIRST — provision_hysteria's `docker compose up -d
+    # hysteria` (step B) needs the hysteria service def + the tobyxdd image
+    # already in the node's compose, which provision_code (C) would otherwise
+    # only upload afterwards (so a fresh node's first hysteria up used the stale
+    # compose and silently created no container).
+    print(f"[provision-stack {host}] === uploading docker-compose.yml ===")
+    upload(c, COMPOSE_LOCAL, REMOTE_COMPOSE)
     print(f"[provision-stack {host}] === A) agent.env ===")
     stats_secret = provision_agent_env(c, host)
     print(f"[provision-stack {host}] === B) hysteria ===")
