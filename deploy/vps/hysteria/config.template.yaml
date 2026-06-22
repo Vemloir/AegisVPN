@@ -35,9 +35,9 @@ trafficStats:
   secret: __STATS_SECRET__
 
 bandwidth:
-  up: __BW_UP__       # ~80% of real uplink, e.g. "200 mbps"; enables Brutal
-  down: __BW_DOWN__
-ignoreClientBandwidth: false   # keep Brutal (true would force BBR)
+  up: __BW_UP__       # honest fixed rate; provisioning defaults to "100 mbps"
+  down: __BW_DOWN__   # symmetric "100 mbps" (the tuned Greece canary value)
+ignoreClientBandwidth: false   # keep Brutal CC (true would force BBR)
 
 quic:
   initStreamReceiveWindow: 4194304     # 4 MB  (default 8 MB -> bufferbloat)

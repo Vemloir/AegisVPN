@@ -82,7 +82,9 @@ services:
   # lifecycle drives it like xray. Config + self-signed cert + secrets are
   # generated per node into ./data/hysteria/ (never in the repo).
   hysteria:
-    image: ghcr.io/apernet/hysteria:latest
+    # tobyxdd/hysteria:latest is the verified Hysteria v2 image. The previously
+    # used ghcr.io/apernet/hysteria:latest 403s on pull from these nodes.
+    image: tobyxdd/hysteria:latest
     container_name: aegis-hysteria
     restart: unless-stopped
     network_mode: host

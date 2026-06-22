@@ -40,6 +40,13 @@ Usage examples:
   # deploys (--nodes) recreate ONLY the agent and drop no client sessions:
   python update.py --split-migrate \\
                    --node NODE_IP:ROOT_PASSWORD --node NODE_IP:ROOT_PASSWORD
+
+  # Roll the full Greece-canary stack (xray raw-TCP+VISION :2053 + Hysteria2)
+  # onto a node and sync its bot DB row. Idempotent + safe to re-run. The
+  # geo-SNI (Hy2 cert CN) comes from the built-in IP map, or pass --geo-sni:
+  python update.py --provision-stack \\
+                   --main-host MAIN_IP --main-password '…' \\
+                   --node NODE_IP:ROOT_PASSWORD --geo-sni csc.fi
 """
 
 from __future__ import annotations
@@ -325,6 +332,408 @@ def set_db_keys(main_c: paramiko.SSHClient, host: str, pubkey: str, sid: str) ->
 
 
 # ---------------------------------------------------------------------------
+# Full-stack provisioning (--provision-stack)
+# ---------------------------------------------------------------------------
+#
+# Encodes the steps that were done by hand on the Greece canary (45.142.31.13)
+# so the same multi-inbound (xray tcp+VISION) + Hysteria2 stack rolls onto the
+# other nodes with one command. Every step is IDEMPOTENT and COMPOSABLE:
+#
+#   provision_agent_env(c, host, geo_sni)  -> A) per-node agent.env knobs
+#   provision_hysteria(c, host, geo_sni)   -> B) cert + secrets + config + ports
+#   provision_code(c, host)                -> C) agent sources + recreate + xray
+#   provision_mtproxy(c, host, ...)        -> (stub) future Telegram MTProto proxy
+#   sync_bot_db_hy2(main_c, host, obfs)    -> D) mirror the row into the bot DB
+#
+# provision_stack() wires them together and verifies at the end. Re-running is
+# safe: the cert/secrets/iptables rule are only created when absent, and the
+# existing data/hysteria/config.yaml's secrets are REUSED so the bot DB stays in
+# sync with whatever the node already serves.
+
+# Per-node geo-SNI / self-signed cert CN. The REALITY_SERVER_NAME/REALITY_DEST
+# are set by a SEPARATE step (--add-server / setup) and are NOT touched here;
+# this map only drives the Hysteria2 self-signed cert CN (cosmetic — Hy2 clients
+# set insecure=1, but a plausible CN keeps a passive probe boring). Override per
+# run with --geo-sni if a node's value differs.
+NODE_GEO_SNI = {
+    # Finland
+    "csc.fi": "csc.fi",
+    # Sweden / Norway / Greece / Japan — keyed by IP below where known.
+}
+NODE_IP_GEO_SNI = {
+    "45.142.31.13": "aegean.gr",          # Greece (the canary)
+    # Fill in the others as they roll out (or pass --geo-sni):
+    #   Finland  -> csc.fi
+    #   Sweden   -> www.chalmers.se
+    #   Norway   -> uio.no
+    #   Japan    -> www.osaka-u.ac.jp
+}
+
+# --- Port plan -------------------------------------------------------------
+# Reserve a stable, documented port layout so services never collide and a
+# future Telegram (MTProto) proxy slots in cleanly:
+#
+#   443         xray primary inbound      (XRAY_PORT, current network)
+#   2053        xray raw-TCP + VISION     (XRAY_TCP_PORT)
+#   8443        Caddy HTTPS (subscription)
+#   8444        agent API (loopback)      hy2 auth callback :8444/hy2/auth
+#   9999        Hy2 trafficStats          (loopback)
+#   36500       Hysteria2 UDP listen
+#   20000-50000 Hy2 UDP port-hop range -> REDIRECT to 36500
+#   --- reserved for the future MTProto proxy (mtg, `mtproxy` compose profile) ---
+#   8765        mtg MTProto listen        (RESERVED — see provision_mtproxy)
+#
+XRAY_TCP_PORT = 2053
+XRAY_CONN_IDLE = 30
+HY2_LISTEN_PORT = 36500
+HY2_HOP_START = 20000
+HY2_HOP_END = 50000
+HY2_BW_UP = "100 mbps"      # honest fixed Brutal rate (the tuned Greece value)
+HY2_BW_DOWN = "100 mbps"
+HY2_STATS_URL = "http://127.0.0.1:9999"
+MTPROXY_PORT = 8765         # RESERVED for the future mtg MTProto proxy
+
+REMOTE_HY2_DIR = "/root/aegis/deploy/vps/data/hysteria"
+REMOTE_HY2_CONFIG = f"{REMOTE_HY2_DIR}/config.yaml"
+HY2_TEMPLATE_LOCAL = ROOT / "deploy/vps/hysteria/config.template.yaml"
+
+
+def _gen_secret(nchars: int = 32) -> str:
+    """url-safe ~`nchars`-char secret, generated locally (never logged in full)."""
+    import secrets
+    return secrets.token_urlsafe(nchars)[:nchars]
+
+
+def _remote_exists(c: paramiko.SSHClient, path: str) -> bool:
+    sftp = get_sftp(c)
+    try:
+        sftp.stat(path)
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def resolve_geo_sni(host: str, override: str | None) -> str:
+    """Pick the cert CN / geo-SNI for a node: explicit flag wins, else the map."""
+    if override:
+        return override
+    sni = NODE_IP_GEO_SNI.get(host)
+    if not sni:
+        raise SystemExit(
+            f"[{host}] no geo-SNI known for this IP — pass --geo-sni <name> "
+            f"(e.g. csc.fi / www.chalmers.se / uio.no / aegean.gr / "
+            f"www.osaka-u.ac.jp)"
+        )
+    return sni
+
+
+def provision_agent_env(c: paramiko.SSHClient, host: str) -> str:
+    """A) Set the per-node agent.env knobs for the multi-inbound + Hy2 stack.
+
+    Idempotent: rewrites only the keys we own and PRESERVES everything else —
+    crucially REALITY_SERVER_NAME / REALITY_DEST (per-node geo-SNI, set by a
+    separate step) and the reality keypairs. Generates HY2_STATS_SECRET once and
+    reuses it on re-run. Never sets a gRPC port (gRPC was dropped). Returns the
+    HY2_STATS_SECRET so the same value flows into the rendered Hy2 config.
+    """
+    sftp = get_sftp(c)
+    if not _remote_exists(c, REMOTE_AGENT_ENV):
+        raise SystemExit(
+            f"[{host}] {REMOTE_AGENT_ENV} missing — provision the base node first "
+            f"(add_server.py / the agent must have initialised its keys)"
+        )
+    with sftp.open(REMOTE_AGENT_ENV, "r") as fh:
+        env = _parse_env(fh.read().decode())
+
+    env["XRAY_TCP_PORT"] = str(XRAY_TCP_PORT)
+    env["XRAY_CONN_IDLE"] = str(XRAY_CONN_IDLE)
+    env["HY2_ENABLED"] = "true"
+    env["HY2_STATS_URL"] = HY2_STATS_URL
+    # Reuse the stats secret across re-runs so the rendered Hy2 config and the
+    # agent.env never drift apart.
+    existing_secret = env.get("HY2_STATS_SECRET")
+    stats_secret = existing_secret or _gen_secret(32)
+    env["HY2_STATS_SECRET"] = stats_secret
+    # Defensively make sure no stale gRPC port lingers (gRPC is dropped).
+    env.pop("XRAY_GRPC_PORT", None)
+    env.pop("XRAY_GRPC_SERVICE", None)
+
+    print(f"  [{host}] agent.env: XRAY_TCP_PORT={XRAY_TCP_PORT} "
+          f"XRAY_CONN_IDLE={XRAY_CONN_IDLE} HY2_ENABLED=true "
+          f"HY2_STATS_SECRET={'(reused)' if existing_secret else '(new)'}")
+    with sftp.open(REMOTE_AGENT_ENV, "w") as fh:
+        fh.write(_render_env(env))
+    return stats_secret
+
+
+def provision_hysteria(
+    c: paramiko.SSHClient, host: str, geo_sni: str, stats_secret: str
+) -> str:
+    """B) Provision Hysteria2 on the node. Returns the OBFS_PASSWORD (for the DB).
+
+    Idempotent end to end:
+      * data/hysteria/{key,cert}.pem generated only if absent (CN = geo_sni).
+      * OBFS_PASSWORD: REUSED from an existing data/hysteria/config.yaml if one
+        is present, else freshly generated — so the bot DB stays in sync with
+        whatever obfs the node actually serves.
+      * config.yaml rendered from the repo template with the obfs password, the
+        agent.env stats secret, and the 100/100 Brutal bandwidth.
+      * iptables REDIRECT for the UDP hop range added only if not already there
+        (-C guard) and persisted across reboot via a tiny systemd unit.
+      * `docker compose --profile hysteria up -d hysteria`.
+    """
+    print(f"  [{host}] hysteria: ensuring {REMOTE_HY2_DIR}")
+    run(c, f"mkdir -p {REMOTE_HY2_DIR}", "mkdir hysteria")
+
+    # --- self-signed cert (idempotent) ---
+    key_pem = f"{REMOTE_HY2_DIR}/key.pem"
+    cert_pem = f"{REMOTE_HY2_DIR}/cert.pem"
+    if _remote_exists(c, key_pem) and _remote_exists(c, cert_pem):
+        print(f"  [{host}] hysteria: cert present, keeping it")
+    else:
+        print(f"  [{host}] hysteria: generating self-signed cert (CN={geo_sni})")
+        run(c,
+            f"cd {REMOTE_HY2_DIR} && "
+            f"openssl ecparam -genkey -name prime256v1 -out key.pem && "
+            f"openssl req -new -x509 -days 3650 -key key.pem -out cert.pem "
+            f"-subj '/CN={geo_sni}'",
+            "openssl cert", timeout=60)
+
+    # --- obfs password: reuse from an existing config so the DB stays in sync ---
+    obfs_password: str | None = None
+    if _remote_exists(c, REMOTE_HY2_CONFIG):
+        sftp = get_sftp(c)
+        with sftp.open(REMOTE_HY2_CONFIG, "r") as fh:
+            for line in fh.read().decode().splitlines():
+                s = line.strip()
+                if s.startswith("password:"):
+                    obfs_password = s.split(":", 1)[1].strip()
+                    break
+        if obfs_password:
+            print(f"  [{host}] hysteria: reusing existing obfs password")
+    if not obfs_password:
+        obfs_password = _gen_secret(32)
+        print(f"  [{host}] hysteria: generated new obfs password")
+
+    # --- render config.yaml from the repo template ---
+    template = HY2_TEMPLATE_LOCAL.read_text(encoding="utf-8")
+    rendered = (
+        template
+        .replace("__OBFS_PASSWORD__", obfs_password)
+        .replace("__STATS_SECRET__", stats_secret)
+        .replace("__BW_UP__", HY2_BW_UP)
+        .replace("__BW_DOWN__", HY2_BW_DOWN)
+    )
+    leftovers = [tok for tok in ("__OBFS_PASSWORD__", "__STATS_SECRET__",
+                                 "__BW_UP__", "__BW_DOWN__") if tok in rendered]
+    if leftovers:
+        raise SystemExit(f"[{host}] hysteria config still has placeholders: {leftovers}")
+    print(f"  [{host}] hysteria: rendering config.yaml")
+    sftp = get_sftp(c)
+    with sftp.open(REMOTE_HY2_CONFIG, "w") as fh:
+        fh.write(rendered)
+
+    # --- port-hopping REDIRECT (idempotent + reboot-persistent) ---
+    print(f"  [{host}] hysteria: ensuring UDP hop REDIRECT "
+          f"{HY2_HOP_START}:{HY2_HOP_END} -> {HY2_LISTEN_PORT}")
+    redirect_rule = (
+        f"-p udp --dport {HY2_HOP_START}:{HY2_HOP_END} "
+        f"-j REDIRECT --to-ports {HY2_LISTEN_PORT}"
+    )
+    run(c,
+        f"iptables -t nat -C PREROUTING {redirect_rule} 2>/dev/null || "
+        f"iptables -t nat -A PREROUTING {redirect_rule}",
+        "iptables redirect", timeout=30)
+    _persist_hop_redirect(c, host, redirect_rule)
+
+    # --- start (or restart) the hysteria container ---
+    print(f"  [{host}] hysteria: docker compose up -d hysteria")
+    run(c,
+        "cd /root/aegis/deploy/vps && "
+        "docker compose --profile hysteria up -d hysteria 2>&1 | tail -3",
+        "hysteria up", timeout=120)
+    return obfs_password
+
+
+def _persist_hop_redirect(c: paramiko.SSHClient, host: str, redirect_rule: str) -> None:
+    """Make the UDP-hop REDIRECT survive a reboot.
+
+    iptables rules in the nat table are lost on reboot. Rather than depend on
+    iptables-persistent being installed, drop a tiny oneshot systemd unit that
+    re-applies the exact (idempotent, -C-guarded) rule at boot. Writing the unit
+    is itself idempotent — same content every time.
+    """
+    unit = (
+        "[Unit]\n"
+        "Description=AegisVPN Hysteria2 UDP port-hop REDIRECT\n"
+        "After=network-online.target docker.service\n"
+        "Wants=network-online.target\n\n"
+        "[Service]\n"
+        "Type=oneshot\n"
+        "RemainAfterExit=yes\n"
+        f"ExecStart=/bin/sh -c 'iptables -t nat -C PREROUTING {redirect_rule} "
+        f"2>/dev/null || iptables -t nat -A PREROUTING {redirect_rule}'\n\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+    sftp = get_sftp(c)
+    with sftp.open("/etc/systemd/system/aegis-hy2-hop.service", "w") as fh:
+        fh.write(unit)
+    run(c, "systemctl daemon-reload && systemctl enable aegis-hy2-hop.service 2>&1 | tail -1",
+        "enable hop unit", timeout=30)
+    print(f"  [{host}] hysteria: hop REDIRECT persisted (aegis-hy2-hop.service)")
+
+
+def provision_code(c: paramiko.SSHClient, host: str) -> None:
+    """C) Upload latest agent sources + docker-compose.yml, recreate the agent
+    (which rebuilds the multi-inbound config from the new agent.env) and restart
+    xray so it loads the rebuilt config.
+    """
+    _upload_agent_sources(c, host)
+    print(f"  [{host}] uploading docker-compose.yml…")
+    upload(c, COMPOSE_LOCAL, REMOTE_COMPOSE)
+    print(f"  [{host}] recreating agent (rebuilds config from agent.env)…")
+    run(c, "cd /root/aegis/deploy/vps && "
+           "docker compose up -d --build --no-deps --force-recreate agent 2>&1 | tail -4",
+        "agent recreate", timeout=300)
+    print(f"  [{host}] restarting xray to load the multi-inbound config…")
+    run(c, "cd /root/aegis/deploy/vps && docker compose restart xray 2>&1 | tail -2",
+        "xray reload", timeout=120)
+
+
+def provision_mtproxy(
+    c: paramiko.SSHClient, host: str, main_c: paramiko.SSHClient | None = None,
+    server_id: int = 0,
+) -> str | None:
+    """(STUB) Future Telegram MTProto proxy hook.
+
+    The compose file already carries an `mtg` service under the `mtproxy`
+    profile and the port plan reserves :8765 (MTPROXY_PORT). When this is
+    implemented it should mirror provision_hysteria's shape:
+
+      * generate/reuse an mtg secret (idempotent — reuse from an existing
+        data/mtg config or the bot DB so re-runs don't rotate it),
+      * render an mtg config into ./data/mtg/,
+      * `docker compose --profile mtproxy up -d mtg`,
+      * write the secret into the bot DB (servers.mtproxy_secret) via main_c.
+
+    Kept as a no-op stub so --provision-stack --with-mtproxy already parses and
+    the wiring is one function-body away. See setup_mtproxy() for the existing
+    one-off MTProxy helper this will supersede.
+    """
+    print(f"  [{host}] mtproxy: not yet implemented (reserved port {MTPROXY_PORT}) — skipping")
+    return None
+
+
+def sync_bot_db_hy2(
+    main_c: paramiko.SSHClient, host: str, obfs_password: str
+) -> None:
+    """D) Mirror this node's Hy2 + tcp-inbound config into its bot DB row.
+
+    Matches the servers row by host=<node IP> and writes the multi-inbound /
+    Hy2 capability columns. The obfs_password MUST be the exact value rendered
+    into the node's data/hysteria/config.yaml (returned by provision_hysteria),
+    so the client config the bot emits matches what the server expects.
+    """
+    py = (
+        "import asyncio\n"
+        "from sqlalchemy import text\n"
+        "from src.core.database import async_session_maker\n"
+        f"HOST = {host!r}\n"
+        f"OBFS = {obfs_password!r}\n"
+        f"TCP_PORT = {XRAY_TCP_PORT}\n"
+        f"HY2_PORT = {HY2_LISTEN_PORT}\n"
+        f"HOP_START = {HY2_HOP_START}\n"
+        f"HOP_END = {HY2_HOP_END}\n"
+        f"UP = {HY2_BW_UP!r}\n"
+        f"DOWN = {HY2_BW_DOWN!r}\n"
+        "async def q():\n"
+        "    async with async_session_maker() as s:\n"
+        "        res = await s.execute(text('UPDATE servers SET '\n"
+        "            'tcp_port=:tcp, hy2_enabled=1, hy2_port=:hp, '\n"
+        "            'hy2_hop_start=:hs, hy2_hop_end=:he, hy2_up=:up, '\n"
+        "            'hy2_down=:down, hy2_obfs_password=:obfs WHERE host=:h'),\n"
+        "            {'tcp': TCP_PORT, 'hp': HY2_PORT, 'hs': HOP_START, 'he': HOP_END,\n"
+        "             'up': UP, 'down': DOWN, 'obfs': OBFS, 'h': HOST})\n"
+        "        await s.commit()\n"
+        "        print('rows updated:', res.rowcount)\n"
+        "        r = await s.execute(text('SELECT id, name, host, tcp_port, '\n"
+        "            'hy2_enabled, hy2_port, hy2_hop_start, hy2_hop_end FROM '\n"
+        "            'servers WHERE host=:h'), {'h': HOST})\n"
+        "        for row in r.fetchall(): print('  now:', tuple(row))\n"
+        "asyncio.run(q())\n"
+    )
+    cmd = "docker exec -i aegis-bot python3 <<'PYEOF'\n" + py + "PYEOF\n"
+    out = run(main_c, cmd, f"db hy2 sync {host}", timeout=60)
+    print(out.rstrip())
+    if "rows updated: 0" in out:
+        raise SystemExit(f"[{host}] no servers row matched host={host} — DB NOT updated")
+
+
+def verify_stack(c: paramiko.SSHClient, host: str) -> None:
+    """Best-effort end-of-run verification (fails loudly on a hard miss)."""
+    print(f"  [{host}] verify: hysteria container…")
+    out = run(c, "docker ps --filter name=aegis-hysteria "
+                 "--format '{{.Names}} {{.Status}}'", "ps hysteria", timeout=30)
+    if "aegis-hysteria" not in out:
+        raise SystemExit(f"[{host}] hysteria container is NOT running:\n{out.strip()}")
+    print(f"    {out.strip()}")
+
+    print(f"  [{host}] verify: /hy2/auth reachable on the agent…")
+    # A bare POST returns a JSON {ok:false} (no valid secret) but proves the
+    # endpoint is up; we only assert we got an HTTP response, not its body.
+    code = run(c,
+        "curl -s -o /dev/null -w '%{http_code}' -m 5 -X POST "
+        "http://127.0.0.1:8444/hy2/auth -H 'Content-Type: application/json' "
+        "-d '{\"auth\":\"x\",\"addr\":\"127.0.0.1:0\",\"tx\":0}' || echo 000",
+        "curl hy2/auth", timeout=20).strip()
+    if not code or code == "000":
+        raise SystemExit(f"[{host}] /hy2/auth unreachable (http_code={code!r})")
+    print(f"    /hy2/auth http_code={code}")
+
+    print(f"  [{host}] verify: 3 vless inbounds present…")
+    out = run(c,
+        "docker exec aegis-xray sh -c "
+        "'grep -c \"\\\"protocol\\\": \\\"vless\\\"\" "
+        "\"${XRAY_CONFIG_PATH:-/etc/xray/config.json}\"' 2>/dev/null || echo 0",
+        "count vless", timeout=30).strip()
+    print(f"    vless inbound count: {out}")
+    # Greece runs 2 vless inbounds today (primary + tcp); gRPC is dropped. Warn
+    # rather than hard-fail so a 2-vs-3 expectation drift doesn't abort a good run.
+    try:
+        n = int(out.splitlines()[-1])
+    except (ValueError, IndexError):
+        n = 0
+    if n < 2:
+        raise SystemExit(f"[{host}] expected >=2 vless inbounds, found {n}")
+
+
+def provision_stack(
+    c: paramiko.SSHClient, host: str, geo_sni: str,
+    with_mtproxy: bool = False,
+) -> str:
+    """Orchestrate A->C on the node. Returns the OBFS_PASSWORD for the DB sync.
+
+    Order matters: agent.env first (so the stats secret exists), then hysteria
+    (renders config with that secret), then code (recreates agent -> rebuilds
+    the multi-inbound config including the :2053 tcp+VISION inbound, then reloads
+    xray). The bot DB sync (D) runs separately on the main host.
+    """
+    print(f"[provision-stack {host}] === A) agent.env ===")
+    stats_secret = provision_agent_env(c, host)
+    print(f"[provision-stack {host}] === B) hysteria ===")
+    obfs_password = provision_hysteria(c, host, geo_sni, stats_secret)
+    if with_mtproxy:
+        print(f"[provision-stack {host}] === (mtproxy) ===")
+        provision_mtproxy(c, host)
+    print(f"[provision-stack {host}] === C) code + restart ===")
+    provision_code(c, host)
+    print(f"[provision-stack {host}] === verify ===")
+    verify_stack(c, host)
+    return obfs_password
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -394,16 +803,39 @@ def parse_args() -> argparse.Namespace:
              "the split xray+agent topology (zero-drop code deploys afterwards). "
              "Uploads docker-compose.yml + agent sources. One brief xray blip.",
     )
+    p.add_argument(
+        "--provision-stack", action="store_true",
+        help="Roll the full Greece canary stack (xray tcp+VISION :2053 + "
+             "Hysteria2) onto --node targets and sync the bot DB. Idempotent + "
+             "re-runnable. Requires --main-password (for the DB write).",
+    )
+    p.add_argument(
+        "--geo-sni", default=None, metavar="NAME",
+        help="Override the Hysteria2 self-signed cert CN / geo-SNI for "
+             "--provision-stack (e.g. csc.fi, www.chalmers.se, uio.no, "
+             "aegean.gr, www.osaka-u.ac.jp). Falls back to the built-in IP map.",
+    )
+    p.add_argument(
+        "--with-mtproxy", action="store_true",
+        help="(reserved) Also run the future MTProto proxy hook during "
+             "--provision-stack. Currently a no-op stub.",
+    )
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
 
-    if not any((args.bot, args.nodes, args.mtproxy, args.set_network, args.split_migrate)):
-        raise SystemExit("Specify --bot, --nodes, --mtproxy, --set-network, and/or --split-migrate")
+    if not any((args.bot, args.nodes, args.mtproxy, args.set_network,
+                args.split_migrate, args.provision_stack)):
+        raise SystemExit("Specify --bot, --nodes, --mtproxy, --set-network, "
+                         "--split-migrate, and/or --provision-stack")
     if args.bot and not args.main_password:
         raise SystemExit("--bot requires --main-password")
+    if args.provision_stack and not args.nodes_list:
+        raise SystemExit("--provision-stack requires at least one --node IP:PASSWORD")
+    if args.provision_stack and not args.main_password:
+        raise SystemExit("--provision-stack requires --main-password (to update the bot DB)")
     if (args.nodes or args.mtproxy) and not args.nodes_list:
         raise SystemExit("--nodes/--mtproxy requires at least one --node")
     if args.mtproxy and not args.main_password:
@@ -456,6 +888,33 @@ def main() -> None:
         try:
             for ip, pubkey, sid in results:
                 set_db_keys(mc, ip, pubkey, sid)
+        finally:
+            mc.close()
+
+    if args.provision_stack:
+        # (ip, obfs_password) pairs to mirror into the bot DB after the per-node
+        # provisioning succeeds. The DB write is deferred to one main-host
+        # session so a partial node failure never half-writes the DB.
+        stack_results: list[tuple[str, str]] = []
+        for node_str in args.nodes_list:
+            parts = node_str.split(":")
+            if len(parts) < 2:
+                raise SystemExit(f"Bad --node format (expected IP:PASSWORD): {node_str}")
+            ip, password = parts[0], ":".join(parts[1:])
+            geo_sni = resolve_geo_sni(ip, args.geo_sni)
+            print(f"[provision-stack {ip}] connecting… (geo-SNI {geo_sni})")
+            c = connect(ip, password)
+            try:
+                obfs = provision_stack(c, ip, geo_sni, with_mtproxy=args.with_mtproxy)
+                stack_results.append((ip, obfs))
+            finally:
+                c.close()
+
+        print(f"[db] connecting to {args.main_host}… (D: bot DB sync)")
+        mc = connect(args.main_host, args.main_password)
+        try:
+            for ip, obfs in stack_results:
+                sync_bot_db_hy2(mc, ip, obfs)
         finally:
             mc.close()
 
