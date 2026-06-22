@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     conn_limit: int = 5
     conn_limit_interval: int = 60  # seconds between enforcement cycles
 
+    # Local Hysteria2 process. Disabled by default: on a node without Hy2,
+    # every Hy2 path is a no-op and the agent behaves exactly as before.
+    hy2_enabled: bool = False
+    hy2_stats_url: str = "http://127.0.0.1:9999"
+    hy2_stats_secret: str | None = None
+
     model_config = ConfigDict(
         env_file="/data/agent.env",
         extra="ignore",

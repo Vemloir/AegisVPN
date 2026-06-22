@@ -10,9 +10,10 @@ from urllib.parse import quote, urlencode
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
 
+from . import hysteria
 from .config import settings
 from .connlimit import conn_limit_loop, set_override
-from .models import ClientAddRequest, ClientRemoveRequest, ConnLimitRequest
+from .models import ClientAddRequest, ClientRemoveRequest, ConnLimitRequest, Hy2AuthRequest
 from .security import verify_token
 from .xray import (
     build_client_record,
@@ -39,6 +40,9 @@ async def _start_background_tasks() -> None:
     # per-user overrides pushed by the bot must still be enforced.
     asyncio.create_task(conn_limit_loop())
     print(f"conn-limit enforcement on: default {settings.conn_limit} IPs/user, every {settings.conn_limit_interval}s")
+    # Populate the Hysteria2 user set from the on-disk xray config so auth works
+    # immediately. No-op (empty set) on nodes without any vless clients.
+    await hysteria.refresh()
 
 
 @app.get("/health")
@@ -77,7 +81,20 @@ async def online_emails():
     The bot maps these to per-device emails (user_X_sub_Y_dev_Z) to show, exactly,
     which device is connected and to which node — no traffic-delta guessing.
     """
-    return {"emails": await get_online_emails()}
+    online_emails_set = set(await get_online_emails())
+    online_emails_set.update(await hysteria.online())
+    return {"emails": list(online_emails_set)}
+
+
+@app.post("/hy2/auth")
+async def hy2_auth(req: Hy2AuthRequest):
+    """Hysteria2 connect-time auth callback (loopback only, no verify_token).
+
+    Hy2 POSTs {addr, auth, tx} on every new connection; `auth` is the client's
+    xray UUID. We answer {"ok": bool, "id": <email>} so Hy2 keys traffic on the
+    same email as xray.
+    """
+    return hysteria.authenticate(req.auth)
 
 
 @app.post("/client/add", dependencies=[Depends(verify_token)])
@@ -100,6 +117,7 @@ async def add_client(req: ClientAddRequest):
                 api_ok = False
         if added:
             await save_xray_config(config)
+            hysteria.refresh_from_config(config)  # let Hy2 auth the new client
             if not api_ok:
                 reload_xray()  # fallback only if the live API path failed
     return {"status": "ok", "added": added}
@@ -111,6 +129,7 @@ async def remove_client(req: ClientRemoveRequest):
         config = await get_xray_config()
         removed = False
         api_ok = True
+        removed_emails: set[str] = set()
         for inbound in config.get("inbounds", []):
             if inbound.get("protocol") != "vless":
                 continue
@@ -124,10 +143,17 @@ async def remove_client(req: ClientRemoveRequest):
             tag = inbound.get("tag")
             for c in gone:
                 email = c.get("email")
+                if email:
+                    removed_emails.add(email)
                 if tag and email and not await xray_api_remove(tag, email):
                     api_ok = False
         if removed:
             await save_xray_config(config)
+            # Order matters: stop authenticating the user FIRST so a reconnect
+            # fails, THEN drop their live QUIC session. Hy2 never re-auths, so
+            # kicking without blocking would just let them reconnect.
+            hysteria.refresh_from_config(config)
+            await hysteria.kick(list(removed_emails))
             if not api_ok:
                 reload_xray()
     return {"status": "ok", "removed": removed}
@@ -155,6 +181,7 @@ async def bulk_add_clients(reqs: list[ClientAddRequest]):
                     api_ok = False
         if changed:
             await save_xray_config(config)
+            hysteria.refresh_from_config(config)  # let Hy2 auth the new clients
             if not api_ok:
                 reload_xray()
     return {"status": "ok", "changed": changed}
@@ -186,7 +213,14 @@ async def get_subscription(token: str):
 
 @app.get("/stats", dependencies=[Depends(verify_token)])
 async def get_stats():
-    return {"stats": await query_traffic_stats()}
+    stats = await query_traffic_stats()
+    # Merge Hy2 traffic into the same email keys (sum uplink/downlink). No-op
+    # when Hy2 is disabled (hysteria.traffic() returns {}).
+    for email, counters in (await hysteria.traffic()).items():
+        bucket = stats.setdefault(email, {"uplink": 0, "downlink": 0})
+        bucket["uplink"] += counters.get("uplink", 0)
+        bucket["downlink"] += counters.get("downlink", 0)
+    return {"stats": stats}
 
 
 @app.get("/sub-fast/{token}", dependencies=[Depends(verify_token)])
