@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     tcp_fingerprint: str | None = "firefox"
     xray_port: int = 443
     xray_tcp_port: int | None = None
+    xray_grpc_port: int | None = None
+    grpc_service_name: str = "grpc"
     xray_network: str = "tcp"
     reality_dest: str = "gateway.icloud.com:443"
     reality_server_name: str = "gateway.icloud.com"

@@ -27,6 +27,8 @@ def list_vless_inbounds(config: dict) -> list[dict]:
 def get_transport_type(inbound: dict) -> str:
     stream = inbound.get("streamSettings", {})
     network = (stream.get("network") or "tcp").lower()
+    if network == "grpc":
+        return "grpc"
     return "xhttp" if network == "xhttp" else "tcp"
 
 
@@ -41,26 +43,22 @@ def find_vless_inbound(config: dict, preferred_network: str | None = None) -> di
 
 
 def build_client_record(uuid: str, email: str, inbound: dict) -> dict:
-    record = {
+    # No flow on any transport: xhttp/tcp/grpc all run flow-less REALITY now
+    # (xtls-rprx-vision is dropped — ТСПУ bans it).
+    return {
         "id": uuid,
         "email": email,
     }
-    if get_transport_type(inbound) != "xhttp":
-        record["flow"] = "xtls-rprx-vision"
-    return record
 
 
 def build_subscription_query(inbound: dict) -> list[tuple[str, str]]:
     stream = inbound.get("streamSettings", {})
     reality = stream.get("realitySettings", {})
     transport = get_transport_type(inbound)
+    # All transports (xhttp/tcp/grpc) share the SINGLE reality keypair now.
     public_key = settings.public_key
     short_id = settings.short_id
     fingerprint = settings.fingerprint
-    if transport != "xhttp":
-        public_key = settings.public_key_tcp or public_key
-        short_id = settings.short_id_tcp or short_id
-        fingerprint = settings.tcp_fingerprint or fingerprint
     query: list[tuple[str, str]] = [
         ("type", transport),
         ("security", "reality"),
@@ -75,12 +73,15 @@ def build_subscription_query(inbound: dict) -> list[tuple[str, str]]:
         xhttp_settings = stream.get("xhttpSettings", {})
         query.append(("path", xhttp_settings.get("path") or settings.xhttp_path))
         query.append(("mode", xhttp_settings.get("mode") or settings.xhttp_mode))
-        if settings.packet_encoding:
-            query.append(("packetEncoding", settings.packet_encoding))
-    else:
+    elif transport == "grpc":
+        grpc_settings = stream.get("grpcSettings", {})
+        query.append(("serviceName", grpc_settings.get("serviceName") or settings.grpc_service_name))
+        # "gun" = single gRPC stream (vs "multi"); standard v2ray grpc link param.
+        query.append(("mode", "gun"))
+    else:  # raw tcp — flow-less REALITY, no header
         query.append(("headerType", "none"))
-        query.append(("flow", "xtls-rprx-vision"))
-    if settings.packet_encoding and transport != "xhttp":
+    # No flow on any transport now.
+    if settings.packet_encoding:
         query.append(("packetEncoding", settings.packet_encoding))
     return query
 

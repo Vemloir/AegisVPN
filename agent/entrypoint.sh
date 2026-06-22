@@ -54,6 +54,8 @@ XHTTP_PATH=${XHTTP_PATH:-"/"}
 # a client over direct REALITY resolve to stream-one (single full-duplex stream,
 # less overhead than packet-up's many POSTs — packet-up only helps behind a CDN).
 XHTTP_MODE=${XHTTP_MODE:-"auto"}
+XRAY_GRPC_PORT=${XRAY_GRPC_PORT:-}
+XRAY_GRPC_SERVICE=${XRAY_GRPC_SERVICE:-"grpc"}
 XRAY_CONN_IDLE=${XRAY_CONN_IDLE:-30}
 REALITY_TCP_DEST=${REALITY_TCP_DEST:-$REALITY_DEST}
 REALITY_TCP_SERVER_NAME=${REALITY_TCP_SERVER_NAME:-$REALITY_SERVER_NAME}
@@ -83,6 +85,8 @@ REALITY_TCP_SERVER_NAME=$REALITY_TCP_SERVER_NAME
 HOST_IP=$HOST_IP
 XHTTP_PATH=$XHTTP_PATH
 XHTTP_MODE=$XHTTP_MODE
+XRAY_GRPC_PORT=$XRAY_GRPC_PORT
+XRAY_GRPC_SERVICE=$XRAY_GRPC_SERVICE
 XRAY_CONN_IDLE=$XRAY_CONN_IDLE
 EOF
 
@@ -119,6 +123,8 @@ network = os.environ.get("XRAY_NETWORK", "tcp").strip().lower() or "tcp"
 xhttp_path = os.environ.get("XHTTP_PATH", "/").strip() or "/"
 xhttp_mode = os.environ.get("XHTTP_MODE", "auto").strip() or "auto"
 tcp_port = (os.environ.get("XRAY_TCP_PORT") or "").strip()
+grpc_port = (os.environ.get("XRAY_GRPC_PORT") or "").strip()
+grpc_service = os.environ.get("XRAY_GRPC_SERVICE", "grpc").strip() or "grpc"
 
 
 def _int_env(name: str, default: int) -> int:
@@ -154,7 +160,11 @@ for inbound in existing_vless:
     for client in inbound.get("settings", {}).get("clients", []):
         client_id = client.get("id")
         if client_id:
-            client_map[client_id] = dict(client)
+            record = dict(client)
+            # Drop any legacy xtls-rprx-vision flow: every transport is flow-less
+            # now (ТСПУ bans vision), so client records carry only id + email.
+            record.pop("flow", None)
+            client_map[client_id] = record
 
 
 def build_inbound(port: int, transport: str, tag: str) -> dict:
@@ -165,13 +175,12 @@ def build_inbound(port: int, transport: str, tag: str) -> dict:
 
     settings = inbound.setdefault("settings", {})
     settings["decryption"] = "none"
+    # Clients are shared across all inbounds and flow-less on every transport
+    # (xhttp/tcp/grpc) — vision is gone, so no per-transport flow rewrite.
     clients = []
     for client in client_map.values():
         client_copy = dict(client)
-        if transport == "xhttp":
-            client_copy.pop("flow", None)
-        else:
-            client_copy["flow"] = "xtls-rprx-vision"
+        client_copy.pop("flow", None)
         clients.append(client_copy)
     settings["clients"] = clients
 
@@ -179,15 +188,11 @@ def build_inbound(port: int, transport: str, tag: str) -> dict:
     stream["network"] = transport
     stream["security"] = "reality"
     reality = stream.setdefault("realitySettings", {})
+    # SINGLE shared reality keypair for every transport — no *_TCP variant.
     reality_dest = os.environ["REALITY_DEST"]
     reality_server_name = os.environ["REALITY_SERVER_NAME"]
     reality_private_key = os.environ["PRIVATE_KEY"]
     reality_short_id = os.environ["SHORT_ID"]
-    if transport == "tcp":
-        reality_dest = os.environ.get("REALITY_TCP_DEST") or reality_dest
-        reality_server_name = os.environ.get("REALITY_TCP_SERVER_NAME") or reality_server_name
-        reality_private_key = os.environ.get("PRIVATE_KEY_TCP") or reality_private_key
-        reality_short_id = os.environ.get("SHORT_ID_TCP") or reality_short_id
     server_names = [name.strip() for name in reality_server_name.split(",") if name.strip()]
     if not server_names:
         server_names = [reality_server_name]
@@ -205,6 +210,10 @@ def build_inbound(port: int, transport: str, tag: str) -> dict:
         }
     else:
         stream.pop("xhttpSettings", None)
+    if transport == "grpc":
+        stream["grpcSettings"] = {"serviceName": grpc_service}
+    else:
+        stream.pop("grpcSettings", None)
 
     inbound["sniffing"] = {"enabled": True, "destOverride": ["http", "tls"]}
 
@@ -224,6 +233,10 @@ if tcp_port:
     tcp_port_int = int(tcp_port)
     if tcp_port_int > 0 and tcp_port_int != primary_port:
         new_inbounds.append(build_inbound(tcp_port_int, "tcp", "vless-in-tcp"))
+if grpc_port:
+    grpc_port_int = int(grpc_port)
+    if grpc_port_int > 0:
+        new_inbounds.append(build_inbound(grpc_port_int, "grpc", "vless-in-grpc"))
 
 config["inbounds"] = new_inbounds + other_inbounds
 
