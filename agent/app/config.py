@@ -32,11 +32,6 @@ class Settings(BaseSettings):
     conn_limit: int = 5
     conn_limit_interval: int = 60  # seconds between enforcement cycles
 
-    # Hysteria2 HTTP auth: password to validate + trafficStats URL.
-    # Set only on nodes that run a local Hysteria2 instance.
-    hy2_password: str | None = None
-    hy2_traffic_url: str = "http://127.0.0.1:8088/traffic"
-
     model_config = ConfigDict(
         env_file="/data/agent.env",
         extra="ignore",

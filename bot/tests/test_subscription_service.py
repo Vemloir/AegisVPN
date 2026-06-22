@@ -103,8 +103,3 @@ def test_vless_link_to_xray_config_xhttp_has_recovery_knobs_and_clean_routing():
         for s in cfg["dns"]["servers"]
     )
     assert cfg["remarks"] == "🇫🇮 Finland"
-
-
-def test_vless_link_to_xray_config_skips_non_vless():
-    # a Hysteria2 static_uri can't be an xray outbound -> excluded from the array
-    assert SubscriptionService._vless_link_to_xray_config("hysteria2://x@y:443", Server(name="HY2")) is None

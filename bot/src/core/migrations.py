@@ -61,9 +61,16 @@ MIGRATIONS: dict[str, list[Column]] = {
             post_sql="UPDATE servers SET subscription_group = 'safe' WHERE subscription_group IS NULL",
         ),
         Column("display_order", "INTEGER DEFAULT 0", "INTEGER DEFAULT 0"),
-        Column("static_uri", "VARCHAR(512)", "VARCHAR(512)"),
         Column("mtproxy_secret", "VARCHAR(64)", "VARCHAR(64)"),
     ],
+}
+
+
+# Ordered table -> columns to drop from older databases (legacy/removed features).
+# Dropped only if present, so this is idempotent. SQLite (>=3.35) and PostgreSQL
+# both support ALTER TABLE ... DROP COLUMN.
+DROP_COLUMNS: dict[str, list[str]] = {
+    "servers": ["static_uri"],
 }
 
 
@@ -102,4 +109,10 @@ async def run_migrations() -> None:
                 await session.execute(text(f"ALTER TABLE {table} ADD COLUMN {column.name} {ddl}"))
                 if column.post_sql:
                     await session.execute(text(column.post_sql))
+        for table, drop_names in DROP_COLUMNS.items():
+            existing = await _existing_columns(session, table, is_sqlite)
+            for name in drop_names:
+                if name not in existing:
+                    continue
+                await session.execute(text(f"ALTER TABLE {table} DROP COLUMN {name}"))
         await session.commit()

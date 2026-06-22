@@ -26,11 +26,6 @@ class Server(Base):
     subscription_group: Mapped[str] = mapped_column(String(16), default="safe")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     display_order: Mapped[int] = mapped_column(Integer, default=0)
-    # A ready-made proxy URI served verbatim instead of fetching from an agent
-    # (used for protocols our agents don't run, e.g. a standalone Hysteria2
-    # node). `{uuid}`/`{host}` placeholders are substituted; the bot appends the
-    # flagged label as the #fragment. NULL = normal agent-backed server.
-    static_uri: Mapped[str | None] = mapped_column(String(512), nullable=True)
     mtproxy_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     subscription_servers: Mapped[list["SubscriptionServer"]] = relationship(

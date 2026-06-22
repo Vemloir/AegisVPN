@@ -38,10 +38,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "subscription_hint": "Выберите нужный формат подписки и откройте инструкцию внутри него.",
         "subscription_choose_format": "Выберите формат подписки кнопками ниже.",
         "v2ray_title": "Подписка для V2Ray",
-        "amnezia_title": "Подписка для AmneziaVPN",
         "back_to_subscription": "Назад в подписку",
         "v2ray_detail_hint": "Вставьте эту ссылку в V2Ray-клиент как подписку.",
-        "amnezia_detail_hint": "Скопируйте этот текстовый ключ и вставьте его в AmneziaVPN.",
         "start_text": (
             "Привет, {name}! Я Aegis VPN бот.\n\n"
             "Основные команды:\n"
@@ -81,15 +79,6 @@ TEXTS: dict[str, dict[str, str]] = {
             "4. В клиенте выберите добавление подписки по ссылке или import by URL.\n\n"
             "5. Вставьте ссылку и импортируйте локации.\n\n"
             "6. Если локации не появились сразу, обновите подписку внутри клиента."
-        ),
-        "setup_text_amnezia": (
-            "Инструкция для AmneziaVPN:\n\n"
-            "1. Установите AmneziaVPN.\n\n"
-            "2. Откройте /subscription и нажмите кнопку AmneziaVPN.\n\n"
-            "3. Скопируйте весь текстовый ключ с экрана AmneziaVPN.\n\n"
-            "4. В приложении нажмите плюс и выберите вставку ключа.\n\n"
-            "5. Вставьте скопированный конфиг, затем нажмите Continue и Connect.\n\n"
-            "6. Если приложение просит ключ, используйте именно текст из бота, а не HTTPS-ссылку."
         ),
         "no_plans_available": "Сейчас нет доступных тарифов.",
         "choose_plan_buy": "Выберите тариф для покупки:",
@@ -192,10 +181,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "subscription_hint": "Choose the subscription format you need and open the instruction inside it.",
         "subscription_choose_format": "Choose the subscription format with the buttons below.",
         "v2ray_title": "V2Ray Subscription",
-        "amnezia_title": "AmneziaVPN Subscription",
         "back_to_subscription": "Back to subscription",
         "v2ray_detail_hint": "Paste this link into your V2Ray client as a subscription.",
-        "amnezia_detail_hint": "Copy this text key and paste it into AmneziaVPN.",
         "start_text": (
             "Hello, {name}! I am the Aegis VPN bot.\n\n"
             "Main commands:\n"
@@ -237,15 +224,6 @@ TEXTS: dict[str, dict[str, str]] = {
             "4. In the client, choose add subscription or import by URL.\n\n"
             "5. Paste the link and import the locations.\n\n"
             "6. If the locations do not appear immediately, refresh the subscription inside the client."
-        ),
-        "setup_text_amnezia": (
-            "AmneziaVPN setup guide:\n\n"
-            "1. Install AmneziaVPN.\n\n"
-            "2. Open /subscription and press the AmneziaVPN button.\n\n"
-            "3. Copy the full text key from the AmneziaVPN screen.\n\n"
-            "4. In AmneziaVPN tap plus and choose key paste.\n\n"
-            "5. Paste the copied config, then tap Continue and Connect.\n\n"
-            "6. If the app asks for a key, use the text from the bot, not the HTTPS link."
         ),
         "no_plans_available": "There are no available plans right now.",
         "choose_plan_buy": "Choose a plan to buy:",

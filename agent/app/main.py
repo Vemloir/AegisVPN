@@ -9,7 +9,6 @@ from urllib.parse import quote, urlencode
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
 
 from .config import settings
 from .connlimit import conn_limit_loop, set_override
@@ -79,33 +78,6 @@ async def online_emails():
     which device is connected and to which node — no traffic-delta guessing.
     """
     return {"emails": await get_online_emails()}
-
-
-@app.get("/hy2-online", dependencies=[Depends(verify_token)])
-async def hy2_online():
-    """Active Hysteria2 connections — read from counter file maintained by hy2-counter.service."""
-    try:
-        import aiofiles
-        async with aiofiles.open("/data/hy2_online") as f:
-            val = (await f.read()).strip()
-            return {"online": max(0, int(val))}
-    except Exception:
-        pass
-    return {"online": 0}
-
-
-class Hy2AuthRequest(BaseModel):
-    addr: str
-    auth: str
-    tx: int = 0
-
-
-@app.post("/hy2-auth")
-async def hy2_auth(req: Hy2AuthRequest):
-    """Hysteria2 HTTP auth callback — validates password, assigns unique ID per connection."""
-    if not settings.hy2_password or req.auth != settings.hy2_password:
-        return {"ok": False, "msg": "invalid password"}
-    return {"ok": True, "id": req.addr}
 
 
 @app.post("/client/add", dependencies=[Depends(verify_token)])

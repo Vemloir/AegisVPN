@@ -77,11 +77,6 @@ class AdminService:
         traffic_total_up = sum(r[2] for r in traffic_per_server)
         traffic_total_down = sum(r[3] for r in traffic_per_server)
 
-        xray_servers = [s for s in all_servers if not s.static_uri]
-        static_servers = [s for s in all_servers if s.static_uri]
-        # Map host → xray agent for static-URI servers that share a node
-        host_to_agent: dict[str, tuple[str, str]] = {s.host: (s.agent_url, s.agent_token) for s in xray_servers}
-
         async def fetch_xray_online(server: Server) -> tuple[str, str, int]:
             try:
                 count = await AgentClient(server.agent_url, server.agent_token).get_online()
@@ -89,19 +84,8 @@ class AdminService:
                 count = -1
             return server.flag, server.name, count
 
-        async def fetch_hy2_online(server: Server) -> tuple[str, str, int] | None:
-            agent = host_to_agent.get(server.host)
-            if not agent:
-                return None
-            try:
-                count = await AgentClient(agent[0], agent[1]).get_hy2_online()
-            except Exception:
-                count = -1
-            return server.flag, server.name, count
-
-        xray_results = list(await asyncio.gather(*(fetch_xray_online(s) for s in xray_servers)))
-        hy2_results = [r for r in await asyncio.gather(*(fetch_hy2_online(s) for s in static_servers)) if r]
-        nodes_online = sorted(xray_results + hy2_results, key=lambda x: x[1])
+        xray_results = list(await asyncio.gather(*(fetch_xray_online(s) for s in all_servers)))
+        nodes_online = sorted(xray_results, key=lambda x: x[1])
 
         return AdminStats(users_count, active_subs, banned_users, nodes_online, traffic_per_server, traffic_total_up, traffic_total_down)
 
@@ -306,7 +290,7 @@ class AdminService:
             servers = (
                 (
                     await session.execute(
-                        select(Server).where(Server.is_active == True, Server.static_uri.is_(None))  # noqa: E712
+                        select(Server).where(Server.is_active == True)  # noqa: E712
                     )
                 )
                 .scalars()

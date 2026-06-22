@@ -212,8 +212,6 @@ class SubscriptionService:
         email = f"user_{sub.user_id}_sub_{sub.id}"
 
         async def sync_to_server(server: Server) -> tuple[int, bool]:
-            if getattr(server, "static_uri", None):
-                return server.id, True
             client = AgentClient(server.agent_url, server.agent_token)
 
             try:
@@ -293,20 +291,9 @@ class SubscriptionService:
         server_name_counts = Counter(server.name.strip().casefold() for server in servers if server.name.strip())
         duplicate_name_keys = {name for name, count in server_name_counts.items() if count > 1}
 
-        # device_uuid is used for xray-backed servers; static-URI servers always
-        # use sub.client_uuid (they have their own auth mechanism).
         effective_uuid = device_uuid or sub.client_uuid
 
         async def fetch_link(server: Server) -> str:
-            # Static-URI servers (e.g. a standalone Hysteria2 node) aren't backed
-            # by an agent — serve their ready-made URI verbatim, substituting
-            # {uuid}/{host} and setting the flagged label as the #fragment.
-            static_uri = getattr(server, "static_uri", None)
-            if static_uri:
-                uri = static_uri.replace("{uuid}", sub.client_uuid).replace("{host}", server.host)
-                base = uri.split("#", 1)[0]
-                label = SubscriptionService.format_server_label(server, duplicate_name_keys)
-                return f"{base}#{quote(label, safe='')}"
             client = AgentClient(server.agent_url, server.agent_token)
             target_profile = (
                 SubscriptionService.FAST_PROFILE
@@ -365,8 +352,8 @@ class SubscriptionService:
     @staticmethod
     def _vless_link_to_xray_config(link: str, server: Server) -> dict | None:
         """Parse one normalized vless:// link into a complete, standalone xray
-        client config. Returns None for non-vless links (e.g. a Hysteria2
-        static_uri, which xray-core cannot run as an outbound)."""
+        client config. Returns None for non-vless links (which xray-core cannot
+        run as an outbound)."""
         if not link.startswith("vless://"):
             return None
         parts = urlsplit(link)
@@ -588,7 +575,6 @@ class SubscriptionService:
                 SubscriptionServer.subscription_id == sub.id,
                 SubscriptionServer.is_synced == True,  # noqa: E712
                 Server.is_active == True,  # noqa: E712
-                Server.static_uri.is_(None),
             )
         )
         servers = result.scalars().all()
@@ -616,8 +602,6 @@ class SubscriptionService:
         servers = result.scalars().all()
 
         async def _remove(server: Server) -> None:
-            if getattr(server, "static_uri", None):
-                return
             try:
                 await AgentClient(server.agent_url, server.agent_token).remove_client(device.uuid)
             except Exception as exc:
@@ -649,8 +633,6 @@ class SubscriptionService:
         servers = result.scalars().all()
 
         async def _remove(server: Server) -> None:
-            if getattr(server, "static_uri", None):
-                return
             try:
                 await AgentClient(server.agent_url, server.agent_token).remove_client(device.uuid)
             except Exception as exc:
