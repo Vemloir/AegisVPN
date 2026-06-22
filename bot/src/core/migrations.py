@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import settings
 from src.core.database import async_session_maker
+from src.core.terms import TERMS_VERSION
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +31,20 @@ MIGRATIONS: dict[str, list[Column]] = {
         Column("trial_used", "BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE"),
         Column("privacy_accepted", "BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE"),
         Column("conn_limit", "INTEGER", "INTEGER"),
+        # Legal-acceptance gate (Privacy Policy + Terms of Service). Users who
+        # already accepted the old privacy-only flow are grandfathered into the
+        # current TERMS_VERSION so they are not force-re-prompted on rollout.
+        Column("accepted_terms_at", "TIMESTAMP", "TIMESTAMP"),
+        Column(
+            "accepted_terms_version",
+            "VARCHAR(32)",
+            "VARCHAR(32)",
+            post_sql=(
+                "UPDATE users SET accepted_terms_version = "
+                f"'{TERMS_VERSION}', accepted_terms_at = CURRENT_TIMESTAMP "
+                "WHERE privacy_accepted = 1 AND accepted_terms_version IS NULL"
+            ),
+        ),
     ],
     "subscriptions": [
         Column("legacy_sub_token", "VARCHAR(255)", "VARCHAR(255)"),

@@ -1,14 +1,14 @@
-"""Entry points: /start (with referral + privacy gate) and /help."""
+"""Entry points: /start (with referral + legal-acceptance gate) and /help."""
 
 from aiogram import Router, html
 from aiogram.filters import Command, CommandStart
-from aiogram.types import InlineKeyboardMarkup, Message
+from aiogram.types import Message
 
 from src.core.config import settings
 from src.services import UserService, get_user_language, t
 
 from .keyboards import subscription_keyboard
-from .privacy import privacy_button, privacy_gate_keyboard
+from .terms import show_gate
 
 router = Router()
 
@@ -31,7 +31,7 @@ async def cmd_start(message: Message):
     tg_id = message.from_user.id
     referrer_id = _parse_referrer(message.text, tg_id)
 
-    language, can_use_trial, privacy_ok, is_banned = await UserService.register_or_update_on_start(
+    language, can_use_trial, terms_ok, is_banned = await UserService.register_or_update_on_start(
         tg_id, message.from_user.username, message.from_user.language_code, referrer_id
     )
 
@@ -39,13 +39,12 @@ async def cmd_start(message: Message):
         await message.answer("You are banned." if language == "en" else "Вы заблокированы.")
         return
 
-    # Privacy gate: a user must accept the policy before using the bot.
-    if not privacy_ok:
-        await message.answer(
-            t(language, "privacy_gate_text"),
-            parse_mode="HTML",
-            reply_markup=await privacy_gate_keyboard(language),
-        )
+    # Legal-acceptance gate: a user must accept the current Privacy Policy +
+    # Terms of Service before using the bot. (The global TermsGateMiddleware
+    # enforces this for every other interaction; /start renders it here so the
+    # referral above is still captured for brand-new users.)
+    if not terms_ok:
+        await show_gate(message, language, message.from_user.first_name)
         return
 
     active_sub, is_lifetime = await UserService.subscription_state(tg_id)
@@ -68,9 +67,9 @@ async def cmd_help(message: Message):
         return
 
     language = await get_user_language(message.from_user.id)
+    # Privacy/ToS content lives in /info now; /help only lists commands.
     text = t(language, "help_text")
     if message.from_user.id in settings.admin_ids:
         admin_line = "/admin - admin panel\n" if language == "en" else "/admin - админ-панель\n"
         text += f"\nAdmin:\n{admin_line}" if language == "en" else f"\nАдмин:\n{admin_line}"
-    help_markup = InlineKeyboardMarkup(inline_keyboard=[[await privacy_button(language)]])
-    await message.answer(text, reply_markup=help_markup)
+    await message.answer(text)

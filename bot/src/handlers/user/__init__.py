@@ -5,9 +5,10 @@ Public surface is :data:`router`, assembled from the per-domain sub-routers.
 
 from aiogram import Router
 
-from . import devices, privacy, settings, start, subscription
+from . import devices, privacy, settings, start, subscription, terms
 
 router = Router()
+router.include_router(terms.router)  # accept callback must be reachable through the gate
 router.include_router(start.router)
 router.include_router(privacy.router)
 router.include_router(subscription.router)

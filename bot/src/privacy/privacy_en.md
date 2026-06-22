@@ -9,12 +9,13 @@ By using this bot and the AegisVPN service you agree to this policy.
 • aggregated traffic statistics — the total volume of inbound and outbound data on your subscription (in bytes). We do not know what specific traffic was transmitted.
 
 <b>2. What we do NOT collect</b>
-We follow a no-logs policy. We do NOT record or store:
+We follow a no-logs policy. We do NOT record, store, or keep logs of:
 • your internet traffic or its contents;
 • visited sites, domains, or DNS queries;
-• the IP addresses of your connections;
-• connection activity logs on the VPN servers.
-Connection logging is disabled on the servers.
+• your network activity history;
+• persistent connection logs or stored IP addresses of your connections.
+
+Access logging is disabled on the VPN servers. To enforce your subscription's simultaneous-connection limit and to protect the nodes from abuse (for example, attempts to use them for attacks), the system may briefly process connection metadata in memory — such as the number of active connections. This data is not written to disk, is not tied to your activity history, and is not used to track which resources you visit.
 
 <b>3. Why we need this data</b>
 Solely to run the service: issuing and renewing subscriptions, displaying statistics, support, and payment processing.

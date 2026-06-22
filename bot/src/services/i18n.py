@@ -23,6 +23,22 @@ TEXTS: dict[str, dict[str, str]] = {
         ),
         "privacy_accepted_msg": "Спасибо! Политика принята. Можно пользоваться ботом.",
         "privacy_required": "Сначала примите политику конфиденциальности (/start).",
+        # Legal-acceptance gate (Privacy Policy + Terms of Service).
+        "doc_privacy_label": "Политика конфиденциальности",
+        "doc_tos_label": "Пользовательское соглашение",
+        "terms_gate_greeting": "Здравствуйте, {name}! Это бот AegisVPN.",
+        "terms_gate_intro": "Чтобы продолжить, ознакомьтесь и примите наши документы:",
+        "terms_accept_button": "Принять",
+        "terms_accepted_msg": "Спасибо! Документы приняты. Можно пользоваться ботом.",
+        "terms_required": "Сначала примите наши документы (/start).",
+        # /info command.
+        "info_about": (
+            "AegisVPN — быстрый VPN на протоколах VLESS+REALITY (ядро xray) и "
+            "Hysteria2, управляемый прямо через этого бота. Подписка, оплата, "
+            "получение ключей и поддержка — всё в одном месте."
+        ),
+        "info_github_label": "Исходный код на GitHub",
+        "info_news_button": "Новости",
         "buy_stars": "Купить звёзды",
         "back": "Назад",
         "access_unavailable": "Доступ недоступен.",
@@ -166,6 +182,22 @@ TEXTS: dict[str, dict[str, str]] = {
         ),
         "privacy_accepted_msg": "Thanks! Policy accepted. You can use the bot now.",
         "privacy_required": "Please accept the privacy policy first (/start).",
+        # Legal-acceptance gate (Privacy Policy + Terms of Service).
+        "doc_privacy_label": "Privacy Policy",
+        "doc_tos_label": "Terms of Service",
+        "terms_gate_greeting": "Hello, {name}! This is the AegisVPN bot.",
+        "terms_gate_intro": "To continue, please review and accept our documents:",
+        "terms_accept_button": "Accept",
+        "terms_accepted_msg": "Thanks! Documents accepted. You can use the bot now.",
+        "terms_required": "Please accept our documents first (/start).",
+        # /info command.
+        "info_about": (
+            "AegisVPN is a fast VPN over VLESS+REALITY (xray core) and "
+            "Hysteria2, managed right from this bot. Subscription, payment, "
+            "key delivery, and support are all in one place."
+        ),
+        "info_github_label": "Source code on GitHub",
+        "info_news_button": "News",
         "buy_stars": "Buy Stars",
         "back": "Back",
         "access_unavailable": "Access unavailable.",

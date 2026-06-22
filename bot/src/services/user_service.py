@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from src.core.database import async_session_maker
 from src.core.logger import logger
+from src.core.terms import TERMS_VERSION
 from src.models import Subscription, User
 from src.services.server_access_service import ServerAccessService
 from src.services.subscription_service import SubscriptionService
@@ -33,6 +34,46 @@ class UserService:
         async with async_session_maker() as session:
             result = await session.execute(select(User.privacy_accepted).where(User.tg_id == tg_id))
             return bool(result.scalar_one_or_none())
+
+    @staticmethod
+    async def is_terms_accepted(tg_id: int) -> bool:
+        """True only if the user accepted the CURRENT TERMS_VERSION.
+
+        Unknown users (no row yet) and users on an older version count as not
+        accepted, so a version bump re-prompts everyone via the gate.
+        """
+        async with async_session_maker() as session:
+            result = await session.execute(select(User.accepted_terms_version).where(User.tg_id == tg_id))
+            return result.scalar_one_or_none() == TERMS_VERSION
+
+    @staticmethod
+    async def accept_terms(
+        tg_id: int, username: str | None = None, language_code: str | None = None
+    ) -> tuple[str, bool]:
+        """Record acceptance of the current Privacy Policy + ToS version.
+
+        Creates the user row if it does not exist yet (the gate may fire before
+        any /start handler ran). Returns ``(language, can_use_trial)``.
+        """
+        async with async_session_maker() as session:
+            user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
+            if user is None:
+                user = User(
+                    tg_id=tg_id,
+                    username=username,
+                    referrer_id=None,
+                    language=pick_language(language_code),
+                )
+                session.add(user)
+                await session.flush()
+            # Keep the legacy flag in sync for any code still reading it.
+            user.privacy_accepted = True
+            user.accepted_terms_version = TERMS_VERSION
+            user.accepted_terms_at = _now()
+            language = user.language
+            can_use_trial = not user.trial_used
+            await session.commit()
+            return language, can_use_trial
 
     @staticmethod
     async def subscription_state(tg_id: int) -> tuple[bool, bool]:
@@ -69,7 +110,9 @@ class UserService:
     ) -> tuple[str, bool, bool, bool]:
         """Create the user on first /start (or refresh username on return).
 
-        Returns ``(language, can_use_trial, privacy_ok, is_banned)``.
+        Returns ``(language, can_use_trial, terms_ok, is_banned)`` where
+        ``terms_ok`` is True only if the stored acceptance matches the current
+        TERMS_VERSION.
         """
         async with async_session_maker() as session:
             user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
@@ -88,7 +131,8 @@ class UserService:
                 user.username = username
 
             await session.commit()
-            return user.language, not user.trial_used, user.privacy_accepted, user.is_banned
+            terms_ok = user.accepted_terms_version == TERMS_VERSION
+            return user.language, not user.trial_used, terms_ok, user.is_banned
 
     @staticmethod
     async def ensure_user(tg_id: int, username: str | None, language_code: str | None) -> None:

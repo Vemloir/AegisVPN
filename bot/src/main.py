@@ -16,6 +16,7 @@ from src.core.database import async_session_maker
 from src.core.logger import setup_logger
 from src.handlers import setup_routers
 from src.middlewares.identity import IdentitySyncMiddleware
+from src.middlewares.terms_gate import TermsGateMiddleware
 from src.models import Plan, Server
 from src.scheduler import setup_scheduler
 from src.services import SubscriptionService
@@ -41,11 +42,12 @@ async def resolve_bot_public_url(bot: Bot) -> str | None:
 
 
 async def configure_bot_commands(bot: Bot) -> None:
+    # NOTE: /help still WORKS when typed; it is just not listed in the menu.
     default_commands = [
         BotCommand(command="start", description="main menu"),
-        BotCommand(command="help", description="help"),
         BotCommand(command="subscription", description="my subscription"),
         BotCommand(command="settings", description="settings"),
+        BotCommand(command="info", description="about, documents, news"),
     ]
     await bot.set_my_commands(default_commands, scope=BotCommandScopeDefault())
 
@@ -209,6 +211,11 @@ def create_dispatcher() -> Dispatcher:
     identity = IdentitySyncMiddleware()
     dp.message.middleware(identity)
     dp.callback_query.middleware(identity)
+    # Mandatory legal-acceptance gate: blocks everything (except the accept tap)
+    # until the user accepts the current Privacy Policy + Terms of Service.
+    terms_gate = TermsGateMiddleware()
+    dp.message.middleware(terms_gate)
+    dp.callback_query.middleware(terms_gate)
     dp.include_router(setup_routers())
     return dp
 
