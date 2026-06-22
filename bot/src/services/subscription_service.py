@@ -147,28 +147,29 @@ class SubscriptionService:
         The auth secret is the SAME per-device UUID the vless link carries, so
         device suspension / conn-limit / re-issue key identically on the node
         (Hy2 auth maps that UUID -> the device's email via the agent). salamander
-        obfs + the port-hop range (mport) help evade ТСПУ; the self-signed cert
-        forces insecure=1. Returns None when the server is not Hy2-capable so the
-        caller falls back to a vless link.
+        obfs + the address-embedded port-hop range help evade ТСПУ; the node serves
+        a real Let's Encrypt cert so the client validates normally (no insecure).
+        Returns None when the server is not Hy2-capable so the caller falls back to
+        a vless link.
         """
         if not getattr(server, "hy2_capable", False) or not device_uuid:
             return None
-        # A plausible SNI for the self-signed cert: reuse the REALITY serverName
-        # if the agent baked one onto the node, else a stable fixed value.
-        sni = getattr(server, "reality_server_name", None) or "www.microsoft.com"
-        # A hysteria2:// URI accepts ONLY the spec-defined query params
-        # (obfs / obfs-password / sni / insecure / pinSHA256). Bandwidth (up/down)
-        # is FORBIDDEN in the URI — it lives only in a config file, and a
-        # "100 mbps" string is unparseable — and port hopping is encoded in the
-        # ADDRESS as host:port,start-end, NOT as a query key. Emitting up/down +
-        # mport in the query made the sing-box/hysteria core reject the profile
-        # locally on dial (instant "N/D", no network I/O). Server-side Brutal/BBR
-        # is advertised by the SERVER config, so the client needs no bandwidth.
+        # The node serves a real Let's Encrypt cert for server.hy2_sni (one shared
+        # cert + DuckDNS domain across all nodes), so the client validates it
+        # normally — NO `insecure`: the xray-core fork in Happ/v2RayTun REMOVED
+        # allowInsecure and its pinnedPeerCertSha256 is broken for self-signed certs
+        # (XTLS/Xray-core #5655), so a self-signed cert is unusable there. salamander
+        # obfs hides this SNI from ТСПУ anyway.
+        #
+        # Only spec-defined query params (obfs / obfs-password / sni / insecure /
+        # pinSHA256). Bandwidth (up/down) is FORBIDDEN in the URI — config-file only,
+        # and "100 mbps" is unparseable — and port hopping goes in the ADDRESS
+        # (host:port,start-end), NOT a query key; both made the core reject the
+        # profile on dial (instant "N/D"). Brutal/BBR is advertised server-side.
         query = {
             "obfs": "salamander",
             "obfs-password": server.hy2_obfs_password or "",
-            "insecure": "1",
-            "sni": sni,
+            "sni": server.hy2_sni,
         }
         userinfo = quote(device_uuid, safe="")
         fragment = SubscriptionService.format_server_label(server, duplicate_name_keys)

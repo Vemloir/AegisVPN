@@ -45,6 +45,12 @@ class Server(Base):
     hy2_obfs_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     hy2_up: Mapped[str | None] = mapped_column(String(32), nullable=True)
     hy2_down: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Hy2 TLS SNI = the CA cert's domain (one shared Let's Encrypt cert + one
+    # DuckDNS domain across all nodes). Like the obfs password, it is a value the
+    # operator sets via a direct DB update (never shipped in the migration), and
+    # is REQUIRED for a usable link: the client validates this name against the
+    # real CA cert (no insecure — the xray-core fork rejects self-signed certs).
+    hy2_sni: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     @property
     def has_alt_transports(self) -> bool:
@@ -57,11 +63,16 @@ class Server(Base):
     @property
     def hy2_capable(self) -> bool:
         """True only when the node can emit a USABLE Hy2 link: Hy2 is enabled,
-        a client target port is set, and the obfs password (a secret left out of
-        the migration) has been provisioned. A misconfigured node (enabled but
-        no password) is NOT capable, so emission falls back to vless instead of
-        shipping a broken Hy2 link."""
-        return bool(self.hy2_enabled and self.hy2_port and self.hy2_obfs_password)
+        a client target port is set, and the two operator-provisioned secrets
+        (obfs password + the CA cert SNI) are present. A misconfigured node
+        (enabled but missing either) is NOT capable, so emission falls back to
+        vless instead of shipping a broken Hy2 link."""
+        return bool(
+            self.hy2_enabled
+            and self.hy2_port
+            and self.hy2_obfs_password
+            and self.hy2_sni
+        )
 
     subscription_servers: Mapped[list["SubscriptionServer"]] = relationship(
         back_populates="server", cascade="all, delete-orphan"

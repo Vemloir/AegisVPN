@@ -39,6 +39,7 @@ def _greece(**overrides) -> Server:
         "hy2_obfs_password": "s3cr3t-obfs",
         "hy2_up": "200 mbps",
         "hy2_down": "200 mbps",
+        "hy2_sni": "aegis.example.test",
     }
     fields.update(overrides)
     return Server(**fields)
@@ -51,6 +52,8 @@ def test_hy2_capable_requires_enabled_port_and_password():
     assert _greece().hy2_capable is True
     # Enabled but no obfs password (the migration leaves it NULL) -> not capable.
     assert _greece(hy2_obfs_password=None).hy2_capable is False
+    # No CA cert SNI (also operator-set, left NULL by the migration) -> not capable.
+    assert _greece(hy2_sni=None).hy2_capable is False
     # Not enabled -> not capable even with a password.
     assert _greece(hy2_enabled=False).hy2_capable is False
     # No client target port -> not capable.
@@ -94,8 +97,12 @@ def test_build_hy2_link_shape():
     q = parse_qs(parts.query)
     assert q["obfs"] == ["salamander"]
     assert q["obfs-password"] == ["s3cr3t-obfs"]
-    assert q["insecure"] == ["1"]
-    assert q["sni"]  # a plausible SNI is always present
+    # The node serves a real CA cert for hy2_sni, so the client validates normally:
+    # NO insecure and NO pinSHA256 (the xray-core fork rejects both with a self-
+    # signed cert). The SNI is exactly the cert domain from the DB.
+    assert "insecure" not in q
+    assert "pinSHA256" not in q and "pinSHA256" not in link
+    assert q["sni"] == ["aegis.example.test"]
     # Bandwidth (up/down) and mport are spec-forbidden in a hysteria2:// URI —
     # emitting them made the hysteria/sing-box core reject the profile locally.
     assert "up=" not in link and "down=" not in link
@@ -107,6 +114,8 @@ def test_build_hy2_link_shape():
 def test_build_hy2_link_none_when_not_capable():
     # No obfs password -> not emittable -> None (caller falls back to vless).
     assert SubscriptionService.build_hy2_link(_greece(hy2_obfs_password=None), "uuid") is None
+    # No CA cert SNI -> not emittable -> None (there is no insecure fallback now).
+    assert SubscriptionService.build_hy2_link(_greece(hy2_sni=None), "uuid") is None
     # Empty device uuid -> None.
     assert SubscriptionService.build_hy2_link(_greece(), "") is None
 

@@ -121,6 +121,10 @@ MIGRATIONS: dict[str, list[Column]] = {
             "VARCHAR(32)",
             post_sql="UPDATE servers SET hy2_down = '100 mbps' WHERE host = '45.142.31.13'",
         ),
+        # No post_sql: the Hy2 TLS SNI (the shared CA/Let's Encrypt cert domain) is
+        # set out-of-band by the operator via a direct DB update, like the obfs
+        # password — never the actual domain in the (public) migration.
+        Column("hy2_sni", "VARCHAR(255)", "VARCHAR(255)"),
     ],
 }
 
