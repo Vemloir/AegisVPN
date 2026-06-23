@@ -745,7 +745,9 @@ class SubscriptionService:
                 "hysteriaSettings": {"version": 2, "auth": userinfo},
                 "tlsSettings": {
                     "serverName": q.get("sni", ""),
-                    "fingerprint": "chrome",
+                    # firefox to match our REALITY default — chrome's QUIC
+                    # ClientHello is the more commonly fingerprinted/policed one.
+                    "fingerprint": "firefox",
                     "alpn": ["h3"],
                 },
                 "finalmask": {"quicParams": {"debug": False, "congestion": "bbr"}},
