@@ -689,15 +689,17 @@ def provision_mtproxy(
     the already-running container's secret so a re-run never rotates it (which
     would invalidate links already handed to users). Returns the ee-secret."""
     print(f"  [{host}] mtproxy: ensuring fake-TLS secret…")
+    # mtg v2 prints the fake-TLS secret in base64url (it decodes to 0xEE… + the
+    # camouflage domain), NOT the hex "ee…" form — both are valid in tg://proxy.
     secret = run(c,
         "docker inspect aegis-mtg --format '{{range .Args}}{{println .}}{{end}}' "
-        "2>/dev/null | grep -E '^ee[0-9a-f]+$' | head -1 || true",
+        "2>/dev/null | grep -E '^(ee[0-9a-f]+|[A-Za-z0-9_-]{30,})$' | head -1 || true",
         "existing mtg secret", timeout=30).strip()
     if not secret:
         secret = run(c, f"docker run --rm {MTPROXY_IMAGE} generate-secret {fake_tls_domain}",
                      "generate mtg secret", timeout=120).strip().splitlines()[-1].strip()
-    if not secret.startswith("ee"):
-        raise SystemExit(f"[{host}] mtg generate-secret returned no ee-secret: {secret!r}")
+    if not secret or len(secret) < 20 or " " in secret:
+        raise SystemExit(f"[{host}] mtg generate-secret returned an invalid secret: {secret!r}")
     print(f"  [{host}] mtproxy: running mtg on :{MTPROXY_PORT}…")
     run(c, "docker rm -f aegis-mtg 2>/dev/null || true; "
            f"docker run -d --name aegis-mtg --network host --restart unless-stopped "

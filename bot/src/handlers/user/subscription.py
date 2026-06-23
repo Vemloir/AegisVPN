@@ -84,6 +84,7 @@ async def render_subscription_screen(tg_id: int) -> tuple[str, InlineKeyboardMar
                 select(func.count(Server.id)).where(
                     Server.is_active == True,  # noqa: E712
                     Server.mtproxy_secret.isnot(None),
+                    Server.mtproxy_port.isnot(None),
                 )
             )
             has_mtproxy = (count or 0) > 0
@@ -174,7 +175,11 @@ async def cq_tg_proxy_open(call: CallbackQuery):
     async with async_session_maker() as session:
         result = await session.execute(
             select(Server)
-            .where(Server.is_active == True, Server.mtproxy_secret.isnot(None))  # noqa: E712
+            .where(
+                Server.is_active == True,  # noqa: E712
+                Server.mtproxy_secret.isnot(None),
+                Server.mtproxy_port.isnot(None),
+            )
             .order_by(Server.display_order, Server.name)
         )
         servers = result.scalars().all()
@@ -185,7 +190,9 @@ async def cq_tg_proxy_open(call: CallbackQuery):
         lines = [html.bold(t(language, "tg_proxy_title")), "", t(language, "tg_proxy_hint"), ""]
         for server in servers:
             label = f"{server.flag} {server.name}" if server.flag else server.name
-            link = f"https://t.me/proxy?server={server.host}&port=80&secret={server.mtproxy_secret}"
+            link = SubscriptionService.build_mtproxy_link(server)
+            if not link:
+                continue
             lines.append(f"{label}: {html.link(label, link)}")
         text = "\n".join(lines)
 

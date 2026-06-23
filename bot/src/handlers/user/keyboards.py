@@ -17,10 +17,10 @@ def subscription_keyboard(
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     if has_active_subscription:
-        top_row = [InlineKeyboardButton(text=t(language, "vpn_sub_btn"), callback_data="subscription_show_v2ray")]
+        # The Telegram-proxy button replaces the old "VPN-подписка" button, which
+        # only re-showed the subscription link already printed on this screen.
         if has_mtproxy:
-            top_row.append(InlineKeyboardButton(text=t(language, "tg_proxy_btn"), callback_data="tg_proxy_open"))
-        rows.append(top_row)
+            rows.append([InlineKeyboardButton(text=t(language, "tg_proxy_btn"), callback_data="tg_proxy_open")])
         rows.append([InlineKeyboardButton(text=t(language, "setup_guide"), callback_data="help_setup:v2ray")])
         if not is_lifetime:
             rows.append([InlineKeyboardButton(text=t(language, "renew_vpn"), callback_data="buy_plan")])
