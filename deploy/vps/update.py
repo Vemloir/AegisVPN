@@ -515,6 +515,18 @@ def provision_hysteria(
     print(f"  [{host}] hysteria: ensuring {REMOTE_HY2_DIR}")
     run(c, f"mkdir -p {REMOTE_HY2_DIR}", "mkdir hysteria")
 
+    # --- UDP socket buffers (quic-go / hysteria need multi-MB) ---
+    # The Linux default net.core.rmem_max/wmem_max is ~208 KB, far too small for
+    # QUIC: under bursts the kernel drops UDP at the socket buffer (manifests as
+    # client-side receive loss on the server->client path). hysteria's own docs
+    # require raising these to ~16 MB. Persist + apply, idempotently.
+    print(f"  [{host}] hysteria: setting UDP socket buffers to 16 MB (sysctl)")
+    run(c,
+        "printf 'net.core.rmem_max=16777216\\nnet.core.wmem_max=16777216\\n' "
+        "> /etc/sysctl.d/99-hysteria.conf && "
+        "sysctl -p /etc/sysctl.d/99-hysteria.conf >/dev/null 2>&1 || true",
+        "sysctl udp buffers", timeout=30)
+
     # --- self-signed cert (idempotent) ---
     key_pem = f"{REMOTE_HY2_DIR}/key.pem"
     cert_pem = f"{REMOTE_HY2_DIR}/cert.pem"
