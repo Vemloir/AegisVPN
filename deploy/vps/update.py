@@ -438,14 +438,19 @@ def resolve_geo_sni(host: str, override: str | None) -> str:
     return sni
 
 
-def provision_agent_env(c: paramiko.SSHClient, host: str) -> str:
+def provision_agent_env(
+    c: paramiko.SSHClient, host: str, geo_sni: str | None = None
+) -> str:
     """A) Set the per-node agent.env knobs for the multi-inbound + Hy2 stack.
 
-    Idempotent: rewrites only the keys we own and PRESERVES everything else —
-    crucially REALITY_SERVER_NAME / REALITY_DEST (per-node geo-SNI, set by a
-    separate step) and the reality keypairs. Generates HY2_STATS_SECRET once and
-    reuses it on re-run. Never sets a gRPC port (gRPC was dropped). Returns the
-    HY2_STATS_SECRET so the same value flows into the rendered Hy2 config.
+    Idempotent: rewrites only the keys we own and PRESERVES the reality keypairs.
+    When `geo_sni` is given it becomes the REALITY serverName/dest, but ONLY for an
+    un-geo'd / fresh node (REALITY_SERVER_NAME empty or its first entry is exactly
+    gateway.icloud.com) — an already-provisioned node keeps its existing
+    REALITY_SERVER_NAME / REALITY_DEST untouched (incl. any icloud migration
+    alias), so a re-run never disturbs live REALITY. Generates HY2_STATS_SECRET
+    once and reuses it on re-run. Never sets a gRPC port (gRPC was dropped).
+    Returns the HY2_STATS_SECRET so the same value flows into the Hy2 config.
     """
     sftp = get_sftp(c)
     if not _remote_exists(c, REMOTE_AGENT_ENV):
@@ -468,6 +473,19 @@ def provision_agent_env(c: paramiko.SSHClient, host: str) -> str:
     # Defensively make sure no stale gRPC port lingers (gRPC is dropped).
     env.pop("XRAY_GRPC_PORT", None)
     env.pop("XRAY_GRPC_SERVICE", None)
+
+    # Geo-SNI -> REALITY, but ONLY for an un-geo'd node (empty or the bare
+    # gateway.icloud.com default). An already-geo'd node is left exactly as-is so
+    # a re-run never rewrites live REALITY or strips a migration alias.
+    if geo_sni:
+        current = env.get("REALITY_SERVER_NAME", "").strip()
+        first = current.split(",")[0].strip() if current else ""
+        if not first or first == "gateway.icloud.com":
+            env["REALITY_SERVER_NAME"] = geo_sni
+            env["REALITY_DEST"] = f"{geo_sni}:443"
+            print(f"  [{host}] agent.env: REALITY_SERVER_NAME={geo_sni} (set on fresh node)")
+        else:
+            print(f"  [{host}] agent.env: REALITY preserved (already geo'd: {first})")
 
     print(f"  [{host}] agent.env: XRAY_TCP_PORT={XRAY_TCP_PORT} "
           f"XRAY_CONN_IDLE={XRAY_CONN_IDLE} HY2_ENABLED=true "
@@ -614,12 +632,13 @@ def provision_code(c: paramiko.SSHClient, host: str) -> None:
         "xray reload", timeout=120)
 
 
-def renew_hy2_cert_acme(main_c: paramiko.SSHClient) -> tuple[str, str]:
+def renew_hy2_cert_acme(main_c: paramiko.SSHClient) -> tuple[str, str, str]:
     """Run acme.sh --cron on the ACME host (renews the shared Hy2 Let's Encrypt
     cert if due, via the DuckDNS DNS-01 creds acme.sh saved at issuance), then
-    return (cert_b64, key_b64) of the current fullchain + key. Domain-agnostic:
-    globs the single *_ecc cert dir so this (public) script never hardcodes the
-    operator's DuckDNS domain."""
+    return (cert_b64, key_b64, domain) of the current fullchain + key. Domain-
+    agnostic: globs the single *_ecc cert dir so this (public) script never
+    hardcodes the operator's DuckDNS domain; `domain` (the cert CN, used as the
+    bot's hy2_sni) is that dir's basename minus the trailing ``_ecc``."""
     print("  [acme] acme.sh --cron (renew if due)…")
     run(main_c,
         f"docker run --rm -v {REMOTE_ACME_DIR}:/acme.sh {ACME_IMAGE} "
@@ -630,14 +649,17 @@ def renew_hy2_cert_acme(main_c: paramiko.SSHClient) -> tuple[str, str]:
     if not cdir:
         raise SystemExit(
             f"[acme] no *_ecc cert dir under {REMOTE_ACME_DIR} — was the cert issued?")
+    domain = posixpath.basename(cdir)
+    if domain.endswith("_ecc"):
+        domain = domain[: -len("_ecc")]
     cert_b64 = run(main_c, f"base64 -w0 {cdir}/fullchain.cer", "read cert", timeout=30).strip()
     key_b64 = run(main_c, f"base64 -w0 {cdir}/*.key", "read key", timeout=30).strip()
     if not cert_b64 or not key_b64:
         raise SystemExit(f"[acme] cert/key missing under {cdir}")
     enddate = run(main_c, f"openssl x509 -in {cdir}/fullchain.cer -noout -enddate 2>/dev/null",
                   "cert enddate", timeout=30).strip()
-    print(f"  [acme] current cert {enddate}")
-    return cert_b64, key_b64
+    print(f"  [acme] current cert for {domain} {enddate}")
+    return cert_b64, key_b64, domain
 
 
 def install_hy2_cert(c: paramiko.SSHClient, host: str, cert_b64: str, key_b64: str) -> None:
@@ -711,7 +733,7 @@ def sync_bot_db_mtproxy(
 
 
 def sync_bot_db_hy2(
-    main_c: paramiko.SSHClient, host: str, obfs_password: str
+    main_c: paramiko.SSHClient, host: str, obfs_password: str, hy2_sni: str
 ) -> None:
     """D) Mirror this node's Hy2 + tcp-inbound config into its bot DB row.
 
@@ -726,6 +748,7 @@ def sync_bot_db_hy2(
         "from src.core.database import async_session_maker\n"
         f"HOST = {host!r}\n"
         f"OBFS = {obfs_password!r}\n"
+        f"SNI = {hy2_sni!r}\n"
         f"TCP_PORT = {XRAY_TCP_PORT}\n"
         f"HY2_PORT = {HY2_LISTEN_PORT}\n"
         f"HOP_START = {HY2_HOP_START}\n"
@@ -737,9 +760,9 @@ def sync_bot_db_hy2(
         "        res = await s.execute(text('UPDATE servers SET '\n"
         "            'tcp_port=:tcp, hy2_enabled=1, hy2_port=:hp, '\n"
         "            'hy2_hop_start=:hs, hy2_hop_end=:he, hy2_up=:up, '\n"
-        "            'hy2_down=:down, hy2_obfs_password=:obfs WHERE host=:h'),\n"
+        "            'hy2_down=:down, hy2_obfs_password=:obfs, hy2_sni=:sni WHERE host=:h'),\n"
         "            {'tcp': TCP_PORT, 'hp': HY2_PORT, 'hs': HOP_START, 'he': HOP_END,\n"
-        "             'up': UP, 'down': DOWN, 'obfs': OBFS, 'h': HOST})\n"
+        "             'up': UP, 'down': DOWN, 'obfs': OBFS, 'sni': SNI, 'h': HOST})\n"
         "        await s.commit()\n"
         "        print('rows updated:', res.rowcount)\n"
         "        r = await s.execute(text('SELECT id, name, host, tcp_port, '\n"
@@ -819,14 +842,17 @@ def provision_firewall(c: paramiko.SSHClient, host: str) -> None:
 
 def provision_stack(
     c: paramiko.SSHClient, host: str, geo_sni: str,
+    cert_b64: str, key_b64: str,
     with_mtproxy: bool = False,
 ) -> str:
     """Orchestrate A->C on the node. Returns the OBFS_PASSWORD for the DB sync.
 
-    Order matters: agent.env first (so the stats secret exists), then hysteria
-    (renders config with that secret), then code (recreates agent -> rebuilds
-    the multi-inbound config including the :2053 tcp+VISION inbound, then reloads
-    xray). The bot DB sync (D) runs separately on the main host.
+    Order matters: agent.env first (geo-SNI + stats secret), then hysteria
+    (renders config with that secret), then install the REAL shared LE cert
+    (cert_b64/key_b64 — overwrites provision_hysteria's self-signed placeholder so
+    real clients accept it), then code (recreates agent -> rebuilds the
+    multi-inbound config incl. the :2053 tcp+VISION inbound, then reloads xray).
+    The bot DB sync (D) runs separately on the main host.
     """
     # Upload the compose FIRST — provision_hysteria's `docker compose up -d
     # hysteria` (step B) needs the hysteria service def + the tobyxdd image
@@ -836,11 +862,13 @@ def provision_stack(
     print(f"[provision-stack {host}] === uploading docker-compose.yml ===")
     upload(c, COMPOSE_LOCAL, REMOTE_COMPOSE)
     print(f"[provision-stack {host}] === A) agent.env ===")
-    stats_secret = provision_agent_env(c, host)
+    stats_secret = provision_agent_env(c, host, geo_sni)
     print(f"[provision-stack {host}] === firewall (open ports if ufw active) ===")
     provision_firewall(c, host)
     print(f"[provision-stack {host}] === B) hysteria ===")
     obfs_password = provision_hysteria(c, host, geo_sni, stats_secret)
+    print(f"[provision-stack {host}] === LE cert (install shared cert, replaces self-signed) ===")
+    install_hy2_cert(c, host, cert_b64, key_b64)
     if with_mtproxy:
         print(f"[provision-stack {host}] === (mtproxy) reserved — run "
               f"`--mtproxy SERVER_ID:IP:PASSWORD` separately ===")
@@ -1020,6 +1048,16 @@ def main() -> None:
             mc.close()
 
     if args.provision_stack:
+        # Fetch the shared Hy2 LE cert ONCE from the ACME host (= main_host) before
+        # the per-node loop; provision_stack installs it on each node so a fresh
+        # node serves the REAL cert (not provision_hysteria's self-signed one). The
+        # cert's domain becomes the bot DB hy2_sni so hy2_capable turns True.
+        print(f"[provision-stack] fetching shared Hy2 LE cert from ACME host {args.main_host}…")
+        acme_c = connect(args.main_host, args.main_password)
+        try:
+            cert_b64, key_b64, hy2_domain = renew_hy2_cert_acme(acme_c)
+        finally:
+            acme_c.close()
         # (ip, obfs_password) pairs to mirror into the bot DB after the per-node
         # provisioning succeeds. The DB write is deferred to one main-host
         # session so a partial node failure never half-writes the DB.
@@ -1033,7 +1071,8 @@ def main() -> None:
             print(f"[provision-stack {ip}] connecting… (geo-SNI {geo_sni})")
             c = connect(ip, password)
             try:
-                obfs = provision_stack(c, ip, geo_sni, with_mtproxy=args.with_mtproxy)
+                obfs = provision_stack(c, ip, geo_sni, cert_b64, key_b64,
+                                       with_mtproxy=args.with_mtproxy)
                 stack_results.append((ip, obfs))
             finally:
                 c.close()
@@ -1042,7 +1081,7 @@ def main() -> None:
         mc = connect(args.main_host, args.main_password)
         try:
             for ip, obfs in stack_results:
-                sync_bot_db_hy2(mc, ip, obfs)
+                sync_bot_db_hy2(mc, ip, obfs, hy2_domain)
         finally:
             mc.close()
 
@@ -1050,7 +1089,7 @@ def main() -> None:
         print(f"[renew-hy2] connecting to ACME host {args.main_host}…")
         mc = connect(args.main_host, args.main_password)
         try:
-            cert_b64, key_b64 = renew_hy2_cert_acme(mc)
+            cert_b64, key_b64, _ = renew_hy2_cert_acme(mc)
         finally:
             mc.close()
         for node_str in args.nodes_list:

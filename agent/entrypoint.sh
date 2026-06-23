@@ -45,8 +45,12 @@ if [ ! -f "$ENV_FILE" ]; then
     XRAY_PORT=${XRAY_PORT:-443}
     XRAY_TCP_PORT=${XRAY_TCP_PORT:-9445}
     XRAY_NETWORK=${XRAY_NETWORK:-tcp}
-    REALITY_DEST=${REALITY_DEST:-"gateway.icloud.com:443"}
-    REALITY_SERVER_NAME=${REALITY_SERVER_NAME:-"gateway.icloud.com"}
+    # No gateway.icloud.com default — a node must be given a real geo-matched SNI
+    # (add_server.py --reality-server-name / update.py --provision-stack --geo-sni).
+    # An empty value surfaces a missing-SNI misconfig instead of silently fronting
+    # an implausible Apple domain (which РКН active-probes).
+    REALITY_DEST=${REALITY_DEST:-""}
+    REALITY_SERVER_NAME=${REALITY_SERVER_NAME:-""}
     HOST_IP=${HOST_IP:-$(curl -s https://api.ipify.org || echo "127.0.0.1")}
 XHTTP_PATH=${XHTTP_PATH:-"/"}
 # "auto" lets the SERVER accept packet-up AND stream-up/stream-one clients at

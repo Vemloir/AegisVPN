@@ -58,8 +58,13 @@ def parse_args() -> argparse.Namespace:
                    help="IP/hostname the client connects to (use bare IP, not sslip.io)")
     p.add_argument("--agent-url", help="Defaults to http://<new-host>:8444")
     p.add_argument("--xray-port", default="443")
-    p.add_argument("--reality-dest", default="gateway.icloud.com:443")
-    p.add_argument("--reality-server-name", default="gateway.icloud.com")
+    p.add_argument("--reality-dest", required=True,
+                   help="REALITY dest, e.g. csc.fi:443 — a geo-matched, China-reachable "
+                        "TLS1.3 site. NO default (gateway.icloud.com is implausible on a "
+                        "datacenter IP and gets РКН-probed).")
+    p.add_argument("--reality-server-name", required=True,
+                   help="REALITY serverName / SNI, e.g. csc.fi — the geo-SNI for this "
+                        "node's location. No default.")
     p.add_argument("--xray-network", default="xhttp", choices=["xhttp", "tcp"],
                    help="Transport protocol for the primary inbound (default: xhttp)")
     p.add_argument("--no-warp", action="store_true",
