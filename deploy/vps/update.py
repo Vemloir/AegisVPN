@@ -797,6 +797,26 @@ def verify_stack(c: paramiko.SSHClient, host: str) -> None:
         raise SystemExit(f"[{host}] expected >=2 vless inbounds, found {n}")
 
 
+def provision_firewall(c: paramiko.SSHClient, host: str) -> None:
+    """Open the stack's inbound ports when a UFW firewall is active. Some
+    providers (e.g. HOSTKEY) ship UFW with a default-DROP policy, which silently
+    blocks the tcp+VISION inbound (XRAY_TCP_PORT/tcp) and the Hysteria2 listener
+    (HY2_LISTEN_PORT/udp) even though xray/hysteria are bound — the symptom is
+    "only xhttp works" / "Hy2 N/D". No-op when ufw is inactive/absent (the other
+    providers leave INPUT ACCEPT)."""
+    status = run(c, "ufw status 2>/dev/null | head -1 || true", "ufw status", timeout=30)
+    if "Status: active" not in status:
+        print(f"  [{host}] firewall: ufw inactive/absent — nothing to open")
+        return
+    print(f"  [{host}] firewall: ufw active — opening {XRAY_TCP_PORT}/tcp + "
+          f"{HY2_LISTEN_PORT}/udp")
+    run(c, f"ufw allow {XRAY_TCP_PORT}/tcp >/dev/null 2>&1 || true; "
+           f"ufw allow {HY2_LISTEN_PORT}/udp >/dev/null 2>&1 || true; "
+           f"ufw reload >/dev/null 2>&1 || true; "
+           f"ufw status | grep -E '{XRAY_TCP_PORT}|{HY2_LISTEN_PORT}' | head -4",
+        "ufw allow", timeout=60)
+
+
 def provision_stack(
     c: paramiko.SSHClient, host: str, geo_sni: str,
     with_mtproxy: bool = False,
@@ -817,6 +837,8 @@ def provision_stack(
     upload(c, COMPOSE_LOCAL, REMOTE_COMPOSE)
     print(f"[provision-stack {host}] === A) agent.env ===")
     stats_secret = provision_agent_env(c, host)
+    print(f"[provision-stack {host}] === firewall (open ports if ufw active) ===")
+    provision_firewall(c, host)
     print(f"[provision-stack {host}] === B) hysteria ===")
     obfs_password = provision_hysteria(c, host, geo_sni, stats_secret)
     if with_mtproxy:
