@@ -64,11 +64,12 @@ def test_has_alt_transports_true_for_hy2_only_node():
 # --- resolve_protocol --------------------------------------------------------
 
 
-def test_resolve_protocol_hy2_only_on_capable_server():
-    assert SubscriptionService.resolve_protocol(_greece(), "hy2") == "hy2"
-    # A misconfigured node (no SNI) falls back to vless.
+def test_resolve_protocol_always_vless_hy2_disabled():
+    # Hy2 is disabled fleet-wide: EVERY input resolves to vless, even a stored
+    # "hy2" pref on a fully-capable node (emission is gated off; server config
+    # is left intact for a possible future re-enable).
+    assert SubscriptionService.resolve_protocol(_greece(), "hy2") == "vless"
     assert SubscriptionService.resolve_protocol(_greece(hy2_sni=None), "hy2") == "vless"
-    # vless / unknown always resolve to vless.
     assert SubscriptionService.resolve_protocol(_greece(), "vless") == "vless"
     assert SubscriptionService.resolve_protocol(_greece(), None) == "vless"
 
@@ -175,41 +176,6 @@ async def _seed_hy2_sub(*, capable: bool) -> str:
         )
         await session.commit()
         return sub.sub_token
-
-
-async def test_link_list_carries_hysteria2_for_hy2_picked_location():
-    token = await _seed_hy2_sub(capable=True)
-    async with async_session_maker() as session:
-        encoded = await SubscriptionService.get_subscription_vless_links(session, token)
-    body = base64.b64decode(encoded).decode()
-    # The Hy2-picked location is delivered as a hysteria2:// URI (sni only).
-    assert body.startswith("hysteria2://")
-    assert ":443?" in body and "sni=" in body
-    assert "obfs" not in body
-
-
-async def test_xray_json_path_emits_hysteria_outbound_when_hy2_present():
-    token = await _seed_hy2_sub(capable=True)
-    async with async_session_maker() as session:
-        kind, body = await SubscriptionService.build_xray_json_subscription(session, token)
-    # A Happ/v2rayTun user who picked Hy2 gets a JSON config (so the baked-in
-    # routing survives), with the Hy2 location as the fork's hysteria outbound:
-    # bare QUIC on :443, BBR, no salamander obfs.
-    assert kind == "json"
-    configs = json.loads(body)
-    assert len(configs) == 1
-    proxy = next(o for o in configs[0]["outbounds"] if o["tag"] == "proxy")
-    assert proxy["protocol"] == "hysteria"
-    assert proxy["settings"]["version"] == 2
-    ss = proxy["streamSettings"]
-    assert ss["network"] == "hysteria"
-    assert ss["hysteriaSettings"]["auth"]  # the device/sub uuid as the Hy2 auth
-    assert ss["finalmask"]["quicParams"]["congestion"] == "bbr"
-    assert "udp" not in ss["finalmask"]  # no salamander obfs
-    assert ss["tlsSettings"]["alpn"] == ["h3"]
-    assert "allowInsecure" not in ss["tlsSettings"]  # real LE cert -> validate
-    # The whole point: the baked-in routing is preserved (not a flat link list).
-    assert configs[0]["routing"]["rules"]
 
 
 async def test_misconfigured_hy2_falls_back_not_emitted_as_hy2():

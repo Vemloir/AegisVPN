@@ -112,15 +112,11 @@ class SubscriptionService:
 
     @staticmethod
     def resolve_protocol(server: Server, protocol: str | None) -> str:
-        """The concrete protocol to emit for a location. ``hy2`` only resolves to
-        Hy2 when the server is actually Hy2-capable (enabled + port + obfs
-        password); otherwise (a stale pref, a misconfigured node, or any future
-        protocol) it falls back to vless so a broken link can never ship."""
-        if (
-            protocol == SubscriptionService.PROTOCOL_HY2
-            and getattr(server, "hy2_capable", False)
-        ):
-            return SubscriptionService.PROTOCOL_HY2
+        """The concrete protocol to emit for a location. Hysteria2 is disabled
+        fleet-wide (RU wired ISPs drop the QUIC data streams — confirmed against
+        third-party Hy2 too), so EVERY location resolves to vless, regardless of a
+        stored ``hy2`` preference. The Hy2 server config + capability fields are
+        left intact for a possible future re-enable; only emission is gated off."""
         return SubscriptionService.PROTOCOL_VLESS
 
     @staticmethod
