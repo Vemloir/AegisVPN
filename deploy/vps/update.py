@@ -391,7 +391,9 @@ HY2_HOP_END = 50000
 HY2_BW_UP = "100 mbps"      # honest fixed Brutal rate (the tuned Greece value)
 HY2_BW_DOWN = "100 mbps"
 HY2_STATS_URL = "http://127.0.0.1:9999"
-MTPROXY_PORT = 8765         # RESERVED for the future mtg MTProto proxy
+MTPROXY_PORT = 2083         # Cloudflare-HTTPS-alt port: RU mobile (Megafon ТСПУ)
+                            # lets these through (like 2053), unlike high random
+                            # ports (8765 was blocked on mobile)
 
 REMOTE_HY2_DIR = "/root/aegis/deploy/vps/data/hysteria"
 REMOTE_HY2_CONFIG = f"{REMOTE_HY2_DIR}/config.yaml"
