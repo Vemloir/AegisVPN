@@ -27,6 +27,10 @@ class Server(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     display_order: Mapped[int] = mapped_column(Integer, default=0)
     mtproxy_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # MTProto-proxy (fake-TLS mtg) listen port. Together with mtproxy_secret it
+    # makes the node MTProxy-capable; both are operator-set (provisioned by
+    # deploy/vps/update.py --mtproxy), never shipped in the migration.
+    mtproxy_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Alternative VLESS+REALITY transport port on the SAME reality keypair
     # (public_key / short_id). NULL means the node serves xhttp/443 only and
     # offers no transport choice. Only the Greece node carries this today.
@@ -73,6 +77,13 @@ class Server(Base):
             and self.hy2_obfs_password
             and self.hy2_sni
         )
+
+    @property
+    def mtproxy_capable(self) -> bool:
+        """True when the node can hand out an MTProto-proxy link: both the mtg
+        fake-TLS secret and the listen port are provisioned (operator-set, never
+        in the migration). Falls back to no proxy link until both are present."""
+        return bool(self.mtproxy_secret and self.mtproxy_port)
 
     subscription_servers: Mapped[list["SubscriptionServer"]] = relationship(
         back_populates="server", cascade="all, delete-orphan"

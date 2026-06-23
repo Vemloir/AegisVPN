@@ -397,6 +397,17 @@ REMOTE_HY2_DIR = "/root/aegis/deploy/vps/data/hysteria"
 REMOTE_HY2_CONFIG = f"{REMOTE_HY2_DIR}/config.yaml"
 HY2_TEMPLATE_LOCAL = ROOT / "deploy/vps/hysteria/config.template.yaml"
 
+# Hy2 TLS cert renewal (Let's Encrypt via acme.sh on the ACME host). The domain
+# is never hardcoded here (public repo): the cert dir is discovered by globbing
+# the single *_ecc directory acme.sh created.
+REMOTE_ACME_DIR = "/root/acme"
+ACME_IMAGE = "neilpang/acme.sh"
+
+# Telegram MTProto proxy (fake-TLS mtg). The camouflage SNI is baked into the
+# ee-secret; a reachable, unblocked big-CDN host is the goal. Overridable.
+MTPROXY_IMAGE = "nineseconds/mtg:2"
+MTPROXY_FAKE_TLS_DOMAIN = "www.cloudflare.com"
+
 
 def _gen_secret(nchars: int = 32) -> str:
     """url-safe ~`nchars`-char secret, generated locally (never logged in full)."""
@@ -603,28 +614,100 @@ def provision_code(c: paramiko.SSHClient, host: str) -> None:
         "xray reload", timeout=120)
 
 
+def renew_hy2_cert_acme(main_c: paramiko.SSHClient) -> tuple[str, str]:
+    """Run acme.sh --cron on the ACME host (renews the shared Hy2 Let's Encrypt
+    cert if due, via the DuckDNS DNS-01 creds acme.sh saved at issuance), then
+    return (cert_b64, key_b64) of the current fullchain + key. Domain-agnostic:
+    globs the single *_ecc cert dir so this (public) script never hardcodes the
+    operator's DuckDNS domain."""
+    print("  [acme] acme.sh --cron (renew if due)…")
+    run(main_c,
+        f"docker run --rm -v {REMOTE_ACME_DIR}:/acme.sh {ACME_IMAGE} "
+        f"--cron --home /acme.sh 2>&1 | tail -6",
+        "acme cron", timeout=300)
+    cdir = run(main_c, f"ls -d {REMOTE_ACME_DIR}/*_ecc 2>/dev/null | head -1",
+               "find cert dir", timeout=30).strip()
+    if not cdir:
+        raise SystemExit(
+            f"[acme] no *_ecc cert dir under {REMOTE_ACME_DIR} — was the cert issued?")
+    cert_b64 = run(main_c, f"base64 -w0 {cdir}/fullchain.cer", "read cert", timeout=30).strip()
+    key_b64 = run(main_c, f"base64 -w0 {cdir}/*.key", "read key", timeout=30).strip()
+    if not cert_b64 or not key_b64:
+        raise SystemExit(f"[acme] cert/key missing under {cdir}")
+    enddate = run(main_c, f"openssl x509 -in {cdir}/fullchain.cer -noout -enddate 2>/dev/null",
+                  "cert enddate", timeout=30).strip()
+    print(f"  [acme] current cert {enddate}")
+    return cert_b64, key_b64
+
+
+def install_hy2_cert(c: paramiko.SSHClient, host: str, cert_b64: str, key_b64: str) -> None:
+    """Write the LE cert + key into the node's hysteria dir (verifying the key
+    matches the cert) and restart hysteria so it serves the fresh cert."""
+    run(c, f"echo {cert_b64} | base64 -d > {REMOTE_HY2_DIR}/cert.pem", "write cert", timeout=30)
+    run(c, f"echo {key_b64} | base64 -d > {REMOTE_HY2_DIR}/key.pem && "
+           f"chmod 600 {REMOTE_HY2_DIR}/key.pem", "write key", timeout=30)
+    match = run(c,
+        f"openssl x509 -in {REMOTE_HY2_DIR}/cert.pem -noout -pubkey > /tmp/_aegcp 2>/dev/null; "
+        f"openssl ec -in {REMOTE_HY2_DIR}/key.pem -pubout > /tmp/_aegkp 2>/dev/null; "
+        f"if diff -q /tmp/_aegcp /tmp/_aegkp >/dev/null 2>&1; then echo MATCH; else echo MISMATCH; fi; "
+        f"rm -f /tmp/_aegcp /tmp/_aegkp", "cert/key match", timeout=30).strip()
+    if "MATCH" not in match:
+        raise SystemExit(f"[{host}] cert/key mismatch after install — aborting (NOT restarting)")
+    run(c, "cd /root/aegis/deploy/vps && docker compose restart hysteria 2>&1 | tail -1",
+        "restart hysteria", timeout=120)
+    print(f"  [{host}] cert installed + hysteria restarted")
+
+
 def provision_mtproxy(
-    c: paramiko.SSHClient, host: str, main_c: paramiko.SSHClient | None = None,
-    server_id: int = 0,
-) -> str | None:
-    """(STUB) Future Telegram MTProto proxy hook.
+    c: paramiko.SSHClient, host: str, main_c: paramiko.SSHClient, server_id: int,
+    fake_tls_domain: str = MTPROXY_FAKE_TLS_DOMAIN,
+) -> str:
+    """Provision an mtg fake-TLS MTProto proxy on the node (reserved :8765) and
+    mirror its secret + port into the bot DB row `server_id`. Idempotent: reuses
+    the already-running container's secret so a re-run never rotates it (which
+    would invalidate links already handed to users). Returns the ee-secret."""
+    print(f"  [{host}] mtproxy: ensuring fake-TLS secret…")
+    secret = run(c,
+        "docker inspect aegis-mtg --format '{{range .Args}}{{println .}}{{end}}' "
+        "2>/dev/null | grep -E '^ee[0-9a-f]+$' | head -1 || true",
+        "existing mtg secret", timeout=30).strip()
+    if not secret:
+        secret = run(c, f"docker run --rm {MTPROXY_IMAGE} generate-secret {fake_tls_domain}",
+                     "generate mtg secret", timeout=120).strip().splitlines()[-1].strip()
+    if not secret.startswith("ee"):
+        raise SystemExit(f"[{host}] mtg generate-secret returned no ee-secret: {secret!r}")
+    print(f"  [{host}] mtproxy: running mtg on :{MTPROXY_PORT}…")
+    run(c, "docker rm -f aegis-mtg 2>/dev/null || true; "
+           f"docker run -d --name aegis-mtg --network host --restart unless-stopped "
+           f"{MTPROXY_IMAGE} simple-run 0.0.0.0:{MTPROXY_PORT} {secret} 2>&1 | tail -1",
+        "run mtg", timeout=120)
+    sync_bot_db_mtproxy(main_c, server_id, secret, MTPROXY_PORT)
+    print(f"  [{host}] mtproxy up + DB synced (server {server_id}); "
+          f"open UDP/TCP {MTPROXY_PORT} in the node firewall if one is active")
+    return secret
 
-    The compose file already carries an `mtg` service under the `mtproxy`
-    profile and the port plan reserves :8765 (MTPROXY_PORT). When this is
-    implemented it should mirror provision_hysteria's shape:
 
-      * generate/reuse an mtg secret (idempotent — reuse from an existing
-        data/mtg config or the bot DB so re-runs don't rotate it),
-      * render an mtg config into ./data/mtg/,
-      * `docker compose --profile mtproxy up -d mtg`,
-      * write the secret into the bot DB (servers.mtproxy_secret) via main_c.
-
-    Kept as a no-op stub so --provision-stack --with-mtproxy already parses and
-    the wiring is one function-body away. See setup_mtproxy() for the existing
-    one-off MTProxy helper this will supersede.
-    """
-    print(f"  [{host}] mtproxy: not yet implemented (reserved port {MTPROXY_PORT}) — skipping")
-    return None
+def sync_bot_db_mtproxy(
+    main_c: paramiko.SSHClient, server_id: int, secret: str, port: int
+) -> None:
+    """Mirror an mtg secret + port into the bot DB (servers row `server_id`)."""
+    py = (
+        "import asyncio\n"
+        "from sqlalchemy import text\n"
+        "from src.core.database import async_session_maker\n"
+        f"SID={int(server_id)}\nSECRET={secret!r}\nPORT={int(port)}\n"
+        "async def q():\n"
+        "    async with async_session_maker() as s:\n"
+        "        r=await s.execute(text('UPDATE servers SET mtproxy_secret=:sec, "
+        "mtproxy_port=:p WHERE id=:i'), {'sec':SECRET,'p':PORT,'i':SID})\n"
+        "        await s.commit(); print('rows updated:', r.rowcount)\n"
+        "asyncio.run(q())\n"
+    )
+    out = run(main_c, "docker exec -i aegis-bot python3 <<'PYEOF'\n" + py + "PYEOF\n",
+              f"db mtproxy sync {server_id}", timeout=60)
+    print("   ", out.strip())
+    if "rows updated: 0" in out:
+        raise SystemExit(f"[mtproxy] no servers row id={server_id} — DB NOT updated")
 
 
 def sync_bot_db_hy2(
@@ -737,8 +820,8 @@ def provision_stack(
     print(f"[provision-stack {host}] === B) hysteria ===")
     obfs_password = provision_hysteria(c, host, geo_sni, stats_secret)
     if with_mtproxy:
-        print(f"[provision-stack {host}] === (mtproxy) ===")
-        provision_mtproxy(c, host)
+        print(f"[provision-stack {host}] === (mtproxy) reserved — run "
+              f"`--mtproxy SERVER_ID:IP:PASSWORD` separately ===")
     print(f"[provision-stack {host}] === C) code + restart ===")
     provision_code(c, host)
     print(f"[provision-stack {host}] === verify ===")
@@ -807,8 +890,15 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--mtproxy", action="store_true",
-        help="Set up MTProxy (Telegram proxy, port 80) on --node targets. "
-             "Requires --main-password and --node SERVER_ID:IP:PASSWORD.",
+        help=f"Provision a fake-TLS MTProto proxy (mtg) on the reserved port "
+             f"{MTPROXY_PORT} on --node targets and mirror its secret+port into "
+             "the bot DB. Requires --main-password and --node SERVER_ID:IP:PASSWORD.",
+    )
+    p.add_argument(
+        "--renew-hy2-cert", action="store_true",
+        help="Renew the shared Hy2 Let's Encrypt cert on the ACME host "
+             "(--main-host) via acme.sh --cron, then install it on every --node "
+             "(IP:PASSWORD) and restart hysteria. Run before the cert expires.",
     )
     p.add_argument(
         "--split-migrate", action="store_true",
@@ -840,9 +930,12 @@ def main() -> None:
     args = parse_args()
 
     if not any((args.bot, args.nodes, args.mtproxy, args.set_network,
-                args.split_migrate, args.provision_stack)):
+                args.split_migrate, args.provision_stack, args.renew_hy2_cert)):
         raise SystemExit("Specify --bot, --nodes, --mtproxy, --set-network, "
-                         "--split-migrate, and/or --provision-stack")
+                         "--split-migrate, --provision-stack, and/or --renew-hy2-cert")
+    if args.renew_hy2_cert and (not args.main_password or not args.nodes_list):
+        raise SystemExit("--renew-hy2-cert requires --main-password (ACME host) "
+                         "and at least one --node IP:PASSWORD to install onto")
     if args.bot and not args.main_password:
         raise SystemExit("--bot requires --main-password")
     if args.provision_stack and not args.nodes_list:
@@ -931,6 +1024,25 @@ def main() -> None:
         finally:
             mc.close()
 
+    if args.renew_hy2_cert:
+        print(f"[renew-hy2] connecting to ACME host {args.main_host}…")
+        mc = connect(args.main_host, args.main_password)
+        try:
+            cert_b64, key_b64 = renew_hy2_cert_acme(mc)
+        finally:
+            mc.close()
+        for node_str in args.nodes_list:
+            parts = node_str.split(":")
+            if len(parts) < 2:
+                raise SystemExit(f"Bad --node format (expected IP:PASSWORD): {node_str}")
+            ip, password = parts[0], ":".join(parts[1:])
+            print(f"[renew-hy2 {ip}] installing cert…")
+            c = connect(ip, password)
+            try:
+                install_hy2_cert(c, ip, cert_b64, key_b64)
+            finally:
+                c.close()
+
     main_c: paramiko.SSHClient | None = None
 
     if args.nodes or args.mtproxy:
@@ -956,7 +1068,7 @@ def main() -> None:
                 if args.mtproxy:
                     if main_c is None:
                         main_c = connect(args.main_host, args.main_password)
-                    setup_mtproxy(c, ip, main_c, server_id)
+                    provision_mtproxy(c, ip, main_c, server_id)
             finally:
                 c.close()
 

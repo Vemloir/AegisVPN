@@ -181,6 +181,21 @@ class SubscriptionService:
         return urlunsplit(("hysteria2", netloc, "", urlencode(query), fragment))
 
     @staticmethod
+    def build_mtproxy_link(server: Server) -> str | None:
+        """A ``https://t.me/proxy?...`` MTProto-proxy link for an
+        ``mtproxy_capable`` server, or None. The fake-TLS (``ee``) secret already
+        encodes the camouflage domain the mtg server fronts, so the link only
+        needs the node host, the listen port, and that secret."""
+        if not getattr(server, "mtproxy_capable", False):
+            return None
+        query = {
+            "server": server.host,
+            "port": server.mtproxy_port,
+            "secret": server.mtproxy_secret,
+        }
+        return urlunsplit(("https", "t.me", "/proxy", urlencode(query), ""))
+
+    @staticmethod
     async def get_transport_pref(
         session: AsyncSession, user_id: int, server_id: int
     ) -> tuple[str, str]:

@@ -69,6 +69,8 @@ MIGRATIONS: dict[str, list[Column]] = {
         ),
         Column("display_order", "INTEGER DEFAULT 0", "INTEGER DEFAULT 0"),
         Column("mtproxy_secret", "VARCHAR(64)", "VARCHAR(64)"),
+        # MTProto-proxy listen port. No post_sql: operator-set with the secret.
+        Column("mtproxy_port", "INTEGER", "INTEGER"),
         # Alternative VLESS+REALITY transport port (same reality keypair). NULL =
         # xhttp/443 only, no transport choice. ONLY the Greece node is backfilled
         # here; every other server stays NULL. This is the single allowed
