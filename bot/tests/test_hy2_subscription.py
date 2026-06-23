@@ -6,6 +6,7 @@ hysteria2:// entry instead of having it silently dropped).
 """
 
 import base64
+import json
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
@@ -178,15 +179,26 @@ async def test_link_list_carries_hysteria2_for_hy2_picked_location():
     assert "obfs=salamander" in body
 
 
-async def test_xray_json_path_downgrades_to_links_when_hy2_present():
+async def test_xray_json_path_emits_hysteria_outbound_when_hy2_present():
     token = await _seed_hy2_sub(capable=True)
     async with async_session_maker() as session:
         kind, body = await SubscriptionService.build_xray_json_subscription(session, token)
-    # A Happ/v2rayTun user who picked Hy2 must still get a usable hysteria2://
-    # entry: the JSON path downgrades the WHOLE sub to a base64 link list.
-    assert kind == "links"
-    decoded = base64.b64decode(body).decode()
-    assert decoded.startswith("hysteria2://")
+    # A Happ/v2rayTun user who picked Hy2 now gets a JSON config (so the baked-in
+    # routing survives), with the Hy2 location as the fork's hysteria outbound —
+    # exactly the config those clients build from the hysteria2:// link themselves.
+    assert kind == "json"
+    configs = json.loads(body)
+    assert len(configs) == 1
+    proxy = next(o for o in configs[0]["outbounds"] if o["tag"] == "proxy")
+    assert proxy["protocol"] == "hysteria"
+    assert proxy["settings"]["version"] == 2
+    ss = proxy["streamSettings"]
+    assert ss["network"] == "hysteria"
+    assert ss["finalmask"]["udp"][0]["type"] == "salamander"
+    assert ss["hysteriaSettings"]["auth"]  # the device/sub uuid as the Hy2 auth
+    assert "allowInsecure" not in ss["tlsSettings"]  # real LE cert -> validate
+    # The whole point: the baked-in routing is preserved (not a flat link list).
+    assert configs[0]["routing"]["rules"]
 
 
 async def test_misconfigured_hy2_falls_back_not_emitted_as_hy2():

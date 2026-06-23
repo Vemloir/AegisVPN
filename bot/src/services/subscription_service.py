@@ -637,30 +637,36 @@ class SubscriptionService:
         """Subscription for xray-JSON clients (Happ, v2rayTun, v2rayNG, …).
 
         Returns ``(kind, body)`` where ``kind`` is ``"json"`` for the xray-JSON
-        config array, or ``"links"`` when the subscription contains a Hysteria2
-        location. Each JSON config carries the clean default-proxy routing
-        (everything tunneled except RU/CN/private) + DNS resolved DIRECT + the
-        xhttp recovery knobs (hKeepAlivePeriod / tcpKeepAlive), so a
-        Wi-Fi<->cellular switch recovers instead of hanging.
+        config array, or ``"links"`` only as a safety-net fallback for an entry
+        that cannot be expressed as a config object. Each JSON config carries the
+        clean default-proxy routing (everything tunneled except RU/CN/private) +
+        DNS resolved DIRECT + the xhttp recovery knobs (hKeepAlivePeriod /
+        tcpKeepAlive), so a Wi-Fi<->cellular switch recovers instead of hanging.
 
-        xray-core cannot run a hysteria2:// entry as an outbound, and a
-        hysteria2:// URI is not a valid xray-JSON config object — so a JSON-only
-        response would silently DROP a Hy2-picked location for these clients.
-        When any Hy2 link is present we therefore fall the WHOLE subscription
-        back to the base64 link list (vless:// + hysteria2:// URIs), which
-        Happ/v2rayTun parse natively too, so the Hy2 location always reaches the
-        client as a usable hysteria2:// entry. Non-Hy2 subscriptions are
-        byte-identical to before.
+        Both vless AND hysteria2 entries become xray config objects — the Hy2 one
+        via the fork's hysteria outbound (see _hy2_link_to_xray_config), which is
+        exactly the config Happ/v2rayTun build from our hysteria2:// link
+        themselves. So a Hy2-picked location keeps the SAME baked-in routing as
+        the vless ones instead of forcing the whole subscription down to a flat
+        link list. Non-Hy2 subscriptions are byte-identical to before.
         """
         pairs = await SubscriptionService._collect_links(session, sub_token, profile, device_uuid)
-        if any(link.startswith("hysteria2://") for _, link in pairs):
-            body = "\n".join(link for _, link in pairs)
-            return "links", (base64.b64encode(body.encode("utf-8")).decode("utf-8") if body else "")
-        configs = [
-            cfg
-            for server, link in pairs
-            if (cfg := SubscriptionService._vless_link_to_xray_config(link, server)) is not None
-        ]
+        configs = []
+        for server, link in pairs:
+            if link.startswith("vless://"):
+                cfg = SubscriptionService._vless_link_to_xray_config(link, server)
+            elif link.startswith("hysteria2://"):
+                cfg = SubscriptionService._hy2_link_to_xray_config(link, server)
+            else:
+                cfg = None
+            if cfg is None:
+                # An entry we cannot express as an xray config object — fall the
+                # WHOLE subscription back to the base64 link list so nothing is
+                # silently dropped (vless + hysteria2 both convert, so this is
+                # only a safety net).
+                body = "\n".join(lnk for _, lnk in pairs)
+                return "links", (base64.b64encode(body.encode("utf-8")).decode("utf-8") if body else "")
+            configs.append(cfg)
         return "json", (json.dumps(configs, ensure_ascii=False) if configs else "")
 
     @staticmethod
@@ -706,6 +712,61 @@ class SubscriptionService:
             "protocol": "vless",
             "settings": {"vnext": [{"address": parts.hostname, "port": parts.port or 443, "users": [user]}]},
             "streamSettings": stream,
+        }
+        return {
+            "remarks": unquote(parts.fragment) if parts.fragment else (server.name or "").strip(),
+            "dns": _XRAY_CLEAN_DNS,
+            "inbounds": _XRAY_CLEAN_INBOUNDS,
+            "outbounds": [
+                proxy,
+                {"tag": "direct", "protocol": "freedom", "settings": {"domainStrategy": "UseIP"}},
+                {"tag": "block", "protocol": "blackhole"},
+            ],
+            "routing": _XRAY_CLEAN_ROUTING,
+        }
+
+    @staticmethod
+    def _hy2_link_to_xray_config(link: str, server: Server) -> dict | None:
+        """Parse one hysteria2:// link into an xray-JSON config object.
+
+        xray-core proper has no hysteria2 outbound, but the xray FORK Happ /
+        v2rayTun bundle DOES run hysteria as an xray outbound — it is exactly the
+        config those clients generate from our hysteria2:// link themselves
+        (protocol "hysteria", salamander obfs under streamSettings.finalmask,
+        auth under hysteriaSettings). Emitting it directly lets the Hy2 location
+        keep the SAME baked-in routing/DNS as the vless entries instead of forcing
+        the whole subscription down to a flat link list. The client validates the
+        real Let's Encrypt cert (no allowInsecure). Port hopping is intentionally
+        omitted (the base listen port + the node's nft redirect cover it) to match
+        the config these clients build for themselves.
+        """
+        if not link.startswith("hysteria2://"):
+            return None
+        parts = urlsplit(link)
+        q = dict(parse_qsl(parts.query, keep_blank_values=True))
+        userinfo = parts.netloc.split("@", 1)[0] if "@" in parts.netloc else ""
+        hostpart = parts.netloc.split("@", 1)[1] if "@" in parts.netloc else parts.netloc
+        host = hostpart.split(":", 1)[0]
+        # netloc port may carry a hop range (host:port,start-end) — take the base.
+        port_str = hostpart.split(":", 1)[1].split(",", 1)[0] if ":" in hostpart else "443"
+        try:
+            port = int(port_str)
+        except ValueError:
+            return None
+        proxy = {
+            "tag": "proxy",
+            "protocol": "hysteria",
+            "settings": {"address": host, "port": port, "version": 2},
+            "streamSettings": {
+                "network": "hysteria",
+                "security": "tls",
+                "hysteriaSettings": {"auth": userinfo, "version": 2},
+                "finalmask": {
+                    "udp": [{"type": "salamander",
+                             "settings": {"password": q.get("obfs-password", "")}}]
+                },
+                "tlsSettings": {"serverName": q.get("sni", ""), "alpn": ["h3"], "show": False},
+            },
         }
         return {
             "remarks": unquote(parts.fragment) if parts.fragment else (server.name or "").strip(),
