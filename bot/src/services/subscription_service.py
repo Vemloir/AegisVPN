@@ -147,11 +147,15 @@ class SubscriptionService:
         The auth secret is the SAME per-device UUID the vless link carries, so
         device suspension / conn-limit / re-issue key identically on the node
         (Hy2 auth maps that UUID -> the device's email via the agent). The node
-        listens on UDP 443 — it looks like HTTP/3 QUIC, so RU mobile (Megafon
-        ТСПУ) passes it — and serves a real Let's Encrypt cert for server.hy2_sni,
-        so the client validates normally. NO obfs, NO port hopping, NO insecure:
-        high random ports + salamander obfs made the traffic NOT look like QUIC
-        and got it dropped on mobile. The server runs BBR (low gaming latency).
+        serves a real Let's Encrypt cert for server.hy2_sni, so the client
+        validates normally (no insecure). The server runs BBR (low gaming latency).
+
+        salamander obfs is emitted ONLY when the node carries an obfs password
+        (``server.hy2_obfs_password``). Without obfs the QUIC handshake passes a
+        wired DPI but the data streams get dropped (proven server-side: auth OK,
+        then "accepting stream failed: timeout"); obfs hides the stream packets so
+        they survive. A no-obfs node looks like plain HTTP/3 QUIC, which RU mobile
+        passes. Per-node so we can serve both kinds.
         Returns None when not Hy2-capable so the caller falls back to a vless link.
         """
         if not getattr(server, "hy2_capable", False) or not device_uuid:
@@ -159,9 +163,11 @@ class SubscriptionService:
         userinfo = quote(device_uuid, safe="")
         fragment = SubscriptionService.format_server_label(server, duplicate_name_keys)
         netloc = f"{userinfo}@{server.host}:{server.hy2_port}"
-        return urlunsplit(
-            ("hysteria2", netloc, "", urlencode({"sni": server.hy2_sni}), fragment)
-        )
+        query = {"sni": server.hy2_sni}
+        if server.hy2_obfs_password:
+            query["obfs"] = "salamander"
+            query["obfs-password"] = server.hy2_obfs_password
+        return urlunsplit(("hysteria2", netloc, "", urlencode(query), fragment))
 
     @staticmethod
     def build_mtproxy_link(server: Server) -> str | None:
@@ -719,8 +725,9 @@ class SubscriptionService:
         finalmask.quicParams). Emitting it directly lets the Hy2 location keep the
         SAME baked-in routing/DNS as the vless entries instead of forcing the whole
         subscription down to a flat link list. The client validates the real Let's
-        Encrypt cert (no allowInsecure). NO obfs (the node listens on UDP 443 and
-        looks like QUIC) and BBR congestion (low gaming latency, no bufferbloat).
+        Encrypt cert (no allowInsecure). BBR congestion (low gaming latency, no
+        bufferbloat). salamander obfs is added (finalmask.udp) only when the link
+        carries it, for nodes whose path needs the QUIC streams hidden from DPI.
         """
         if not link.startswith("hysteria2://"):
             return None
@@ -753,6 +760,14 @@ class SubscriptionService:
                 "finalmask": {"quicParams": {"debug": False, "congestion": "bbr"}},
             },
         }
+        # salamander obfs (when the link carries it) hides the QUIC stream packets
+        # so a wired DPI that drops un-obfuscated QUIC streams (handshake passes,
+        # then "accepting stream failed: timeout") can't kill them. Lives under
+        # finalmask.udp alongside quicParams in the xray fork's hysteria outbound.
+        if q.get("obfs") == "salamander" and q.get("obfs-password"):
+            proxy["streamSettings"]["finalmask"]["udp"] = [
+                {"type": "salamander", "settings": {"password": q["obfs-password"]}}
+            ]
         return {
             "remarks": unquote(parts.fragment) if parts.fragment else (server.name or "").strip(),
             "dns": _XRAY_CLEAN_DNS,

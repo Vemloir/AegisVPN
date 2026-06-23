@@ -98,6 +98,36 @@ def test_build_hy2_link_shape():
     assert "Greece" in link
 
 
+def test_build_hy2_link_emits_obfs_when_node_has_password():
+    # A node carrying an obfs password (wired-DPI nodes) emits salamander obfs;
+    # a node without one stays plain QUIC (mobile-friendly).
+    link = SubscriptionService.build_hy2_link(
+        _greece(hy2_obfs_password="s4l4m"), "11111111-2222-3333-4444-555555555555"
+    )
+    q = parse_qs(urlsplit(link).query)
+    assert q["obfs"] == ["salamander"]
+    assert q["obfs-password"] == ["s4l4m"]
+    assert q["sni"] == ["aegis.example.test"]
+
+
+def test_xray_json_hy2_obfs_added_only_with_password():
+    server = _greece(hy2_obfs_password="s4l4m")
+    link = SubscriptionService.build_hy2_link(server, "11111111-2222-3333-4444-555555555555")
+    cfg = SubscriptionService._hy2_link_to_xray_config(link, server)
+    proxy = next(o for o in cfg["outbounds"] if o["tag"] == "proxy")
+    fm = proxy["streamSettings"]["finalmask"]
+    assert fm["quicParams"]["congestion"] == "bbr"  # BBR kept alongside obfs
+    assert fm["udp"][0]["type"] == "salamander"
+    assert fm["udp"][0]["settings"]["password"] == "s4l4m"
+    # And the no-obfs node has NO finalmask.udp.
+    plain = SubscriptionService._hy2_link_to_xray_config(
+        SubscriptionService.build_hy2_link(_greece(), "11111111-2222-3333-4444-555555555555"),
+        _greece(),
+    )
+    pproxy = next(o for o in plain["outbounds"] if o["tag"] == "proxy")
+    assert "udp" not in pproxy["streamSettings"]["finalmask"]
+
+
 def test_build_hy2_link_none_when_not_capable():
     # No CA cert SNI -> not emittable -> None (caller falls back to vless).
     assert SubscriptionService.build_hy2_link(_greece(hy2_sni=None), "uuid") is None
