@@ -16,6 +16,20 @@
 
 listen: :443
 
+# Small QUIC receive windows (4 MB stream / 10 MB conn) cap how much data sits in
+# flight, so on a lossy/UDP-policed RU path (where the client's upstream drops ~2%
+# and QUIC has to retransmit) the buffer — and the worst-case latency spike a CS2
+# hit-reg sees — stays small. Bigger windows trade latency for throughput, which
+# games don't need. maxIdleTimeout/keepAlive keep the tunnel warm across NAT.
+quic:
+  initStreamReceiveWindow: 4194304
+  maxStreamReceiveWindow: 4194304
+  initConnReceiveWindow: 10485760
+  maxConnReceiveWindow: 10485760
+  maxIdleTimeout: 30s
+  keepAlivePeriod: 10s
+  disablePathMTUDiscovery: false
+
 tls:
   cert: /etc/hysteria/cert.pem
   key: /etc/hysteria/key.pem
