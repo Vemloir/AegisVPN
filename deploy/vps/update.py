@@ -378,18 +378,16 @@ NODE_IP_GEO_SNI = {
 #   8443        Caddy HTTPS (subscription)
 #   8444        agent API (loopback)      hy2 auth callback :8444/hy2/auth
 #   9999        Hy2 trafficStats          (loopback)
-#   36500       Hysteria2 UDP listen
-#   20000-50000 Hy2 UDP port-hop range -> REDIRECT to 36500
+#   443         Hysteria2 UDP listen (looks like HTTP/3 QUIC -> RU mobile passes)
 #   --- reserved for the future MTProto proxy (mtg, `mtproxy` compose profile) ---
 #   8765        mtg MTProto listen        (RESERVED — see provision_mtproxy)
 #
 XRAY_TCP_PORT = 2053
 XRAY_CONN_IDLE = 30
-HY2_LISTEN_PORT = 36500
-HY2_HOP_START = 20000
-HY2_HOP_END = 50000
-HY2_BW_UP = "100 mbps"      # honest fixed Brutal rate (the tuned Greece value)
-HY2_BW_DOWN = "100 mbps"
+# Hy2 now listens on UDP 443 with NO obfs, NO port hopping, BBR congestion (see
+# hysteria/config.template.yaml). The old high-port + salamander + Brutal setup
+# was dropped on RU mobile and bufferbloated CS latency.
+HY2_LISTEN_PORT = 443
 HY2_STATS_URL = "http://127.0.0.1:9999"
 MTPROXY_PORT = 2083         # Cloudflare-HTTPS-alt port: RU mobile (Megafon ТСПУ)
                             # lets these through (like 2053), unlike high random
@@ -500,18 +498,19 @@ def provision_agent_env(
 def provision_hysteria(
     c: paramiko.SSHClient, host: str, geo_sni: str, stats_secret: str
 ) -> str:
-    """B) Provision Hysteria2 on the node. Returns the OBFS_PASSWORD (for the DB).
+    """B) Provision Hysteria2 on the node. Returns "" (obfs no longer used).
 
     Idempotent end to end:
-      * data/hysteria/{key,cert}.pem generated only if absent (CN = geo_sni).
-      * OBFS_PASSWORD: REUSED from an existing data/hysteria/config.yaml if one
-        is present, else freshly generated — so the bot DB stays in sync with
-        whatever obfs the node actually serves.
-      * config.yaml rendered from the repo template with the obfs password, the
-        agent.env stats secret, and the 100/100 Brutal bandwidth.
-      * iptables REDIRECT for the UDP hop range added only if not already there
-        (-C guard) and persisted across reboot via a tiny systemd unit.
+      * data/hysteria/{key,cert}.pem self-signed PLACEHOLDER generated only if
+        absent (CN = geo_sni); provision_stack overwrites it with the real LE
+        cert via install_hy2_cert.
+      * config.yaml rendered from the repo template (only the agent.env stats
+        secret is injected) — UDP :443, no obfs, BBR (no bandwidth set).
       * `docker compose --profile hysteria up -d hysteria`.
+
+    No port-hop REDIRECT any more (single UDP :443). Nodes provisioned under the
+    old scheme keep a stale 20000-50000 -> 36500 nat rule + aegis-hy2-hop.service;
+    those are harmless (nothing listens on 36500) and can be cleaned out of band.
     """
     print(f"  [{host}] hysteria: ensuring {REMOTE_HY2_DIR}")
     run(c, f"mkdir -p {REMOTE_HY2_DIR}", "mkdir hysteria")
@@ -530,52 +529,18 @@ def provision_hysteria(
             f"-subj '/CN={geo_sni}'",
             "openssl cert", timeout=60)
 
-    # --- obfs password: reuse from an existing config so the DB stays in sync ---
-    obfs_password: str | None = None
-    if _remote_exists(c, REMOTE_HY2_CONFIG):
-        sftp = get_sftp(c)
-        with sftp.open(REMOTE_HY2_CONFIG, "r") as fh:
-            for line in fh.read().decode().splitlines():
-                s = line.strip()
-                if s.startswith("password:"):
-                    obfs_password = s.split(":", 1)[1].strip()
-                    break
-        if obfs_password:
-            print(f"  [{host}] hysteria: reusing existing obfs password")
-    if not obfs_password:
-        obfs_password = _gen_secret(32)
-        print(f"  [{host}] hysteria: generated new obfs password")
-
-    # --- render config.yaml from the repo template ---
+    # --- render config.yaml from the repo template (only the stats secret) ---
     template = HY2_TEMPLATE_LOCAL.read_text(encoding="utf-8")
-    rendered = (
-        template
-        .replace("__OBFS_PASSWORD__", obfs_password)
-        .replace("__STATS_SECRET__", stats_secret)
-        .replace("__BW_UP__", HY2_BW_UP)
-        .replace("__BW_DOWN__", HY2_BW_DOWN)
-    )
-    leftovers = [tok for tok in ("__OBFS_PASSWORD__", "__STATS_SECRET__",
-                                 "__BW_UP__", "__BW_DOWN__") if tok in rendered]
+    rendered = template.replace("__STATS_SECRET__", stats_secret)
+    leftovers = [tok for tok in ("__STATS_SECRET__",) if tok in rendered]
     if leftovers:
         raise SystemExit(f"[{host}] hysteria config still has placeholders: {leftovers}")
-    print(f"  [{host}] hysteria: rendering config.yaml")
+    print(f"  [{host}] hysteria: rendering config.yaml (UDP :443, no obfs, BBR)")
     sftp = get_sftp(c)
     with sftp.open(REMOTE_HY2_CONFIG, "w") as fh:
         fh.write(rendered)
 
-    # --- port-hopping REDIRECT (idempotent + reboot-persistent) ---
-    print(f"  [{host}] hysteria: ensuring UDP hop REDIRECT "
-          f"{HY2_HOP_START}:{HY2_HOP_END} -> {HY2_LISTEN_PORT}")
-    redirect_rule = (
-        f"-p udp --dport {HY2_HOP_START}:{HY2_HOP_END} "
-        f"-j REDIRECT --to-ports {HY2_LISTEN_PORT}"
-    )
-    run(c,
-        f"iptables -t nat -C PREROUTING {redirect_rule} 2>/dev/null || "
-        f"iptables -t nat -A PREROUTING {redirect_rule}",
-        "iptables redirect", timeout=30)
-    _persist_hop_redirect(c, host, redirect_rule)
+    # No port-hop REDIRECT: single UDP :443 (no obfs, no hopping).
 
     # --- start (or restart) the hysteria container ---
     print(f"  [{host}] hysteria: docker compose up -d hysteria")
@@ -585,7 +550,7 @@ def provision_hysteria(
         "cd /root/aegis/deploy/vps && "
         "docker compose --profile hysteria up -d hysteria 2>&1",
         "hysteria up", timeout=180)
-    return obfs_password
+    return ""  # obfs removed; the DB obfs_password column is unused now
 
 
 def _persist_hop_redirect(c: paramiko.SSHClient, host: str, redirect_rule: str) -> None:
@@ -741,10 +706,10 @@ def sync_bot_db_hy2(
 ) -> None:
     """D) Mirror this node's Hy2 + tcp-inbound config into its bot DB row.
 
-    Matches the servers row by host=<node IP> and writes the multi-inbound /
-    Hy2 capability columns. The obfs_password MUST be the exact value rendered
-    into the node's data/hysteria/config.yaml (returned by provision_hysteria),
-    so the client config the bot emits matches what the server expects.
+    Matches the servers row by host=<node IP> and writes tcp_port, hy2_port
+    (= UDP :443), and hy2_sni (the LE cert domain). The hop range + up/down + obfs
+    are NULLed — Hy2 is now bare QUIC on :443 with BBR. The obfs_password arg is
+    "" and unused (hy2_capable no longer needs it).
     """
     py = (
         "import asyncio\n"
@@ -755,22 +720,17 @@ def sync_bot_db_hy2(
         f"SNI = {hy2_sni!r}\n"
         f"TCP_PORT = {XRAY_TCP_PORT}\n"
         f"HY2_PORT = {HY2_LISTEN_PORT}\n"
-        f"HOP_START = {HY2_HOP_START}\n"
-        f"HOP_END = {HY2_HOP_END}\n"
-        f"UP = {HY2_BW_UP!r}\n"
-        f"DOWN = {HY2_BW_DOWN!r}\n"
         "async def q():\n"
         "    async with async_session_maker() as s:\n"
         "        res = await s.execute(text('UPDATE servers SET '\n"
         "            'tcp_port=:tcp, hy2_enabled=1, hy2_port=:hp, '\n"
-        "            'hy2_hop_start=:hs, hy2_hop_end=:he, hy2_up=:up, '\n"
-        "            'hy2_down=:down, hy2_obfs_password=:obfs, hy2_sni=:sni WHERE host=:h'),\n"
-        "            {'tcp': TCP_PORT, 'hp': HY2_PORT, 'hs': HOP_START, 'he': HOP_END,\n"
-        "             'up': UP, 'down': DOWN, 'obfs': OBFS, 'sni': SNI, 'h': HOST})\n"
+        "            'hy2_hop_start=NULL, hy2_hop_end=NULL, hy2_up=NULL, hy2_down=NULL, '\n"
+        "            'hy2_obfs_password=:obfs, hy2_sni=:sni WHERE host=:h'),\n"
+        "            {'tcp': TCP_PORT, 'hp': HY2_PORT, 'obfs': OBFS, 'sni': SNI, 'h': HOST})\n"
         "        await s.commit()\n"
         "        print('rows updated:', res.rowcount)\n"
         "        r = await s.execute(text('SELECT id, name, host, tcp_port, '\n"
-        "            'hy2_enabled, hy2_port, hy2_hop_start, hy2_hop_end FROM '\n"
+        "            'hy2_enabled, hy2_port, hy2_sni FROM '\n"
         "            'servers WHERE host=:h'), {'h': HOST})\n"
         "        for row in r.fetchall(): print('  now:', tuple(row))\n"
         "asyncio.run(q())\n"

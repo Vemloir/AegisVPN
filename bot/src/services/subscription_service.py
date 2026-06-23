@@ -146,39 +146,22 @@ class SubscriptionService:
 
         The auth secret is the SAME per-device UUID the vless link carries, so
         device suspension / conn-limit / re-issue key identically on the node
-        (Hy2 auth maps that UUID -> the device's email via the agent). salamander
-        obfs + the address-embedded port-hop range help evade ТСПУ; the node serves
-        a real Let's Encrypt cert so the client validates normally (no insecure).
-        Returns None when the server is not Hy2-capable so the caller falls back to
-        a vless link.
+        (Hy2 auth maps that UUID -> the device's email via the agent). The node
+        listens on UDP 443 — it looks like HTTP/3 QUIC, so RU mobile (Megafon
+        ТСПУ) passes it — and serves a real Let's Encrypt cert for server.hy2_sni,
+        so the client validates normally. NO obfs, NO port hopping, NO insecure:
+        high random ports + salamander obfs made the traffic NOT look like QUIC
+        and got it dropped on mobile. The server runs BBR (low gaming latency).
+        Returns None when not Hy2-capable so the caller falls back to a vless link.
         """
         if not getattr(server, "hy2_capable", False) or not device_uuid:
             return None
-        # The node serves a real Let's Encrypt cert for server.hy2_sni (one shared
-        # cert + DuckDNS domain across all nodes), so the client validates it
-        # normally — NO `insecure`: the xray-core fork in Happ/v2RayTun REMOVED
-        # allowInsecure and its pinnedPeerCertSha256 is broken for self-signed certs
-        # (XTLS/Xray-core #5655), so a self-signed cert is unusable there. salamander
-        # obfs hides this SNI from ТСПУ anyway.
-        #
-        # Only spec-defined query params (obfs / obfs-password / sni / insecure /
-        # pinSHA256). Bandwidth (up/down) is FORBIDDEN in the URI — config-file only,
-        # and "100 mbps" is unparseable — and port hopping goes in the ADDRESS
-        # (host:port,start-end), NOT a query key; both made the core reject the
-        # profile on dial (instant "N/D"). Brutal/BBR is advertised server-side.
-        query = {
-            "obfs": "salamander",
-            "obfs-password": server.hy2_obfs_password or "",
-            "sni": server.hy2_sni,
-        }
         userinfo = quote(device_uuid, safe="")
         fragment = SubscriptionService.format_server_label(server, duplicate_name_keys)
-        host_port = f"{server.host}:{server.hy2_port}"
-        if server.hy2_hop_start and server.hy2_hop_end:
-            # Port hopping belongs in the address (host:port,start-end), not query.
-            host_port = f"{host_port},{server.hy2_hop_start}-{server.hy2_hop_end}"
-        netloc = f"{userinfo}@{host_port}"
-        return urlunsplit(("hysteria2", netloc, "", urlencode(query), fragment))
+        netloc = f"{userinfo}@{server.host}:{server.hy2_port}"
+        return urlunsplit(
+            ("hysteria2", netloc, "", urlencode({"sni": server.hy2_sni}), fragment)
+        )
 
     @staticmethod
     def build_mtproxy_link(server: Server) -> str | None:
@@ -732,13 +715,12 @@ class SubscriptionService:
         xray-core proper has no hysteria2 outbound, but the xray FORK Happ /
         v2rayTun bundle DOES run hysteria as an xray outbound — it is exactly the
         config those clients generate from our hysteria2:// link themselves
-        (protocol "hysteria", salamander obfs under streamSettings.finalmask,
-        auth under hysteriaSettings). Emitting it directly lets the Hy2 location
-        keep the SAME baked-in routing/DNS as the vless entries instead of forcing
-        the whole subscription down to a flat link list. The client validates the
-        real Let's Encrypt cert (no allowInsecure). Port hopping is intentionally
-        omitted (the base listen port + the node's nft redirect cover it) to match
-        the config these clients build for themselves.
+        (protocol "hysteria", auth under hysteriaSettings, congestion control under
+        finalmask.quicParams). Emitting it directly lets the Hy2 location keep the
+        SAME baked-in routing/DNS as the vless entries instead of forcing the whole
+        subscription down to a flat link list. The client validates the real Let's
+        Encrypt cert (no allowInsecure). NO obfs (the node listens on UDP 443 and
+        looks like QUIC) and BBR congestion (low gaming latency, no bufferbloat).
         """
         if not link.startswith("hysteria2://"):
             return None
@@ -760,12 +742,13 @@ class SubscriptionService:
             "streamSettings": {
                 "network": "hysteria",
                 "security": "tls",
-                "hysteriaSettings": {"auth": userinfo, "version": 2},
-                "finalmask": {
-                    "udp": [{"type": "salamander",
-                             "settings": {"password": q.get("obfs-password", "")}}]
+                "hysteriaSettings": {"version": 2, "auth": userinfo},
+                "tlsSettings": {
+                    "serverName": q.get("sni", ""),
+                    "fingerprint": "chrome",
+                    "alpn": ["h3"],
                 },
-                "tlsSettings": {"serverName": q.get("sni", ""), "alpn": ["h3"], "show": False},
+                "finalmask": {"quicParams": {"debug": False, "congestion": "bbr"}},
             },
         }
         return {

@@ -67,16 +67,12 @@ class Server(Base):
     @property
     def hy2_capable(self) -> bool:
         """True only when the node can emit a USABLE Hy2 link: Hy2 is enabled,
-        a client target port is set, and the two operator-provisioned secrets
-        (obfs password + the CA cert SNI) are present. A misconfigured node
-        (enabled but missing either) is NOT capable, so emission falls back to
-        vless instead of shipping a broken Hy2 link."""
-        return bool(
-            self.hy2_enabled
-            and self.hy2_port
-            and self.hy2_obfs_password
-            and self.hy2_sni
-        )
+        a client target port is set, and the CA cert SNI (operator-provisioned)
+        is present. The obfs password is NO LONGER required — Hy2 now listens on
+        UDP 443 with no obfuscation (looks like QUIC). A misconfigured node
+        (enabled but missing port or SNI) is NOT capable, so emission falls back
+        to vless instead of shipping a broken Hy2 link."""
+        return bool(self.hy2_enabled and self.hy2_port and self.hy2_sni)
 
     @property
     def mtproxy_capable(self) -> bool:
