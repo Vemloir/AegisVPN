@@ -42,6 +42,36 @@ def _sub(**kwargs) -> Subscription:
     return Subscription(**kwargs)
 
 
+def test_format_server_label_drops_city():
+    # City names were removed from VPN labels: "Country | City" renders as the
+    # country only. The stored name keeps the city (admin/host clarity).
+    s = Server(id=8, name="Germany | Frankfurt", flag="\U0001F1E9\U0001F1EA",
+               host="h", port=443, public_key="p", short_id="s")
+    assert SubscriptionService.server_country(s) == "Germany"
+    assert SubscriptionService.format_server_label(s) == "\U0001F1E9\U0001F1EA Germany"
+    # A name without a city is unchanged.
+    assert SubscriptionService.server_country(
+        Server(id=9, name="Germany", flag="x", host="h", port=443, public_key="p", short_id="s")
+    ) == "Germany"
+
+
+def test_duplicate_suffix_keys_on_country_not_city():
+    from collections import Counter
+    de1 = Server(id=8, name="Germany | Frankfurt", flag="\U0001F1E9\U0001F1EA",
+                 host="h1", port=443, public_key="p", short_id="s")
+    de2 = Server(id=20, name="Germany | Munich", flag="\U0001F1E9\U0001F1EA",
+                 host="h2", port=443, public_key="p", short_id="s")
+    fi = Server(id=1, name="Finland | Helsinki", flag="\U0001F1EB\U0001F1EE",
+                host="h3", port=443, public_key="p", short_id="s")
+    counts = Counter(SubscriptionService.server_country(x).casefold() for x in (de1, de2, fi))
+    dup = {n for n, c in counts.items() if c > 1}
+    # Two Germanys (different cities) collide on country -> both get the №id.
+    assert SubscriptionService.format_server_label(de1, dup) == "\U0001F1E9\U0001F1EA Germany №8"
+    assert SubscriptionService.format_server_label(de2, dup) == "\U0001F1E9\U0001F1EA Germany №20"
+    # Finland is unique -> no suffix.
+    assert SubscriptionService.format_server_label(fi, dup) == "\U0001F1EB\U0001F1EE Finland"
+
+
 def test_is_lifetime_by_plan_days():
     sub = _sub(plan_days=SubscriptionService.LIFETIME_PLAN_DAYS, expires_at=datetime(2030, 1, 1))
     assert SubscriptionService.is_lifetime_subscription(sub)
