@@ -43,7 +43,7 @@ Usage examples:
 
   # Roll the full Greece-canary stack (xray raw-TCP+VISION :2053 + Hysteria2)
   # onto a node and sync its bot DB row. Idempotent + safe to re-run. The
-  # geo-SNI (Hy2 cert CN) comes from the built-in IP map, or pass --geo-sni:
+  # geo-SNI (Hy2 cert CN) is REQUIRED via --geo-sni (never hardcoded — public repo):
   python update.py --provision-stack \\
                    --main-host MAIN_IP --main-password '…' \\
                    --node NODE_IP:ROOT_PASSWORD --geo-sni csc.fi
@@ -350,24 +350,12 @@ def set_db_keys(main_c: paramiko.SSHClient, host: str, pubkey: str, sid: str) ->
 # existing data/hysteria/config.yaml's secrets are REUSED so the bot DB stays in
 # sync with whatever the node already serves.
 
-# Per-node geo-SNI / self-signed cert CN. The REALITY_SERVER_NAME/REALITY_DEST
-# are set by a SEPARATE step (--add-server / setup) and are NOT touched here;
-# this map only drives the Hysteria2 self-signed cert CN (cosmetic — Hy2 clients
-# set insecure=1, but a plausible CN keeps a passive probe boring). Override per
-# run with --geo-sni if a node's value differs.
-NODE_GEO_SNI = {
-    # Finland
-    "csc.fi": "csc.fi",
-    # Sweden / Norway / Greece / Japan — keyed by IP below where known.
-}
-NODE_IP_GEO_SNI = {
-    "45.142.31.13": "aegean.gr",          # Greece (the canary)
-    # Fill in the others as they roll out (or pass --geo-sni):
-    #   Finland  -> csc.fi
-    #   Sweden   -> www.chalmers.se
-    #   Norway   -> uio.no
-    #   Japan    -> www.osaka-u.ac.jp
-}
+# Per-node geo-SNI = the Hysteria2 self-signed cert CN (cosmetic — Hy2 clients
+# set insecure=1, but a plausible CN keeps a passive probe boring). It is NOT
+# hardcoded here: this is a PUBLIC repo, so node IPs and their SNIs must never be
+# committed. Supply it per run with --geo-sni <name> — a geo-matched academic
+# TLS1.3 + ALPN-h2 domain for the node's location. REALITY_SERVER_NAME/DEST are
+# set separately via add_server.py's --reality-server-name / --reality-dest.
 
 # --- Port plan -------------------------------------------------------------
 # Reserve a stable, documented port layout so services never collide and a
@@ -425,17 +413,15 @@ def _remote_exists(c: paramiko.SSHClient, path: str) -> bool:
 
 
 def resolve_geo_sni(host: str, override: str | None) -> str:
-    """Pick the cert CN / geo-SNI for a node: explicit flag wins, else the map."""
+    """The cert CN / geo-SNI for a node — supplied ONLY via --geo-sni. Never
+    hardcoded by IP (this is a public repo), so the flag is required."""
     if override:
         return override
-    sni = NODE_IP_GEO_SNI.get(host)
-    if not sni:
-        raise SystemExit(
-            f"[{host}] no geo-SNI known for this IP — pass --geo-sni <name> "
-            f"(e.g. csc.fi / www.chalmers.se / uio.no / aegean.gr / "
-            f"www.osaka-u.ac.jp)"
-        )
-    return sni
+    raise SystemExit(
+        f"[{host}] pass --geo-sni <name> — a geo-matched academic TLS1.3 + h2 "
+        f"domain for this node's location (node IPs/SNIs are not hardcoded in "
+        f"this public repo)."
+    )
 
 
 def provision_agent_env(
