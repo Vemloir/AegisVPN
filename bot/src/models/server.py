@@ -58,11 +58,13 @@ class Server(Base):
 
     @property
     def has_alt_transports(self) -> bool:
-        """True when this node exposes an alternative VLESS transport (raw-tcp)
-        beyond the default xhttp inbound, OR can serve Hysteria2 — i.e. a
-        per-location protocol/transport choice is meaningful. Today only the
-        Greece node qualifies on either count."""
-        return self.tcp_port is not None or self.hy2_capable
+        """Every location exposes the per-location settings screen (Protocol:
+        VLESS + Transport: the inbound it serves), so all locations are configured
+        identically — a new node like Germany is no longer the odd one out showing
+        "standard transport only". Hy2 is gated off in the bot, so it no longer
+        drives this; a node with a tcp_port (Greece) additionally offers a real
+        transport choice in that screen."""
+        return True
 
     @property
     def hy2_capable(self) -> bool:

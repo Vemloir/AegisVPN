@@ -477,16 +477,38 @@ class SubscriptionService:
             return
 
         email = f"user_{sub.user_id}_sub_{sub.id}"
+        # The sub's own UUID PLUS every active, non-suspended device. A newly
+        # added server MUST receive all of them: a device whose UUID isn't on the
+        # node makes that node's per-device /sub fetch 404, so the whole location
+        # is silently dropped from that device's config — it shows in the bot's
+        # location list (which never hits the agent) but never in the imported
+        # subscription. Bulk-add so it's one round-trip per node. (Without the
+        # devices, only the bare sub UUID synced, so existing devices created
+        # before the node lost that location.)
+        devices = (
+            await session.execute(
+                select(Device).where(
+                    Device.subscription_id == sub.id,
+                    Device.is_active == True,  # noqa: E712
+                    Device.is_suspended == False,  # noqa: E712
+                )
+            )
+        ).scalars().all()
+        clients = [{"uuid": sub.client_uuid, "email": email, "expire_ms": 0}]
+        clients += [
+            {"uuid": d.uuid, "email": f"{email}_dev_{d.id}", "expire_ms": 0}
+            for d in devices
+        ]
 
         async def sync_to_server(server: Server) -> tuple[int, bool]:
             client = AgentClient(server.agent_url, server.agent_token)
-
             try:
-                success = await client.add_client(sub.client_uuid, email)
+                success = await client.bulk_add(clients)
             except Exception as exc:
-                logger.error(f"Failed to sync client {sub.client_uuid} to server {server.id}: {exc}")
+                logger.error(
+                    f"Failed to sync sub {sub.id} ({len(clients)} clients) to server {server.id}: {exc}"
+                )
                 success = False
-
             return server.id, success
 
         sync_results = dict(await asyncio.gather(*(sync_to_server(server) for server in servers)))

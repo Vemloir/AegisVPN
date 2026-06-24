@@ -212,9 +212,12 @@ def test_tcp_transport_uses_tcp_port_and_vision_flow():
     assert "xudp" not in cfg["outbounds"][0]["settings"]
 
 
-def test_xhttp_only_server_offers_no_transport_choice():
+def test_every_server_offers_the_settings_screen():
+    # All locations now expose the per-location settings screen consistently
+    # (so a new node like Germany isn't the odd one out). An xhttp-only node
+    # still serves only the xhttp transport in that screen.
     server = _xhttp_only_server()
-    assert server.has_alt_transports is False
+    assert server.has_alt_transports is True
     assert SubscriptionService.available_transports(server) == ["xhttp"]
 
 
