@@ -1,4 +1,4 @@
-from pydantic import ConfigDict
+from pydantic import ConfigDict, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -39,6 +39,21 @@ class Settings(BaseSettings):
     hy2_enabled: bool = False
     hy2_stats_url: str = "http://127.0.0.1:9999"
     hy2_stats_secret: str | None = None
+
+    @field_validator(
+        "xray_tcp_port", "xray_grpc_port", "fast_host_ip",
+        "short_id_tcp", "public_key_tcp", "hy2_stats_secret",
+        mode="before",
+    )
+    @classmethod
+    def _blank_to_none(cls, v):
+        # A fresh node's docker-compose passes UNSET optional vars as "" (the
+        # ${VAR:-} default), and an empty string can't coerce to int|None — it
+        # crash-loops the agent (xray_grpc_port='' after gRPC was dropped). Treat
+        # a blank string as unset so the field falls back to its None default.
+        if isinstance(v, str) and v.strip() == "":
+            return None
+        return v
 
     model_config = ConfigDict(
         env_file="/data/agent.env",
