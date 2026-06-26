@@ -52,6 +52,17 @@ class ServerAccessService:
         await ServerAccessService.reconcile_server_subscriptions(session, server.id)
 
     @staticmethod
+    async def set_server_active(session: AsyncSession, server: Server, is_active: bool) -> None:
+        """Take a location online/offline. Disabling it (is_active=False) drops it
+        from every user's accessible set: reconcile then strips the location from
+        all subscriptions (and removes the client from the — possibly dead — agent,
+        best-effort). Re-enabling adds it back. Reversible decommission for a node
+        we stopped paying for, without deleting its row/traffic history."""
+        server.is_active = is_active
+        await session.flush()
+        await ServerAccessService.reconcile_server_subscriptions(session, server.id)
+
+    @staticmethod
     async def grant_user_access(session: AsyncSession, server: Server, user: User) -> bool:
         existing = await session.get(ServerAccessGrant, {"server_id": server.id, "user_id": user.id})
         if existing is not None:

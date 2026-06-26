@@ -65,9 +65,11 @@ def server_list_keyboard(servers: list[Server]) -> InlineKeyboardMarkup:
 
 
 def server_manage_keyboard(server: Server) -> InlineKeyboardMarkup:
+    active_text = "Включить локацию" if not server.is_active else "Отключить локацию"
     toggle_text = "Сделать доступным всем" if server.access_mode == "restricted" else "Ограничить доступ"
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text=active_text, callback_data=f"admin_server_active_toggle:{server.id}")],
             [InlineKeyboardButton(text=toggle_text, callback_data=f"admin_server_toggle:{server.id}")],
             [
                 InlineKeyboardButton(

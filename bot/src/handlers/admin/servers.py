@@ -26,13 +26,15 @@ async def cq_admin_servers(call: CallbackQuery, state: FSMContext):
 
     await state.clear()
     async with async_session_maker() as session:
+        # Show inactive locations too — otherwise a location taken offline
+        # vanishes from the panel and can never be re-enabled. Status (ON/OFF) is
+        # rendered per row below.
         servers = (
             (
                 await session.execute(
                     select(Server)
-                    .where(Server.is_active == True)  # noqa: E712
                     .options(selectinload(Server.access_grants))
-                    .order_by(Server.id)
+                    .order_by(Server.is_active.desc(), Server.id)
                 )
             )
             .scalars()
@@ -95,6 +97,33 @@ async def cq_admin_server_toggle(call: CallbackQuery, state: FSMContext):
     text, keyboard = rendered
     await call.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)  # type: ignore
     await call.answer("Настройки доступа обновлены")
+
+
+@router.callback_query(F.data.startswith("admin_server_active_toggle:"))
+async def cq_admin_server_active_toggle(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        await call.answer("Доступ запрещён", show_alert=True)
+        return
+
+    server_id = int(call.data.split(":", 1)[1])  # type: ignore[arg-type]
+    async with async_session_maker() as session:
+        server = await session.get(Server, server_id)
+        if server is None:
+            await call.answer("Сервер не найден", show_alert=True)
+            return
+
+        target = not server.is_active
+        await ServerAccessService.set_server_active(session, server, target)
+        await session.commit()
+
+    await state.clear()
+    rendered = await render_server_details(server_id)
+    assert rendered is not None
+    text, keyboard = rendered
+    await call.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)  # type: ignore
+    await call.answer(
+        "Локация включена" if target else "Локация отключена — убрана у всех пользователей"
+    )
 
 
 @router.callback_query(F.data.startswith("admin_server_allow_start:"))
