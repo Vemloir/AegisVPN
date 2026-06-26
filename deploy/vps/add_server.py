@@ -11,9 +11,13 @@ Steps:
      agent's /client/add endpoint, then `docker compose restart xray` on the
      new node so xray reloads with all clients.
 
-Defaults assume the standard Reality-TCP layout (XRAY_TCP_PORT=0), so the
-single inbound on XRAY_PORT uses the *_TCP key pair from agent.env. That's
-the layout `register_external_server.py` expects.
+Defaults produce a node IDENTICAL to the rest of the fleet: an XHTTP inbound
+on XRAY_PORT (443) plus a TCP+VISION alt inbound on --tcp-port (2053), both
+sharing the SINGLE reality keypair (entrypoint builds the tcp inbound from the
+same PRIVATE_KEY/SHORT_ID). register_external_server.py writes tcp_port into
+the DB so the bot offers the transport choice, and syncs every active device
+UUID — not just the sub UUIDs — so the node never silently drops from a
+device's subscription. Pass --tcp-port 0 for an xhttp-only node.
 """
 
 from __future__ import annotations
@@ -67,6 +71,12 @@ def parse_args() -> argparse.Namespace:
                         "node's location. No default.")
     p.add_argument("--xray-network", default="xhttp", choices=["xhttp", "tcp"],
                    help="Transport protocol for the primary inbound (default: xhttp)")
+    p.add_argument("--tcp-port", default="2053",
+                   help="Alt VLESS+REALITY TCP+VISION inbound port on the SAME "
+                        "reality keypair (flow=xtls-rprx-vision). Every fleet node "
+                        "serves this second transport; setting it makes the bot "
+                        "offer a transport choice for the node. Use '0' to disable "
+                        "(xhttp-only node, the odd one out).")
     p.add_argument("--no-warp", action="store_true",
                    help="Skip registering a per-location Cloudflare WARP account "
                         "(by default each node gets its own, used to route AI "
@@ -311,7 +321,7 @@ cat > /root/aegis/deploy/vps/vpn.env <<'EOF'
 XRAY_RUN_MODE=internal
 XRAY_CONFIG_PATH=/data/xray-config.json
 XRAY_PORT={args.xray_port}
-XRAY_TCP_PORT=0
+XRAY_TCP_PORT={args.tcp_port}
 XRAY_NETWORK={args.xray_network}
 REALITY_DEST={args.reality_dest}
 REALITY_SERVER_NAME={args.reality_server_name}
@@ -447,6 +457,7 @@ def main() -> int:
             f"SERVER_FLAG={shell_quote(server_flag)} "
             f"SERVER_HOST={shell_quote(args.server_domain)} "
             f"SERVER_PORT={shell_quote(args.xray_port)} "
+            f"TCP_PORT={shell_quote(args.tcp_port)} "
             f"PUBLIC_KEY={shell_quote(public_key)} "
             f"SHORT_ID={shell_quote(short_id)} "
             f"AGENT_URL={shell_quote(agent_url)} "
