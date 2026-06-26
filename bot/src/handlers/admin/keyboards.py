@@ -51,15 +51,16 @@ def server_access_text(server: Server) -> str:
 
 def server_list_keyboard(servers: list[Server]) -> InlineKeyboardMarkup:
     duplicate_name_keys = build_duplicate_name_keys(servers)
-    rows = [
-        [
-            InlineKeyboardButton(
-                text=SubscriptionService.format_server_label(server, duplicate_name_keys),
-                callback_data=f"admin_server_manage:{server.id}",
-            )
-        ]
-        for server in servers
-    ]
+    rows = []
+    for server in servers:
+        label = SubscriptionService.format_server_label(server, duplicate_name_keys)
+        # Highlight disabled locations right on the tappable button (text marker,
+        # no decorative emoji). Active ones stay clean so OFF entries stand out.
+        if not server.is_active:
+            label = f"OFF · {label}"
+        rows.append(
+            [InlineKeyboardButton(text=label, callback_data=f"admin_server_manage:{server.id}")]
+        )
     rows.append([InlineKeyboardButton(text="Назад в админку", callback_data="admin_back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

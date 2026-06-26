@@ -3,7 +3,7 @@ access-mode (public/restricted) toggle. Disabling a location is the clean
 decommission path for a node we stopped paying for — it must be reachable from
 the card and labelled by current state."""
 
-from src.handlers.admin.keyboards import server_manage_keyboard
+from src.handlers.admin.keyboards import server_list_keyboard, server_manage_keyboard
 from src.models import Server
 
 
@@ -43,3 +43,14 @@ def test_inactive_server_card_offers_enable_toggle():
 def test_access_toggle_label_follows_mode():
     assert _texts(server_manage_keyboard(_server(access_mode="public")))[1] == "Ограничить доступ"
     assert _texts(server_manage_keyboard(_server(access_mode="restricted")))[1] == "Сделать доступным всем"
+
+
+def test_server_list_highlights_disabled_only():
+    active = _server(id=1, name="Finland", flag="\U0001F1EB\U0001F1EE", is_active=True)
+    off = _server(id=2, name="Greece", is_active=False)
+    texts = _texts(server_list_keyboard([active, off]))
+    # The active location is clean; the disabled one is marked OFF on the button.
+    assert any(t.endswith("Finland") and not t.startswith("OFF") for t in texts)
+    assert any(t.startswith("OFF · ") and "Greece" in t for t in texts)
+    # Last button is the back action, unmarked.
+    assert texts[-1] == "Назад в админку"
