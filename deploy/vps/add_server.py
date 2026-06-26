@@ -12,7 +12,7 @@ Steps:
      new node so xray reloads with all clients.
 
 Defaults produce a node IDENTICAL to the rest of the fleet: an XHTTP inbound
-on XRAY_PORT (443) plus a TCP+VISION alt inbound on --tcp-port (2053), both
+on --xhttp-port (443) plus a TCP+VISION alt inbound on --tcp-port (2053), both
 sharing the SINGLE reality keypair (entrypoint builds the tcp inbound from the
 same PRIVATE_KEY/SHORT_ID). register_external_server.py writes tcp_port into
 the DB so the bot offers the transport choice, and syncs every active device
@@ -61,7 +61,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--server-domain", required=True,
                    help="IP/hostname the client connects to (use bare IP, not sslip.io)")
     p.add_argument("--agent-url", help="Defaults to http://<new-host>:8444")
-    p.add_argument("--xray-port", default="443")
+    p.add_argument("--xhttp-port", "--xray-port", dest="xhttp_port", default="443",
+                   help="XHTTP (primary VLESS+REALITY) inbound port; registered as the "
+                        "server's connect port in the bot DB (default 443). On a fresh IP "
+                        "whose :443 is throttled by ТСПУ (common on flagged US/datacenter "
+                        "ranges — the reality ClientHello gets reset), set an alt-HTTPS port "
+                        "like 2083: the same port class as --tcp-port 2053, which slips past "
+                        "the :443 inspection. (--xray-port is a back-compat alias.)")
     p.add_argument("--reality-dest", required=True,
                    help="REALITY dest, e.g. csc.fi:443 — a geo-matched, China-reachable "
                         "TLS1.3 site. NO default (gateway.icloud.com is implausible on a "
@@ -72,10 +78,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--xray-network", default="xhttp", choices=["xhttp", "tcp"],
                    help="Transport protocol for the primary inbound (default: xhttp)")
     p.add_argument("--tcp-port", default="2053",
-                   help="Alt VLESS+REALITY TCP+VISION inbound port on the SAME "
-                        "reality keypair (flow=xtls-rprx-vision). Every fleet node "
-                        "serves this second transport; setting it makes the bot "
-                        "offer a transport choice for the node. Use '0' to disable "
+                   help="TCP+VISION (alt VLESS+REALITY) inbound port on the SAME "
+                        "reality keypair (flow=xtls-rprx-vision), registered as the "
+                        "server's tcp_port in the bot DB (default 2053). Every fleet "
+                        "node serves this second transport; setting it makes the bot "
+                        "offer a transport choice for the node. Free to pick any port "
+                        "(it must differ from --xhttp-port). Use '0' to disable "
                         "(xhttp-only node, the odd one out).")
     p.add_argument("--no-warp", action="store_true",
                    help="Skip registering a per-location Cloudflare WARP account "
@@ -320,7 +328,7 @@ mkdir -p /root/aegis /root/aegis/deploy/vps /root/aegis/deploy/vps/data/vpn
 cat > /root/aegis/deploy/vps/vpn.env <<'EOF'
 XRAY_RUN_MODE=internal
 XRAY_CONFIG_PATH=/data/xray-config.json
-XRAY_PORT={args.xray_port}
+XRAY_PORT={args.xhttp_port}
 XRAY_TCP_PORT={args.tcp_port}
 XRAY_NETWORK={args.xray_network}
 REALITY_DEST={args.reality_dest}
@@ -396,6 +404,12 @@ def shell_quote(s: str) -> str:
 
 def main() -> int:
     args = parse_args()
+    # XHTTP and TCP+VISION are separate inbounds — they cannot share a port.
+    # (--tcp-port 0 disables the second inbound, so skip the check then.)
+    if args.tcp_port != "0" and args.xhttp_port == args.tcp_port:
+        raise SystemExit(
+            f"--xhttp-port and --tcp-port must differ (both = {args.xhttp_port})"
+        )
     server_flag, server_name = split_flag(args.server_name)
     agent_url = args.agent_url or f"http://{args.new_host}:8444"
 
@@ -456,7 +470,7 @@ def main() -> int:
             f"SERVER_NAME={shell_quote(server_name)} "
             f"SERVER_FLAG={shell_quote(server_flag)} "
             f"SERVER_HOST={shell_quote(args.server_domain)} "
-            f"SERVER_PORT={shell_quote(args.xray_port)} "
+            f"SERVER_PORT={shell_quote(args.xhttp_port)} "
             f"TCP_PORT={shell_quote(args.tcp_port)} "
             f"PUBLIC_KEY={shell_quote(public_key)} "
             f"SHORT_ID={shell_quote(short_id)} "
@@ -548,7 +562,7 @@ def main() -> int:
 
     print("\n✓ Done.")
     print(f"   Name: {server_flag} {server_name}")
-    print(f"   Host: {args.server_domain}:{args.xray_port}")
+    print(f"   Host: {args.server_domain}:{args.xhttp_port}  (xhttp)  +  tcp+vision: {args.tcp_port}")
     print(f"   Agent URL: {agent_url}")
     print(f"   Server ID in bot DB: {server_id}")
     return 0
