@@ -5,7 +5,7 @@ from datetime import UTC
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
-from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
+from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeChat, BotCommandScopeDefault
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 from sqlalchemy import select
@@ -50,6 +50,10 @@ async def configure_bot_commands(bot: Bot) -> None:
         BotCommand(command="info", description="about, documents, news"),
     ]
     await bot.set_my_commands(default_commands, scope=BotCommandScopeDefault())
+    # An older build set an all_private_chats list (with /help, no /info); that
+    # narrower scope overrides the default for regular users. Clear it so the
+    # default scope above governs.
+    await bot.delete_my_commands(scope=BotCommandScopeAllPrivateChats())
 
     admin_commands = default_commands + [BotCommand(command="admin", description="admin panel")]
     for admin_id in settings.admin_ids:
