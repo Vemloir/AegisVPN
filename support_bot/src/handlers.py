@@ -1,12 +1,17 @@
-"""All bot handlers: user ticket flow (create / list / view / reply / close),
-language settings, and the operator side (one consolidated message per update,
-reply-to relay, inline close). Handlers stay thin — DB in storage.py, text in
-i18n.py/render.py, math in pagination.py — so the logic is unit-tested without
-Telegram.
+"""All bot handlers: user ticket flow (create / list / view / reply / close) and
+the operator side (one consolidated message per update, reply-to relay, inline
+close). Handlers stay thin — DB in storage.py, text in i18n.py/render.py, math
+in pagination.py — so the logic is unit-tested without Telegram.
 
-User-facing text is localized; a user's language comes from the main bot
-(read-only) until they override it here via /settings. Operator-facing
-notifications stay Russian (the operators are the RU team)."""
+User-facing text is localized; a user's language is taken from the main bot
+(read-only). Operator-facing notifications stay Russian (the operators are the
+RU team).
+
+Handler ORDER matters: the operator reply-to relay is registered BEFORE the FSM
+state handlers, so an operator answering a ticket by replying always relays to
+that ticket — even if they happen to be mid-/new — instead of being captured as
+new-ticket input.
+"""
 
 from __future__ import annotations
 
@@ -19,8 +24,8 @@ from aiogram.types import CallbackQuery, Message
 
 from .config import settings
 from .deps import ADMIN_IDS, storage
-from .i18n import normalize_lang, t
-from .keyboards import admin_ticket_kb, main_menu_kb, settings_kb, ticket_view_kb, tickets_list_kb
+from .i18n import t
+from .keyboards import admin_ticket_kb, main_menu_kb, ticket_view_kb, tickets_list_kb
 from .mainbot import main_bot_language
 from .pagination import Page
 from .render import render_admin_history, render_user_thread
@@ -34,10 +39,7 @@ TITLE_MAX = 120
 
 # --- language ---------------------------------------------------------------
 async def resolve_lang(user_id: int) -> str:
-    """Support-bot override if set, else the main bot's language, else ru."""
-    override = await storage.get_lang(user_id)
-    if override:
-        return normalize_lang(override)
+    """A user's UI language, taken from the main bot (read-only); ru if unknown."""
     return await main_bot_language(user_id) or "ru"
 
 
@@ -67,7 +69,7 @@ async def build_list(user_id: int, page: int, lang: str):
     return text, tickets_list_kb(tickets, pg, lang)
 
 
-# --- /start + menu ----------------------------------------------------------
+# --- commands ---------------------------------------------------------------
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext) -> None:
     await state.clear()
@@ -90,13 +92,6 @@ async def cmd_tickets(message: Message, state: FSMContext) -> None:
     await message.answer(text, reply_markup=kb)
 
 
-@router.message(Command("settings"))
-async def cmd_settings(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    lang = await resolve_lang(message.from_user.id)  # type: ignore[union-attr]
-    await message.answer(t(lang, "settings_title", lang=t(lang, "lang_name")), reply_markup=settings_kb(lang))
-
-
 @router.callback_query(F.data == "menu")
 async def cb_menu(call: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
@@ -110,14 +105,56 @@ async def cb_noop(call: CallbackQuery) -> None:
     await call.answer()
 
 
-@router.callback_query(F.data.startswith("set_lang:"))
-async def cb_set_lang(call: CallbackQuery) -> None:
-    lang = normalize_lang(call.data.split(":")[1])
-    await storage.set_lang(call.from_user.id, lang)
-    await call.message.edit_text(  # type: ignore[union-attr]
-        t(lang, "settings_title", lang=t(lang, "lang_name")), reply_markup=settings_kb(lang)
-    )
-    await call.answer(t(lang, "settings_saved"))
+# --- operator reply-to relay (BEFORE the FSM states on purpose) ------------
+@router.message(F.from_user.id.in_(ADMIN_IDS), F.reply_to_message)
+async def admin_reply(message: Message, state: FSMContext, bot: Bot) -> None:
+    ticket_id = await storage.ticket_by_admin_msg(message.chat.id, message.reply_to_message.message_id)  # type: ignore[union-attr]
+    if ticket_id is None:
+        await message.answer("Не удалось определить тикет. Ответьте (reply) на сообщение тикета.")
+        return
+    # A reply to a ticket message is always a ticket answer — drop any stale
+    # /new flow the operator may have been in.
+    await state.clear()
+    ticket = await storage.get_ticket(ticket_id)
+    if not ticket:
+        await message.answer("Тикет не найден.")
+        return
+    text = (message.text or message.caption or "").strip()
+    if not text:
+        await message.answer("Пустой ответ не отправлен.")
+        return
+    await storage.add_message(ticket_id, "operator", text)
+    user_lang = await resolve_lang(ticket["user_id"])
+    try:
+        await bot.send_message(ticket["user_id"], f"{t(user_lang, 'support_reply', id=ticket_id)}\n\n{text}")
+        await message.answer("Отправлено.")
+    except Exception as exc:
+        logger.warning("deliver to user %s failed: %s", ticket["user_id"], exc)
+        await message.answer("Не удалось доставить (пользователь остановил бота).")
+
+
+@router.callback_query(F.data.startswith("a_close:"))
+async def cb_admin_close(call: CallbackQuery, bot: Bot) -> None:
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer()
+        return
+    ticket_id = int(call.data.split(":")[1])
+    ticket = await storage.get_ticket(ticket_id)
+    if not ticket:
+        await call.answer("Тикет не найден", show_alert=True)
+        return
+    if ticket["status"] == "open":
+        await storage.close_ticket(ticket_id)
+        user_lang = await resolve_lang(ticket["user_id"])
+        try:
+            await bot.send_message(ticket["user_id"], t(user_lang, "closed_by_support", id=ticket_id))
+        except Exception:
+            pass
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)  # type: ignore[union-attr]
+    except Exception:
+        pass
+    await call.answer(f"Тикет #{ticket_id} закрыт")
 
 
 # --- create ticket (FSM: title -> body) ------------------------------------
@@ -238,55 +275,6 @@ async def cb_close(call: CallbackQuery, bot: Bot) -> None:
     messages = await storage.get_messages(ticket_id)
     await call.message.edit_text(render_user_thread(ticket, messages, lang), reply_markup=ticket_view_kb(ticket, lang))  # type: ignore[union-attr]
     await call.answer(t(lang, "closed_toast"))
-
-
-# --- operator: inline close + reply-to relay -------------------------------
-@router.callback_query(F.data.startswith("a_close:"))
-async def cb_admin_close(call: CallbackQuery, bot: Bot) -> None:
-    if call.from_user.id not in ADMIN_IDS:
-        await call.answer()
-        return
-    ticket_id = int(call.data.split(":")[1])
-    ticket = await storage.get_ticket(ticket_id)
-    if not ticket:
-        await call.answer("Тикет не найден", show_alert=True)
-        return
-    if ticket["status"] == "open":
-        await storage.close_ticket(ticket_id)
-        user_lang = await resolve_lang(ticket["user_id"])
-        try:
-            await bot.send_message(ticket["user_id"], t(user_lang, "closed_by_support", id=ticket_id))
-        except Exception:
-            pass
-    try:
-        await call.message.edit_reply_markup(reply_markup=None)  # type: ignore[union-attr]
-    except Exception:
-        pass
-    await call.answer(f"Тикет #{ticket_id} закрыт")
-
-
-@router.message(F.from_user.id.in_(ADMIN_IDS), F.reply_to_message)
-async def admin_reply(message: Message, bot: Bot) -> None:
-    ticket_id = await storage.ticket_by_admin_msg(message.chat.id, message.reply_to_message.message_id)  # type: ignore[union-attr]
-    if ticket_id is None:
-        await message.answer("Не удалось определить тикет. Ответьте (reply) на сообщение тикета.")
-        return
-    ticket = await storage.get_ticket(ticket_id)
-    if not ticket:
-        await message.answer("Тикет не найден.")
-        return
-    text = (message.text or message.caption or "").strip()
-    if not text:
-        await message.answer("Пустой ответ не отправлен.")
-        return
-    await storage.add_message(ticket_id, "operator", text)
-    user_lang = await resolve_lang(ticket["user_id"])
-    try:
-        await bot.send_message(ticket["user_id"], f"{t(user_lang, 'support_reply', id=ticket_id)}\n\n{text}")
-        await message.answer("Отправлено.")
-    except Exception as exc:
-        logger.warning("deliver to user %s failed: %s", ticket["user_id"], exc)
-        await message.answer("Не удалось доставить (пользователь остановил бота).")
 
 
 # --- fallback (must be registered last) ------------------------------------

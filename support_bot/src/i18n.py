@@ -49,15 +49,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "who_you": "Вы",
         "who_support": "Поддержка",
         "truncated": "… (ранние сообщения скрыты)",
-        "settings_title": "Язык интерфейса: {lang}",
-        "lang_name": "Русский",
-        "btn_lang_ru": "Русский",
-        "btn_lang_en": "English",
-        "settings_saved": "Язык сохранён.",
         "cmd_start": "Меню",
         "cmd_new": "Создать тикет",
         "cmd_tickets": "Мои тикеты",
-        "cmd_settings": "Язык",
     },
     "en": {
         "welcome": (
@@ -97,15 +91,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "who_you": "You",
         "who_support": "Support",
         "truncated": "… (earlier messages hidden)",
-        "settings_title": "Interface language: {lang}",
-        "lang_name": "English",
-        "btn_lang_ru": "Русский",
-        "btn_lang_en": "English",
-        "settings_saved": "Language updated.",
         "cmd_start": "Menu",
         "cmd_new": "Create ticket",
         "cmd_tickets": "My tickets",
-        "cmd_settings": "Language",
     },
 }
 

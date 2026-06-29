@@ -29,7 +29,6 @@ def _commands(lang: str) -> list[BotCommand]:
         BotCommand(command="start", description=t(lang, "cmd_start")),
         BotCommand(command="new", description=t(lang, "cmd_new")),
         BotCommand(command="tickets", description=t(lang, "cmd_tickets")),
-        BotCommand(command="settings", description=t(lang, "cmd_settings")),
     ]
 
 

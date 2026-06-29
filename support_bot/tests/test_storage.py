@@ -59,14 +59,6 @@ async def test_open_tickets_sort_first(store):
     assert ids[0] == old
 
 
-async def test_lang_override(store):
-    assert await store.get_lang(42) is None  # default -> follow main bot
-    await store.set_lang(42, "en")
-    assert await store.get_lang(42) == "en"
-    await store.set_lang(42, "ru")  # overwrite
-    assert await store.get_lang(42) == "ru"
-
-
 async def test_admin_msg_map(store):
     tid = await store.create_ticket(1, None, "U", "T", "x")
     await store.set_admin_msg(operator_chat_id=555, operator_msg_id=9, ticket_id=tid)

@@ -47,18 +47,6 @@ def ticket_view_kb(ticket: dict, lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def settings_kb(lang: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text=t(lang, "btn_lang_ru"), callback_data="set_lang:ru"),
-                InlineKeyboardButton(text=t(lang, "btn_lang_en"), callback_data="set_lang:en"),
-            ],
-            [InlineKeyboardButton(text=t(lang, "btn_back_menu"), callback_data="menu")],
-        ]
-    )
-
-
 def admin_ticket_kb(ticket_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text=f"Закрыть тикет #{ticket_id}", callback_data=f"a_close:{ticket_id}")]]
