@@ -1,7 +1,9 @@
 # env / secrets
 .env
 **/.env
+*.env
 !**/.env.example
+!*.env.example
 
 # python
 __pycache__/

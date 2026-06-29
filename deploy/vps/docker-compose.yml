@@ -56,6 +56,21 @@ services:
       - ./data/bot:/data
       - ./data/vpn:/vpn-data:ro
 
+  # Support bot (@AegisVPNsupportBot): two-way user<->operator relay used as the
+  # official feedback channel. Long-polling (no inbound port). Token + operator
+  # IDs come from ./support.env (never in the repo). Separate Telegram bot, so it
+  # runs independently of the main bot lifecycle.
+  support-bot:
+    build:
+      context: ../../support_bot
+    container_name: aegis-support-bot
+    restart: unless-stopped
+    env_file:
+      - ./support.env
+    logging: *default-logging
+    volumes:
+      - ./data/support:/data
+
   mtg:
     image: ghcr.io/9seconds/mtg:2
     container_name: aegis-mtg
