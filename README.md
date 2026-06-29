@@ -50,7 +50,7 @@ This is what makes multi-server subscriptions possible:
 - automatic subscription disable on expiry
 - multi-server subscriptions
 - per-server `public/restricted` access mode
-- whitelist grants for restricted servers
+- allowlist grants for restricted servers
 - admin panel in Telegram
 - language switch in `/settings` (`ru/en`)
 - HTTPS subscription endpoint via Caddy
@@ -74,7 +74,7 @@ The admin panel is inline-button driven and currently supports:
 - stats
 - servers list
 - server access mode toggle: `public` or `restricted`
-- whitelist grant or revoke for a specific `tg_id`
+- allowlist grant or revoke for a specific `tg_id`
 - users lookup by `tg_id`
 - issue subscription
 - renew subscription
@@ -115,7 +115,7 @@ The admin panel is inline-button driven and currently supports:
 
 The bot code in [bot/src](bot/src):
 
-- stores users, plans, subscriptions, payments, servers, and whitelist grants
+- stores users, plans, subscriptions, payments, servers, and allowlist grants
 - exposes `/sub/{token}` over HTTP
 - generates the final Base64 subscription content on the fly
 - syncs UUIDs to all allowed servers through `agent`

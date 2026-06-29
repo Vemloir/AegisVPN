@@ -6,4 +6,4 @@ the acceptance gate on their next interaction.
 """
 
 # Bump this when the Privacy Policy or the Terms of Service materially changes.
-TERMS_VERSION = "2026-06-22"
+TERMS_VERSION = "2026-06-29"

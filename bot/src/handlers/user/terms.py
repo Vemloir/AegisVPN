@@ -23,6 +23,7 @@ ACCEPT_CALLBACK = "terms_accept"
 
 GITHUB_URL = "https://github.com/demented484/AegisVPN"
 NEWS_URL = "https://t.me/AegisVPNnews"
+SUPPORT_URL = "https://t.me/AegisVPNsupportBot"
 
 _DOCS_DIR = Path(__file__).resolve().parents[2] / "privacy"
 
@@ -127,9 +128,8 @@ async def cmd_info(message: Message):
     )
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text=t(language, "info_support_button"), url=SUPPORT_URL)],
             [InlineKeyboardButton(text=t(language, "info_news_button"), url=NEWS_URL)],
-            # TODO(support): add a "Поддержка" button here once a support
-            # contact/flow exists (see ToS sections 8.3 / 19.5).
         ]
     )
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard, disable_web_page_preview=True)

@@ -1,4 +1,4 @@
-"""Server management: list, access mode toggle, per-user whitelist grants."""
+"""Server management: list, access mode toggle, per-user access grants."""
 
 from aiogram import F, Router, html
 from aiogram.fsm.context import FSMContext

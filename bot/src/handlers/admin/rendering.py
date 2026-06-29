@@ -31,7 +31,7 @@ async def render_server_details(server_id: int) -> tuple[str, InlineKeyboardMark
         if server.access_mode == "public":
             access_lines.append("Доступ: все пользователи")
         else:
-            access_lines.append(f"Доступ: только whitelist ({len(server.access_grants)} чел.)")
+            access_lines.append(f"Доступ: только список доступа ({len(server.access_grants)} чел.)")
             if server.access_grants:
                 for grant in server.access_grants[:15]:
                     username = f" @{grant.user.username}" if grant.user and grant.user.username else ""

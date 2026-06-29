@@ -39,6 +39,7 @@ TEXTS: dict[str, dict[str, str]] = {
         ),
         "info_github_label": "Исходный код на GitHub",
         "info_news_button": "Новости",
+        "info_support_button": "Поддержка",
         "buy_stars": "Купить звёзды",
         "back": "Назад",
         "access_unavailable": "Доступ недоступен.",
@@ -53,9 +54,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "subscription_links_unavailable": "Сейчас для вашей подписки нет доступных локаций.",
         "subscription_hint": "Выберите нужный формат подписки и откройте инструкцию внутри него.",
         "subscription_choose_format": "Выберите формат подписки кнопками ниже.",
-        "v2ray_title": "Подписка для V2Ray",
+        "v2ray_title": "Подписка",
         "back_to_subscription": "Назад в подписку",
-        "v2ray_detail_hint": "Вставьте эту ссылку в V2Ray-клиент как подписку.",
+        "v2ray_detail_hint": "Вставьте эту ссылку как подписку в приложение (Happ, Hiddify, v2rayTun и др.).",
         "start_text": (
             "Привет, {name}! Я Aegis VPN бот.\n\n"
             "Основные команды:\n"
@@ -112,13 +113,12 @@ TEXTS: dict[str, dict[str, str]] = {
         "language_updated": "Язык обновлён.",
         "setup_text": ("Откройте /subscription, выберите нужный формат подписки и используйте инструкцию внутри него."),
         "setup_text_v2ray": (
-            "Инструкция для V2Ray:\n\n"
-            "1. Установите V2Ray-клиент: Happ, Hiddify, v2rayTun, v2rayNG или другой совместимый.\n\n"
-            "2. Откройте /subscription и нажмите кнопку V2Ray.\n\n"
-            "3. Скопируйте ссылку подписки с экрана V2Ray.\n\n"
-            "4. В клиенте выберите добавление подписки по ссылке или import by URL.\n\n"
-            "5. Вставьте ссылку и импортируйте локации.\n\n"
-            "6. Если локации не появились сразу, обновите подписку внутри клиента."
+            "Как подключиться:\n\n"
+            "1. Установите приложение: Happ, Hiddify, v2rayTun, v2rayNG или другое совместимое.\n\n"
+            "2. Откройте /subscription и скопируйте ссылку на подписку.\n\n"
+            "3. В приложении выберите «Добавить подписку» (import by URL) и вставьте ссылку.\n\n"
+            "4. Импортируйте локации и подключайтесь.\n\n"
+            "5. Если локации не появились сразу, обновите подписку внутри приложения."
         ),
         "no_plans_available": "Сейчас нет доступных тарифов.",
         "choose_plan_buy": "Выберите тариф для покупки:",
@@ -222,6 +222,7 @@ TEXTS: dict[str, dict[str, str]] = {
         ),
         "info_github_label": "Source code on GitHub",
         "info_news_button": "News",
+        "info_support_button": "Support",
         "buy_stars": "Buy Stars",
         "back": "Back",
         "access_unavailable": "Access unavailable.",
@@ -236,9 +237,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "subscription_links_unavailable": "There are no available locations for your subscription right now.",
         "subscription_hint": "Choose the subscription format you need and open the instruction inside it.",
         "subscription_choose_format": "Choose the subscription format with the buttons below.",
-        "v2ray_title": "V2Ray Subscription",
+        "v2ray_title": "Subscription",
         "back_to_subscription": "Back to subscription",
-        "v2ray_detail_hint": "Paste this link into your V2Ray client as a subscription.",
+        "v2ray_detail_hint": "Paste this link as a subscription into your app (Happ, Hiddify, v2rayTun, etc.).",
         "start_text": (
             "Hello, {name}! I am the Aegis VPN bot.\n\n"
             "Main commands:\n"
@@ -297,13 +298,12 @@ TEXTS: dict[str, dict[str, str]] = {
             "Open /subscription, choose the subscription format you need, and use the instruction inside it."
         ),
         "setup_text_v2ray": (
-            "V2Ray setup guide:\n\n"
-            "1. Install a V2Ray client such as Happ, Hiddify, v2rayTun, v2rayNG, or another compatible app.\n\n"
-            "2. Open /subscription and press the V2Ray button.\n\n"
-            "3. Copy the subscription URL from the V2Ray screen.\n\n"
-            "4. In the client, choose add subscription or import by URL.\n\n"
-            "5. Paste the link and import the locations.\n\n"
-            "6. If the locations do not appear immediately, refresh the subscription inside the client."
+            "How to connect:\n\n"
+            "1. Install an app: Happ, Hiddify, v2rayTun, v2rayNG, or another compatible client.\n\n"
+            "2. Open /subscription and copy your subscription link.\n\n"
+            "3. In the app, choose \"Add subscription\" (import by URL) and paste the link.\n\n"
+            "4. Import the locations and connect.\n\n"
+            "5. If the locations don't appear right away, refresh the subscription inside the app."
         ),
         "no_plans_available": "There are no available plans right now.",
         "choose_plan_buy": "Choose a plan to buy:",

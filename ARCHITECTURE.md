@@ -101,7 +101,7 @@ Main relationships:
 - one `User` can have subscriptions
 - one `Subscription` can be synced to many servers
 - one `Server` can be public or restricted
-- restricted servers use `ServerAccessGrant` as a whitelist
+- restricted servers use `ServerAccessGrant` as a allowlist
 
 Relevant models:
 
@@ -243,7 +243,7 @@ It:
 After that, the server becomes available for:
 
 - public distribution
-- restricted whitelist distribution
+- restricted allowlist distribution
 - inclusion in subscription payloads
 
 ## Summary
@@ -254,4 +254,4 @@ The system is built around one rule:
 - agents are the source of truth for local server state
 - Xray is the data plane only
 
-That separation is what makes multi-server support, whitelist-based access, and near-automatic server expansion possible.
+That separation is what makes multi-server support, allowlist-based access, and near-automatic server expansion possible.
