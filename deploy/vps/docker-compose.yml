@@ -70,6 +70,8 @@ services:
     logging: *default-logging
     volumes:
       - ./data/support:/data
+      # Main bot's sqlite, READ-ONLY — initial UI language per user.
+      - ./data/bot:/main-data:ro
 
   mtg:
     image: ghcr.io/9seconds/mtg:2

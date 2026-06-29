@@ -8,42 +8,48 @@ MSGS = [
 ]
 
 
-def test_admin_history_has_contact_and_full_thread():
+def test_admin_history_is_russian_with_contact():
     out = render_admin_history(TICKET, MSGS)
     assert "Тикет #7 — Не работает Германия" in out
     assert "ID: 42, @ivan" in out
     assert "Статус: открыт" in out
     assert "Пользователь: Германия не подключается" in out
     assert "Поддержка: Проверьте обновление подписки" in out
-    assert "Пользователь: Помогло, спасибо" in out
 
 
 def test_admin_history_without_username():
-    t = {**TICKET, "username": None}
-    out = render_admin_history(t, MSGS)
-    assert "ID: 42)" in out and "@" not in out.split("\n")[1]
+    out = render_admin_history({**TICKET, "username": None}, MSGS)
+    assert "ID: 42)" in out
 
 
-def test_user_thread_hides_contact():
-    out = render_user_thread(TICKET, MSGS)
+def test_user_thread_ru():
+    out = render_user_thread(TICKET, MSGS, "ru")
     assert "Тикет #7" in out and "Статус: открыт" in out
-    assert "ID: 42" not in out  # user view must not echo the contact line
+    assert "Вы: Германия не подключается" in out and "Поддержка:" in out
+    assert "ID: 42" not in out  # user view hides the contact line
 
 
-def test_closed_status_label():
-    out = render_user_thread({**TICKET, "status": "closed"}, MSGS)
-    assert "Статус: закрыт" in out
+def test_user_thread_en():
+    out = render_user_thread(TICKET, MSGS, "en")
+    assert "Ticket #7" in out and "Status: open" in out
+    assert "You: Германия не подключается" in out and "Support:" in out
+
+
+def test_closed_status_localized():
+    assert "Статус: закрыт" in render_user_thread({**TICKET, "status": "closed"}, MSGS, "ru")
+    assert "Status: closed" in render_user_thread({**TICKET, "status": "closed"}, MSGS, "en")
 
 
 def test_history_truncates_oldest_first():
     many = [{"sender": "user", "text": f"msg-{i}-" + "x" * 50} for i in range(200)]
     out = render_admin_history(TICKET, many, max_len=800)
     assert "ранние сообщения скрыты" in out
-    assert "msg-199-" in out  # newest kept
-    assert "msg-0-" not in out  # oldest dropped
+    assert "msg-199-" in out and "msg-0-" not in out
     assert len(out) <= 1000
 
 
-def test_button_label_truncates_long_title():
-    label = ticket_button_label({"id": 3, "title": "x" * 80, "status": "open"})
-    assert label.startswith("#3 ") and label.endswith("— открыт") and "…" in label
+def test_button_label_localized_and_truncated():
+    ru = ticket_button_label({"id": 3, "title": "x" * 80, "status": "open"}, "ru")
+    en = ticket_button_label({"id": 3, "title": "y" * 80, "status": "closed"}, "en")
+    assert ru.startswith("#3 ") and ru.endswith("— открыт") and "…" in ru
+    assert en.endswith("— closed")

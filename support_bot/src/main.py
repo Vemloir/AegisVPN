@@ -19,21 +19,26 @@ from aiogram.types import BotCommand
 from .config import settings
 from .deps import ADMIN_IDS, storage
 from .handlers import router
+from .i18n import t
 
 logger = logging.getLogger("support_bot")
+
+
+def _commands(lang: str) -> list[BotCommand]:
+    return [
+        BotCommand(command="start", description=t(lang, "cmd_start")),
+        BotCommand(command="new", description=t(lang, "cmd_new")),
+        BotCommand(command="tickets", description=t(lang, "cmd_tickets")),
+        BotCommand(command="settings", description=t(lang, "cmd_settings")),
+    ]
 
 
 async def main() -> None:
     logging.basicConfig(level=settings.log_level)
     await storage.init()
     bot = Bot(token=settings.support_bot_token.get_secret_value())
-    await bot.set_my_commands(
-        [
-            BotCommand(command="start", description="Меню"),
-            BotCommand(command="new", description="Создать тикет"),
-            BotCommand(command="tickets", description="Мои тикеты"),
-        ]
-    )
+    await bot.set_my_commands(_commands("ru"))  # default
+    await bot.set_my_commands(_commands("en"), language_code="en")
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
     logger.info("Support ticket bot starting (polling); %d operator(s) configured", len(ADMIN_IDS))

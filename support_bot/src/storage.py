@@ -38,6 +38,10 @@ CREATE TABLE IF NOT EXISTS admin_msg_map (
     ticket_id        INTEGER NOT NULL,
     PRIMARY KEY (operator_chat_id, operator_msg_id)
 );
+CREATE TABLE IF NOT EXISTS user_lang (
+    user_id INTEGER PRIMARY KEY,
+    lang    TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_tickets_user ON tickets(user_id);
 CREATE INDEX IF NOT EXISTS idx_msgs_ticket ON ticket_messages(ticket_id);
 """
@@ -128,6 +132,20 @@ class Storage:
                 "INSERT OR REPLACE INTO admin_msg_map (operator_chat_id, operator_msg_id, ticket_id)"
                 " VALUES (?, ?, ?)",
                 (operator_chat_id, operator_msg_id, ticket_id),
+            )
+            await db.commit()
+
+    async def get_lang(self, user_id: int) -> str | None:
+        """The user's support-bot language override (None = follow the main bot)."""
+        async with aiosqlite.connect(self.path) as db:
+            async with db.execute("SELECT lang FROM user_lang WHERE user_id = ?", (user_id,)) as cur:
+                row = await cur.fetchone()
+                return row[0] if row else None
+
+    async def set_lang(self, user_id: int, lang: str) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "INSERT OR REPLACE INTO user_lang (user_id, lang) VALUES (?, ?)", (user_id, lang)
             )
             await db.commit()
 

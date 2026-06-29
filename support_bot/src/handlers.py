@@ -1,7 +1,12 @@
-"""All bot handlers: user ticket flow (create / list / view / reply / close) and
-the operator side (one consolidated message per update, reply-to relay, inline
-close). Handlers stay thin — DB in storage.py, text in render.py, math in
-pagination.py — so the logic is unit-tested without Telegram."""
+"""All bot handlers: user ticket flow (create / list / view / reply / close),
+language settings, and the operator side (one consolidated message per update,
+reply-to relay, inline close). Handlers stay thin — DB in storage.py, text in
+i18n.py/render.py, math in pagination.py — so the logic is unit-tested without
+Telegram.
+
+User-facing text is localized; a user's language comes from the main bot
+(read-only) until they override it here via /settings. Operator-facing
+notifications stay Russian (the operators are the RU team)."""
 
 from __future__ import annotations
 
@@ -14,7 +19,9 @@ from aiogram.types import CallbackQuery, Message
 
 from .config import settings
 from .deps import ADMIN_IDS, storage
-from .keyboards import admin_ticket_kb, main_menu_kb, ticket_view_kb, tickets_list_kb
+from .i18n import normalize_lang, t
+from .keyboards import admin_ticket_kb, main_menu_kb, settings_kb, ticket_view_kb, tickets_list_kb
+from .mainbot import main_bot_language
 from .pagination import Page
 from .render import render_admin_history, render_user_thread
 from .states import CreateTicket, ReplyTicket
@@ -23,13 +30,21 @@ logger = logging.getLogger("support_bot")
 router = Router()
 
 TITLE_MAX = 120
-PROMPT_TITLE = "Введите короткое название тикета (тему):"
 
 
-# --- helpers ---------------------------------------------------------------
+# --- language ---------------------------------------------------------------
+async def resolve_lang(user_id: int) -> str:
+    """Support-bot override if set, else the main bot's language, else ru."""
+    override = await storage.get_lang(user_id)
+    if override:
+        return normalize_lang(override)
+    return await main_bot_language(user_id) or "ru"
+
+
+# --- helpers ----------------------------------------------------------------
 async def notify_admins(bot: Bot, ticket_id: int) -> None:
-    """Send ONE consolidated message (full history + inline Close) to each
-    operator and remember it so their reply-to resolves back to this ticket."""
+    """One consolidated RU message (full history + inline Close) per operator,
+    remembered so their reply-to resolves back to this ticket."""
     ticket = await storage.get_ticket(ticket_id)
     if not ticket:
         return
@@ -44,43 +59,49 @@ async def notify_admins(bot: Bot, ticket_id: int) -> None:
             logger.warning("notify operator %s failed: %s", operator_id, exc)
 
 
-async def _show_ticket(message: Message, ticket: dict) -> None:
-    messages = await storage.get_messages(ticket["id"])
-    await message.edit_text(render_user_thread(ticket, messages), reply_markup=ticket_view_kb(ticket))
-
-
-async def build_list(user_id: int, page: int):
+async def build_list(user_id: int, page: int, lang: str):
     total = await storage.count_tickets(user_id)
     pg = Page(page=page, per_page=settings.page_size, total=total)
     tickets = await storage.list_tickets(user_id, pg.offset, pg.per_page) if total else []
-    text = "Ваши тикеты:" if tickets else "У вас пока нет тикетов. Нажмите «Создать тикет»."
-    return text, tickets_list_kb(tickets, pg)
+    text = t(lang, "list_title") if tickets else t(lang, "list_empty")
+    return text, tickets_list_kb(tickets, pg, lang)
 
 
-# --- /start + menu ---------------------------------------------------------
+# --- /start + menu ----------------------------------------------------------
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer(settings.welcome_text, reply_markup=main_menu_kb())
+    lang = await resolve_lang(message.from_user.id)  # type: ignore[union-attr]
+    await message.answer(t(lang, "welcome"), reply_markup=main_menu_kb(lang))
 
 
 @router.message(Command("new"))
 async def cmd_new(message: Message, state: FSMContext) -> None:
+    lang = await resolve_lang(message.from_user.id)  # type: ignore[union-attr]
     await state.set_state(CreateTicket.title)
-    await message.answer(PROMPT_TITLE)
+    await message.answer(t(lang, "prompt_title"))
 
 
 @router.message(Command("tickets"))
 async def cmd_tickets(message: Message, state: FSMContext) -> None:
     await state.clear()
-    text, kb = await build_list(message.from_user.id, 0)  # type: ignore[union-attr]
+    lang = await resolve_lang(message.from_user.id)  # type: ignore[union-attr]
+    text, kb = await build_list(message.from_user.id, 0, lang)  # type: ignore[union-attr]
     await message.answer(text, reply_markup=kb)
+
+
+@router.message(Command("settings"))
+async def cmd_settings(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    lang = await resolve_lang(message.from_user.id)  # type: ignore[union-attr]
+    await message.answer(t(lang, "settings_title", lang=t(lang, "lang_name")), reply_markup=settings_kb(lang))
 
 
 @router.callback_query(F.data == "menu")
 async def cb_menu(call: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    await call.message.edit_text(settings.welcome_text, reply_markup=main_menu_kb())  # type: ignore[union-attr]
+    lang = await resolve_lang(call.from_user.id)
+    await call.message.edit_text(t(lang, "welcome"), reply_markup=main_menu_kb(lang))  # type: ignore[union-attr]
     await call.answer()
 
 
@@ -89,36 +110,49 @@ async def cb_noop(call: CallbackQuery) -> None:
     await call.answer()
 
 
+@router.callback_query(F.data.startswith("set_lang:"))
+async def cb_set_lang(call: CallbackQuery) -> None:
+    lang = normalize_lang(call.data.split(":")[1])
+    await storage.set_lang(call.from_user.id, lang)
+    await call.message.edit_text(  # type: ignore[union-attr]
+        t(lang, "settings_title", lang=t(lang, "lang_name")), reply_markup=settings_kb(lang)
+    )
+    await call.answer(t(lang, "settings_saved"))
+
+
 # --- create ticket (FSM: title -> body) ------------------------------------
 @router.callback_query(F.data == "t_new")
 async def cb_new(call: CallbackQuery, state: FSMContext) -> None:
+    lang = await resolve_lang(call.from_user.id)
     await state.set_state(CreateTicket.title)
-    await call.message.edit_text(PROMPT_TITLE)  # type: ignore[union-attr]
+    await call.message.edit_text(t(lang, "prompt_title"))  # type: ignore[union-attr]
     await call.answer()
 
 
 @router.message(CreateTicket.title)
 async def st_title(message: Message, state: FSMContext) -> None:
+    lang = await resolve_lang(message.from_user.id)  # type: ignore[union-attr]
     title = (message.text or "").strip()
     if not title:
-        await message.answer("Название не может быть пустым. Введите тему тикета:")
+        await message.answer(t(lang, "title_empty"))
         return
     await state.update_data(title=title[:TITLE_MAX])
     await state.set_state(CreateTicket.body)
-    await message.answer("Теперь опишите ваше обращение одним сообщением:")
+    await message.answer(t(lang, "prompt_body"))
 
 
 @router.message(CreateTicket.body)
 async def st_body(message: Message, state: FSMContext, bot: Bot) -> None:
+    lang = await resolve_lang(message.from_user.id)  # type: ignore[union-attr]
     body = (message.text or "").strip()
     if not body:
-        await message.answer("Сообщение не может быть пустым. Опишите обращение:")
+        await message.answer(t(lang, "body_empty"))
         return
     data = await state.get_data()
     await state.clear()
     u = message.from_user
     ticket_id = await storage.create_ticket(u.id, u.username, u.full_name, data["title"], body)  # type: ignore[union-attr]
-    await message.answer(f"Тикет #{ticket_id} создан. Поддержка ответит здесь.", reply_markup=main_menu_kb())
+    await message.answer(t(lang, "created", id=ticket_id), reply_markup=main_menu_kb(lang))
     await notify_admins(bot, ticket_id)
 
 
@@ -126,66 +160,72 @@ async def st_body(message: Message, state: FSMContext, bot: Bot) -> None:
 @router.callback_query(F.data.startswith("t_list:"))
 async def cb_list(call: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
+    lang = await resolve_lang(call.from_user.id)
     page = int(call.data.split(":")[1])
-    text, kb = await build_list(call.from_user.id, page)
+    text, kb = await build_list(call.from_user.id, page, lang)
     await call.message.edit_text(text, reply_markup=kb)  # type: ignore[union-attr]
     await call.answer()
 
 
 @router.callback_query(F.data.startswith("t_open:"))
 async def cb_open(call: CallbackQuery) -> None:
+    lang = await resolve_lang(call.from_user.id)
     ticket_id = int(call.data.split(":")[1])
     ticket = await storage.get_ticket(ticket_id)
     if not ticket or ticket["user_id"] != call.from_user.id:
-        await call.answer("Тикет не найден", show_alert=True)
+        await call.answer(t(lang, "not_found"), show_alert=True)
         return
-    await _show_ticket(call.message, ticket)  # type: ignore[arg-type]
+    messages = await storage.get_messages(ticket_id)
+    await call.message.edit_text(render_user_thread(ticket, messages, lang), reply_markup=ticket_view_kb(ticket, lang))  # type: ignore[union-attr]
     await call.answer()
 
 
 @router.callback_query(F.data.startswith("t_reply:"))
 async def cb_reply(call: CallbackQuery, state: FSMContext) -> None:
+    lang = await resolve_lang(call.from_user.id)
     ticket_id = int(call.data.split(":")[1])
     ticket = await storage.get_ticket(ticket_id)
     if not ticket or ticket["user_id"] != call.from_user.id:
-        await call.answer("Тикет не найден", show_alert=True)
+        await call.answer(t(lang, "not_found"), show_alert=True)
         return
     if ticket["status"] != "open":
-        await call.answer("Тикет закрыт", show_alert=True)
+        await call.answer(t(lang, "closed_alert"), show_alert=True)
         return
     await state.set_state(ReplyTicket.body)
     await state.update_data(ticket_id=ticket_id)
-    await call.message.edit_text(f"Тикет #{ticket_id}: введите сообщение для поддержки:")  # type: ignore[union-attr]
+    await call.message.edit_text(t(lang, "reply_prompt", id=ticket_id))  # type: ignore[union-attr]
     await call.answer()
 
 
 @router.message(ReplyTicket.body)
 async def st_reply(message: Message, state: FSMContext, bot: Bot) -> None:
+    lang = await resolve_lang(message.from_user.id)  # type: ignore[union-attr]
     text = (message.text or "").strip()
     if not text:
-        await message.answer("Сообщение не может быть пустым:")
+        await message.answer(t(lang, "reply_empty"))
         return
     data = await state.get_data()
     ticket_id = data.get("ticket_id")
     await state.clear()
     ticket = await storage.get_ticket(ticket_id)
     if not ticket or ticket["user_id"] != message.from_user.id:  # type: ignore[union-attr]
-        await message.answer("Тикет не найден.", reply_markup=main_menu_kb())
+        await message.answer(t(lang, "not_found"), reply_markup=main_menu_kb(lang))
         return
     if ticket["status"] != "open":
-        await message.answer("Тикет закрыт.", reply_markup=main_menu_kb())
+        await message.answer(t(lang, "closed_alert"), reply_markup=main_menu_kb(lang))
         return
     await storage.add_message(ticket_id, "user", text)
-    await message.answer(f"Сообщение добавлено в тикет #{ticket_id}.", reply_markup=main_menu_kb())
+    await message.answer(t(lang, "reply_added", id=ticket_id), reply_markup=main_menu_kb(lang))
     await notify_admins(bot, ticket_id)
 
 
 @router.callback_query(F.data.startswith("t_close:"))
 async def cb_close(call: CallbackQuery, bot: Bot) -> None:
+    lang = await resolve_lang(call.from_user.id)
     ticket_id = int(call.data.split(":")[1])
     ticket = await storage.get_ticket(ticket_id)
     if not ticket or ticket["user_id"] != call.from_user.id:
-        await call.answer("Тикет не найден", show_alert=True)
+        await call.answer(t(lang, "not_found"), show_alert=True)
         return
     if ticket["status"] == "open":
         await storage.close_ticket(ticket_id)
@@ -195,8 +235,9 @@ async def cb_close(call: CallbackQuery, bot: Bot) -> None:
                 await bot.send_message(operator_id, f"Пользователь закрыл тикет #{ticket_id}.")
             except Exception:
                 pass
-    await _show_ticket(call.message, ticket)  # type: ignore[arg-type]
-    await call.answer("Тикет закрыт")
+    messages = await storage.get_messages(ticket_id)
+    await call.message.edit_text(render_user_thread(ticket, messages, lang), reply_markup=ticket_view_kb(ticket, lang))  # type: ignore[union-attr]
+    await call.answer(t(lang, "closed_toast"))
 
 
 # --- operator: inline close + reply-to relay -------------------------------
@@ -212,8 +253,9 @@ async def cb_admin_close(call: CallbackQuery, bot: Bot) -> None:
         return
     if ticket["status"] == "open":
         await storage.close_ticket(ticket_id)
+        user_lang = await resolve_lang(ticket["user_id"])
         try:
-            await bot.send_message(ticket["user_id"], f"Ваш тикет #{ticket_id} закрыт поддержкой.")
+            await bot.send_message(ticket["user_id"], t(user_lang, "closed_by_support", id=ticket_id))
         except Exception:
             pass
     try:
@@ -238,8 +280,9 @@ async def admin_reply(message: Message, bot: Bot) -> None:
         await message.answer("Пустой ответ не отправлен.")
         return
     await storage.add_message(ticket_id, "operator", text)
+    user_lang = await resolve_lang(ticket["user_id"])
     try:
-        await bot.send_message(ticket["user_id"], f"Ответ поддержки по тикету #{ticket_id}:\n\n{text}")
+        await bot.send_message(ticket["user_id"], f"{t(user_lang, 'support_reply', id=ticket_id)}\n\n{text}")
         await message.answer("Отправлено.")
     except Exception as exc:
         logger.warning("deliver to user %s failed: %s", ticket["user_id"], exc)
@@ -251,5 +294,6 @@ async def admin_reply(message: Message, bot: Bot) -> None:
 async def fallback(message: Message) -> None:
     if message.from_user and message.from_user.id in ADMIN_IDS:
         await message.answer("Чтобы ответить пользователю — сделайте reply на сообщение тикета. Закрыть — кнопкой под ним.")
-    else:
-        await message.answer("Используйте меню ниже.", reply_markup=main_menu_kb())
+        return
+    lang = await resolve_lang(message.from_user.id) if message.from_user else "ru"
+    await message.answer(t(lang, "use_menu"), reply_markup=main_menu_kb(lang))

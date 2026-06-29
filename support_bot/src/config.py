@@ -11,16 +11,11 @@ class Settings(BaseSettings):
     admin_ids: list[int]
     # Persistent sqlite (tickets + messages + admin-message map).
     db_path: str = "/data/support.db"
+    # Main bot's sqlite, mounted READ-ONLY — source of a user's initial language.
+    main_db_path: str = "/main-data/aegis.db"
     log_level: str = "INFO"
     # Tickets per page in "My tickets".
     page_size: int = 5
-
-    # Shown on /start and the main menu. No emoji (house style).
-    welcome_text: str = (
-        "Это поддержка AegisVPN. Здесь можно создать тикет и переписываться с поддержкой.\n\n"
-        "«Создать тикет» — новое обращение.\n"
-        "«Мои тикеты» — список обращений и переписка."
-    )
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
