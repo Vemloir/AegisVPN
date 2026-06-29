@@ -14,6 +14,7 @@ import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import BotCommand
 
 from .config import settings
 from .deps import ADMIN_IDS, storage
@@ -26,6 +27,13 @@ async def main() -> None:
     logging.basicConfig(level=settings.log_level)
     await storage.init()
     bot = Bot(token=settings.support_bot_token.get_secret_value())
+    await bot.set_my_commands(
+        [
+            BotCommand(command="start", description="Меню"),
+            BotCommand(command="new", description="Создать тикет"),
+            BotCommand(command="tickets", description="Мои тикеты"),
+        ]
+    )
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
     logger.info("Support ticket bot starting (polling); %d operator(s) configured", len(ADMIN_IDS))

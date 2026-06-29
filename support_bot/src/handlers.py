@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 
 from aiogram import Bot, F, Router
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
@@ -23,6 +23,7 @@ logger = logging.getLogger("support_bot")
 router = Router()
 
 TITLE_MAX = 120
+PROMPT_TITLE = "Введите короткое название тикета (тему):"
 
 
 # --- helpers ---------------------------------------------------------------
@@ -48,12 +49,12 @@ async def _show_ticket(message: Message, ticket: dict) -> None:
     await message.edit_text(render_user_thread(ticket, messages), reply_markup=ticket_view_kb(ticket))
 
 
-async def _show_list(message: Message, user_id: int, page: int) -> None:
+async def build_list(user_id: int, page: int):
     total = await storage.count_tickets(user_id)
     pg = Page(page=page, per_page=settings.page_size, total=total)
     tickets = await storage.list_tickets(user_id, pg.offset, pg.per_page) if total else []
     text = "Ваши тикеты:" if tickets else "У вас пока нет тикетов. Нажмите «Создать тикет»."
-    await message.edit_text(text, reply_markup=tickets_list_kb(tickets, pg))
+    return text, tickets_list_kb(tickets, pg)
 
 
 # --- /start + menu ---------------------------------------------------------
@@ -61,6 +62,19 @@ async def _show_list(message: Message, user_id: int, page: int) -> None:
 async def cmd_start(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(settings.welcome_text, reply_markup=main_menu_kb())
+
+
+@router.message(Command("new"))
+async def cmd_new(message: Message, state: FSMContext) -> None:
+    await state.set_state(CreateTicket.title)
+    await message.answer(PROMPT_TITLE)
+
+
+@router.message(Command("tickets"))
+async def cmd_tickets(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    text, kb = await build_list(message.from_user.id, 0)  # type: ignore[union-attr]
+    await message.answer(text, reply_markup=kb)
 
 
 @router.callback_query(F.data == "menu")
@@ -79,7 +93,7 @@ async def cb_noop(call: CallbackQuery) -> None:
 @router.callback_query(F.data == "t_new")
 async def cb_new(call: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(CreateTicket.title)
-    await call.message.edit_text("Введите короткое название тикета (тему):")  # type: ignore[union-attr]
+    await call.message.edit_text(PROMPT_TITLE)  # type: ignore[union-attr]
     await call.answer()
 
 
@@ -113,7 +127,8 @@ async def st_body(message: Message, state: FSMContext, bot: Bot) -> None:
 async def cb_list(call: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     page = int(call.data.split(":")[1])
-    await _show_list(call.message, call.from_user.id, page)  # type: ignore[arg-type]
+    text, kb = await build_list(call.from_user.id, page)
+    await call.message.edit_text(text, reply_markup=kb)  # type: ignore[union-attr]
     await call.answer()
 
 
