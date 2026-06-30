@@ -5,11 +5,11 @@ from datetime import UTC, datetime
 
 from aiogram import F, Router, html
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
-from sqlalchemy import func, select
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from sqlalchemy import select
 
 from src.core.database import async_session_maker
-from src.models import Server, Subscription, User
+from src.models import Subscription, User
 from src.services import (
     ServerAccessService,
     SubscriptionService,
@@ -77,24 +77,12 @@ async def render_subscription_info(tg_id: int) -> tuple[str, str | None, str, bo
 
 async def render_subscription_screen(tg_id: int) -> tuple[str, InlineKeyboardMarkup]:
     text, subscription_link, language, show_trial, is_lifetime = await render_subscription_info(tg_id)
-    has_mtproxy = False
-    if subscription_link is not None:
-        async with async_session_maker() as session:
-            count = await session.scalar(
-                select(func.count(Server.id)).where(
-                    Server.is_active == True,  # noqa: E712
-                    Server.mtproxy_secret.isnot(None),
-                    Server.mtproxy_port.isnot(None),
-                )
-            )
-            has_mtproxy = (count or 0) > 0
     markup = subscription_keyboard(
         language,
         has_active_subscription=subscription_link is not None,
         show_trial=show_trial,
         has_v2ray=subscription_link is not None,
         is_lifetime=is_lifetime,
-        has_mtproxy=has_mtproxy,
     )
     return text, markup
 
@@ -163,43 +151,6 @@ async def cq_subscription_show_v2ray(call: CallbackQuery):
         return
     text, markup = rendered
     await call.message.edit_text(text, parse_mode="HTML", reply_markup=markup)  # type: ignore
-    await call.answer()
-
-
-@router.callback_query(F.data == "tg_proxy_open")
-async def cq_tg_proxy_open(call: CallbackQuery):
-    if not await require_privacy(call):
-        return
-    language = await get_user_language(call.from_user.id)
-
-    async with async_session_maker() as session:
-        result = await session.execute(
-            select(Server)
-            .where(
-                Server.is_active == True,  # noqa: E712
-                Server.mtproxy_secret.isnot(None),
-                Server.mtproxy_port.isnot(None),
-            )
-            .order_by(Server.display_order, Server.name)
-        )
-        servers = result.scalars().all()
-
-    if not servers:
-        text = f"{html.bold(t(language, 'tg_proxy_title'))}\n\n{t(language, 'tg_proxy_none')}"
-    else:
-        lines = [html.bold(t(language, "tg_proxy_title")), "", t(language, "tg_proxy_hint"), ""]
-        for server in servers:
-            label = f"{server.flag} {server.name}" if server.flag else server.name
-            link = SubscriptionService.build_mtproxy_link(server)
-            if not link:
-                continue
-            lines.append(f"{label}: {html.link(label, link)}")
-        text = "\n".join(lines)
-
-    markup = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=t(language, "back_to_subscription"), callback_data="subscription_open")]
-    ])
-    await call.message.edit_text(text, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)  # type: ignore
     await call.answer()
 
 

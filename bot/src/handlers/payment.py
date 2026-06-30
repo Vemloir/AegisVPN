@@ -12,7 +12,6 @@ from aiogram.types import (
 )
 from sqlalchemy import select
 
-from src.core.config import settings
 from src.core.database import async_session_maker
 from src.core.logger import logger
 from src.models import Payment, Plan, Subscription, User
@@ -29,11 +28,34 @@ router = Router()
 
 def plan_selection_keyboard(language: str, plans: list[Plan]) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text=f"{plan.days} days - {plan.stars_price} ⭐", callback_data=f"plan_{plan.id}")]
+        [InlineKeyboardButton(text=t(language, "plan_button_label", days=plan.days), callback_data=f"plan_{plan.id}")]
         for plan in plans
     ]
-    rows.append([InlineKeyboardButton(text=t(language, "buy_stars"), url=settings.premium_bot_url)])
     rows.append([InlineKeyboardButton(text=t(language, "back"), callback_data="subscription_open")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def payment_method_keyboard(language: str, plan: Plan) -> InlineKeyboardMarkup:
+    rows = []
+    if plan.stars_price:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=t(language, "pay_stars_button", stars=plan.stars_price),
+                    callback_data=f"paystars_{plan.id}",
+                )
+            ]
+        )
+    if plan.rub_price:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=t(language, "pay_sbp_button", rub=plan.rub_price),
+                    callback_data=f"paysbp_{plan.id}",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text=t(language, "back"), callback_data="buy_plan")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -69,6 +91,30 @@ async def show_plans(call: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("plan_"))
+async def choose_payment_method(call: CallbackQuery):
+    plan_id = int(call.data.split("_")[1])  # type: ignore[index]
+    language = await get_user_language(call.from_user.id)
+
+    async with async_session_maker() as session:
+        plan = await session.get(Plan, plan_id)
+        if not plan or not plan.is_active:
+            await call.answer(t(language, "plan_unavailable"), show_alert=True)
+            return
+
+    await call.message.edit_text(  # type: ignore
+        t(language, "choose_payment_method", days=plan.days),
+        reply_markup=payment_method_keyboard(language, plan),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("paysbp_"))
+async def pay_sbp_soon(call: CallbackQuery):
+    language = await get_user_language(call.from_user.id)
+    await call.answer(t(language, "sbp_soon"), show_alert=True)
+
+
+@router.callback_query(F.data.startswith("paystars_"))
 async def create_invoice(call: CallbackQuery):
     plan_id = int(call.data.split("_")[1])  # type: ignore[index]
     language = await get_user_language(call.from_user.id)
@@ -76,7 +122,7 @@ async def create_invoice(call: CallbackQuery):
 
     async with async_session_maker() as session:
         plan = await session.get(Plan, plan_id)
-        if not plan or not plan.is_active:
+        if not plan or not plan.is_active or not plan.stars_price:
             await call.answer(t(language, "plan_unavailable"), show_alert=True)
             return
 

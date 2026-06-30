@@ -19,7 +19,7 @@ TEXTS: dict[str, dict[str, str]] = {
             "Перед использованием бота ознакомьтесь с политикой "
             "конфиденциальности и примите её.\n\n"
             "Коротко: мы не ведём логи вашего трафика и не храним, какие "
-            "сайты вы посещаете. Полный текст — по кнопке ниже."
+            "сайты вы посещаете. Полный текст по кнопке ниже."
         ),
         "privacy_accepted_msg": "Спасибо! Политика принята. Можно пользоваться ботом.",
         "privacy_required": "Сначала примите политику конфиденциальности (/start).",
@@ -33,14 +33,13 @@ TEXTS: dict[str, dict[str, str]] = {
         "terms_required": "Сначала примите наши документы (/start).",
         # /info command.
         "info_about": (
-            "AegisVPN — быстрый VPN на протоколах VLESS+REALITY (ядро xray) и "
+            "AegisVPN: быстрый VPN на протоколах VLESS+REALITY (ядро xray) и "
             "Hysteria2, управляемый прямо через этого бота. Подписка, оплата, "
-            "получение ключей и поддержка — всё в одном месте."
+            "получение ключей и поддержка собраны в одном месте."
         ),
         "info_github_label": "Исходный код на GitHub",
         "info_news_button": "Новости",
         "info_support_button": "Поддержка",
-        "buy_stars": "Купить звёзды",
         "back": "Назад",
         "access_unavailable": "Доступ недоступен.",
         "no_active_subscription": "У вас нет активной подписки. Хотите оформить доступ?",
@@ -121,8 +120,13 @@ TEXTS: dict[str, dict[str, str]] = {
             "5. Если локации не появились сразу, обновите подписку внутри приложения."
         ),
         "no_plans_available": "Сейчас нет доступных тарифов.",
-        "choose_plan_buy": "Выберите тариф для покупки:",
-        "choose_plan_renew": "Выберите тариф для продления:",
+        "choose_plan_buy": "Выберите количество дней:",
+        "choose_plan_renew": "Выберите количество дней для продления:",
+        "plan_button_label": "{days} дней",
+        "choose_payment_method": "{days} дней.\nВыберите способ оплаты:",
+        "pay_stars_button": "{stars} ⭐ Stars",
+        "pay_sbp_button": "{rub}₽ СБП (Скоро)",
+        "sbp_soon": "Оплата по СБП скоро будет доступна. Пока что доступны Telegram Stars.",
         "invoice_title_buy": "Покупка Aegis VPN",
         "invoice_title_renew": "Продление Aegis VPN",
         "invoice_desc_buy": "Доступ к VPN на {days} дней",
@@ -154,14 +158,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "reissue_subscription_success": "Подписка перевыпущена.\n\nНовая ссылка:\n{link}\n\nОбновите её в вашем клиенте.",
         "reissue_subscription_no_active": "У вас нет активной подписки для перевыпуска.",
         "reissue_subscription_failed": "Не удалось перевыпустить подписку. Попробуйте ещё раз.",
-        "tg_proxy_btn": "Telegram-прокси",
         "vpn_sub_btn": "VPN-подписка",
-        "tg_proxy_title": "Telegram MTProxy",
-        "tg_proxy_hint": (
-            "Прокси для Telegram — работает без VPN-клиента, прямо в настройках Telegram.\n\n"
-            "Нажмите на ссылку нужной локации, чтобы добавить прокси:"
-        ),
-        "tg_proxy_none": "Прокси пока не настроены. Скоро появятся.",
         "devices_btn": "Устройства ({count})",
         "devices_title": "Устройства ({count})",
         "devices_empty": "Нет активных устройств.",
@@ -223,7 +220,6 @@ TEXTS: dict[str, dict[str, str]] = {
         "info_github_label": "Source code on GitHub",
         "info_news_button": "News",
         "info_support_button": "Support",
-        "buy_stars": "Buy Stars",
         "back": "Back",
         "access_unavailable": "Access unavailable.",
         "no_active_subscription": "You do not have an active subscription yet. Want to get one?",
@@ -306,8 +302,13 @@ TEXTS: dict[str, dict[str, str]] = {
             "5. If the locations don't appear right away, refresh the subscription inside the app."
         ),
         "no_plans_available": "There are no available plans right now.",
-        "choose_plan_buy": "Choose a plan to buy:",
-        "choose_plan_renew": "Choose a plan to renew:",
+        "choose_plan_buy": "Choose the number of days:",
+        "choose_plan_renew": "Choose the number of days to renew:",
+        "plan_button_label": "{days} days",
+        "choose_payment_method": "{days} days.\nChoose a payment method:",
+        "pay_stars_button": "{stars} ⭐ Stars",
+        "pay_sbp_button": "{rub}₽ SBP (soon)",
+        "sbp_soon": "SBP payments are coming soon. For now use Telegram Stars.",
         "invoice_title_buy": "Buy Aegis VPN",
         "invoice_title_renew": "Renew Aegis VPN",
         "invoice_desc_buy": "VPN access for {days} days",
@@ -339,14 +340,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "reissue_subscription_success": "Subscription reissued.\n\nNew link:\n{link}\n\nUpdate it in your client.",
         "reissue_subscription_no_active": "You do not have an active subscription to reissue.",
         "reissue_subscription_failed": "Failed to reissue the subscription. Please try again.",
-        "tg_proxy_btn": "Telegram proxy",
         "vpn_sub_btn": "VPN subscription",
-        "tg_proxy_title": "Telegram MTProxy",
-        "tg_proxy_hint": (
-            "A proxy for Telegram — works without a VPN client, directly in Telegram settings.\n\n"
-            "Tap a location link to add the proxy:"
-        ),
-        "tg_proxy_none": "No proxies configured yet. Coming soon.",
         "devices_btn": "Devices ({count})",
         "devices_title": "Devices ({count})",
         "devices_empty": "No active devices.",

@@ -820,12 +820,25 @@ class SubscriptionService:
         )
         servers = result.scalars().all()
 
+        # The sub's own UUID PLUS every device UUID. sync_subscription_to_servers
+        # pushes all of them to each node, and a device connects with its OWN
+        # UUID (not the sub's). Removing only sub.client_uuid left every device
+        # authenticated, so revoke/expiry didn't actually cut off access. Pull
+        # all device UUIDs (regardless of active/suspended) so nothing lingers.
+        device_uuids = (
+            await session.execute(
+                select(Device.uuid).where(Device.subscription_id == sub.id)
+            )
+        ).scalars().all()
+        uuids = [sub.client_uuid, *device_uuids]
+
         async def remove_from_server(server: Server) -> None:
             client = AgentClient(server.agent_url, server.agent_token)
-            try:
-                await client.remove_client(sub.client_uuid)
-            except Exception as exc:
-                logger.error(f"Failed to remove client {sub.client_uuid} from server {server.id}: {exc}")
+            for client_uuid in uuids:
+                try:
+                    await client.remove_client(client_uuid)
+                except Exception as exc:
+                    logger.error(f"Failed to remove client {client_uuid} from server {server.id}: {exc}")
 
         await asyncio.gather(*(remove_from_server(server) for server in servers))
 
