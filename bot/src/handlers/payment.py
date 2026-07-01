@@ -17,12 +17,11 @@ from src.services import (
     SubscriptionService,
     UserService,
     apply_paid_subscription,
-    confirm_platega_payment,
     get_user_language,
     t,
     user_grant_lock,
 )
-from src.services.platega_client import PlategaError, create_sbp_transaction, get_transaction_status
+from src.services.platega_client import PlategaError, create_sbp_transaction
 
 router = Router()
 
@@ -176,50 +175,17 @@ async def pay_sbp(call: CallbackQuery):
         rub = plan.rub_price
         days = plan.days
 
+    # No "check payment" button: confirmation is fully automatic via the Platega
+    # callback (POST /payment/platega/callback), with reconcile_pending_platega as
+    # a background backstop for a missed callback.
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=t(language, "pay_now"), url=redirect)],
-            [InlineKeyboardButton(text=t(language, "sbp_check"), callback_data=f"sbppaid_{tx_id}")],
             [InlineKeyboardButton(text=t(language, "back"), callback_data=f"plan_{plan_id}")],
         ]
     )
     await call.message.edit_text(t(language, "sbp_invoice", rub=rub, days=days), reply_markup=kb)  # type: ignore
     await call.answer()
-
-
-@router.callback_query(F.data.startswith("sbppaid_"))
-async def check_sbp_payment(call: CallbackQuery, bot: Bot):
-    tx_id = call.data.split("_", 1)[1]  # type: ignore[union-attr]
-    language = await get_user_language(call.from_user.id)
-
-    async with async_session_maker() as session:
-        payment = (
-            await session.execute(select(Payment).where(Payment.tg_payment_id == f"platega_{tx_id}"))
-        ).scalar_one_or_none()
-        if payment is None:
-            await call.answer(t(language, "sbp_error"), show_alert=True)
-            return
-        if payment.status == "confirmed":
-            await call.answer(t(language, "sbp_already_paid"), show_alert=True)
-            return
-
-        try:
-            resp = await get_transaction_status(tx_id)
-        except PlategaError as exc:
-            logger.error(f"Platega status check failed for {tx_id}: {exc}")
-            await call.answer(t(language, "sbp_error"), show_alert=True)
-            return
-
-        status = (resp.get("status") or "").upper()
-        if status == "CONFIRMED":
-            await confirm_platega_payment(session, payment, bot=bot)
-            await call.answer(t(language, "sbp_confirmed_alert"), show_alert=True)
-        elif status in ("CANCELED", "CHARGEBACKED"):
-            payment.status = "chargeback" if status == "CHARGEBACKED" else "canceled"
-            await session.commit()
-            await call.answer(t(language, "sbp_canceled"), show_alert=True)
-        else:
-            await call.answer(t(language, "sbp_pending"), show_alert=True)
 
 
 @router.callback_query(F.data.startswith("paystars_"))

@@ -13,14 +13,61 @@ from sqlalchemy.orm import joinedload
 from src.core.config import settings
 from src.core.database import async_session_maker
 from src.core.logger import logger
-from src.models import Server, Subscription, SubscriptionServer, User
-from src.services import AgentClient, SubscriptionService, t
+from src.models import Payment, Server, Subscription, SubscriptionServer, User
+from src.services import AgentClient, SubscriptionService, confirm_platega_payment, t
+from src.services.platega_client import PlategaError, get_transaction_status
 
 
 def renewal_keyboard(language: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text=t(language, "renew_vpn"), callback_data="buy_plan")]]
     )
+
+
+async def reconcile_pending_platega(bot: Bot):
+    """Backstop for a missed Platega callback. The callback (with its 3 retries) is
+    the primary path; this sweeps recent still-pending payments, asks Platega for
+    the real status, and confirms any that were paid but whose webhook never landed
+    (or lands while the bot was down). Idempotent — confirm_platega_payment's atomic
+    claim means a payment already granted by the callback is a no-op here."""
+    if not settings.platega_enabled:
+        return
+
+    cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=6)
+    async with async_session_maker() as session:
+        pending = (
+            await session.execute(
+                select(Payment).where(
+                    Payment.provider == "platega",
+                    Payment.status == "pending",
+                    Payment.created_at >= cutoff,
+                )
+            )
+        ).scalars().all()
+    if not pending:
+        return
+
+    for row in pending:
+        tx_id = row.tg_payment_id.removeprefix("platega_")
+        try:
+            resp = await get_transaction_status(tx_id)
+        except PlategaError as exc:
+            logger.warning(f"reconcile_pending_platega: status check failed for {tx_id}: {exc}")
+            continue
+        status = (resp.get("status") or "").upper()
+        if status not in ("CONFIRMED", "CANCELED", "CHARGEBACKED"):
+            continue  # still PENDING — leave it for the next sweep
+
+        async with async_session_maker() as session:
+            payment = await session.get(Payment, row.id)
+            if payment is None or payment.status != "pending":
+                continue
+            if status == "CONFIRMED":
+                await confirm_platega_payment(session, payment, bot=bot)
+                logger.info(f"reconcile_pending_platega: confirmed missed payment {tx_id}")
+            else:
+                payment.status = "chargeback" if status == "CHARGEBACKED" else "canceled"
+                await session.commit()
 
 
 async def check_expired_subscriptions(bot: Bot):
