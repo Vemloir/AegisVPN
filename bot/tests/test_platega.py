@@ -158,7 +158,7 @@ def test_sbp_button_label_reflects_enabled(monkeypatch):
     _enable(monkeypatch)
     kb = payment_method_keyboard("ru", plan)
     labels = [b.text for row in kb.inline_keyboard for b in row]
-    assert any(x == "149₽" for x in labels)  # no "СБП" word on the button
+    assert any(x == "Platega | 149₽" for x in labels)
     assert not any("Скоро" in x for x in labels)
 
 
