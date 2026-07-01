@@ -17,10 +17,11 @@ from src.core.logger import setup_logger
 from src.handlers import setup_routers
 from src.middlewares.identity import IdentitySyncMiddleware
 from src.middlewares.terms_gate import TermsGateMiddleware
-from src.models import Plan, Server
+from src.models import Payment, Plan, Server
 from src.scheduler import setup_scheduler
-from src.services import SubscriptionService
+from src.services import SubscriptionService, confirm_platega_payment
 from src.services.agent_client import close_session as close_agent_session
+from src.services.platega_client import verify_callback_headers
 
 logger = setup_logger()
 bot_public_url: str | None = settings.bot_public_url.rstrip("/") if settings.bot_public_url else None
@@ -228,8 +229,78 @@ def create_dispatcher() -> Dispatcher:
     return dp
 
 
+async def platega_callback_handler(request: web.Request) -> web.Response:
+    """Platega POSTs here on a transaction status change. Auth is the same
+    X-MerchantId / X-Secret headers echoed back to us (no HMAC). On CONFIRMED we
+    activate the subscription (idempotent by transaction id); we always ack with
+    200 so Platega stops retrying."""
+    if not settings.platega_enabled:
+        return web.Response(status=503)
+    if not verify_callback_headers(request.headers.get("X-MerchantId"), request.headers.get("X-Secret")):
+        return web.Response(status=403)
+
+    try:
+        data = await request.json()
+    except Exception:  # noqa: BLE001
+        return web.Response(status=400)
+
+    tx_id = data.get("id")
+    status = (data.get("status") or "").upper()
+    if not tx_id:
+        return web.Response(status=400)
+
+    async with async_session_maker() as session:
+        payment = (
+            await session.execute(select(Payment).where(Payment.tg_payment_id == f"platega_{tx_id}"))
+        ).scalar_one_or_none()
+        if payment is None:
+            logger.warning(f"Platega callback for unknown tx {tx_id} (status {status})")
+            return web.Response(status=200)
+
+        # Defence-in-depth: a fixed-amount СБП QR can't be underpaid, but flag any
+        # mismatch between the callback amount and what we billed.
+        cb_amount = data.get("amount")
+        if cb_amount is not None and payment.rub_amount is not None and int(cb_amount) != payment.rub_amount:
+            logger.warning(
+                f"Platega callback amount mismatch tx {tx_id}: got {cb_amount}, billed {payment.rub_amount}"
+            )
+
+        if status == "CONFIRMED":
+            await confirm_platega_payment(session, payment, bot=request.app.get("bot"))
+        elif status == "CHARGEBACKED":
+            # A chargeback usually lands AFTER we already confirmed and granted
+            # access, so the money is reversed but the user still has the VPN. We
+            # can't silently drop this: log it and alert every admin so the
+            # operator can revoke manually. Don't clobber the "confirmed"
+            # idempotency status; only set it if we hadn't confirmed yet.
+            logger.error(
+                f"Platega CHARGEBACK tx {tx_id} (payment {payment.id}, user {payment.user_id}, "
+                f"{payment.rub_amount} RUB, prior status {payment.status})"
+            )
+            bot = request.app.get("bot")
+            if bot is not None:
+                alert = (
+                    f"Chargeback Platega: платёж {tx_id}, пользователь {payment.user_id}, "
+                    f"сумма {payment.rub_amount} р. Проверьте и при необходимости отзовите подписку."
+                )
+                for admin_id in settings.admin_ids:
+                    with contextlib.suppress(Exception):
+                        await bot.send_message(admin_id, alert)
+            if payment.status != "confirmed":
+                payment.status = "chargeback"
+                await session.commit()
+        elif status == "CANCELED":
+            if payment.status != "confirmed":
+                payment.status = "canceled"
+                await session.commit()
+    return web.Response(status=200)
+
+
 def create_web_app(bot: Bot | None = None, dp: Dispatcher | None = None) -> web.Application:
     app = web.Application()
+    # Stash the bot so non-Telegram routes (the Platega callback) can DM users,
+    # in polling mode too where SimpleRequestHandler isn't wired up.
+    app["bot"] = bot
 
     if settings.telegram_mode == "webhook" and bot is not None and dp is not None:
         webhook_requests_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
@@ -242,6 +313,7 @@ def create_web_app(bot: Bot | None = None, dp: Dispatcher | None = None) -> web.
     app.router.add_get("/sub/{token}", sub_handler)
     app.router.add_get("/sub-safe/{token}", sub_safe_handler)
     app.router.add_get("/sub-fast/{token}", sub_fast_handler)
+    app.router.add_post(settings.platega_callback_path, platega_callback_handler)
     return app
 
 
@@ -269,7 +341,7 @@ async def run_polling_mode(bot: Bot, dp: Dispatcher) -> None:
     scheduler = setup_scheduler(bot)
     scheduler.start()
 
-    app = create_web_app()
+    app = create_web_app(bot=bot)
     runner = await start_http_server(app)
 
     try:

@@ -41,6 +41,11 @@ MIGRATIONS: dict[str, list[Column]] = {
     "plans": [
         Column("rub_price", "INTEGER", "INTEGER"),
     ],
+    "payments": [
+        Column("provider", "VARCHAR(16) DEFAULT 'stars'", "VARCHAR(16) DEFAULT 'stars'"),
+        Column("rub_amount", "INTEGER", "INTEGER"),
+        Column("status", "VARCHAR(16)", "VARCHAR(16)"),
+    ],
     "subscriptions": [
         Column("legacy_sub_token", "VARCHAR(255)", "VARCHAR(255)"),
         Column("traffic_up_bytes", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),

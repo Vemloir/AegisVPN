@@ -27,6 +27,15 @@ class Settings(BaseSettings):
     webapp_host: str = "0.0.0.0"
     webapp_port: int = 8080
 
+    # Platega (СБП / RUB acquiring). Credentials come from the merchant dashboard
+    # (Настройки проекта). Both must be set for the СБП button to go live; until
+    # then the button stays "Скоро". The secret NEVER lives in the repo — it is
+    # provided via the PLATEGA_SECRET env var on the server only.
+    platega_merchant_id: str | None = None
+    platega_secret: SecretStr | None = None
+    platega_base_url: str = "https://app.platega.io"
+    platega_callback_path: str = "/payment/platega/callback"
+
     site_title: str = "Aegis VPN"
     site_description: str = "Simple VPN landing page and subscription endpoint"
     subscription_title: str = "AegisVPN"
@@ -55,6 +64,10 @@ class Settings(BaseSettings):
     # Downloaded into the persistent /data volume on first boot, refreshed monthly.
     geoip_enabled: bool = True
     geoip_db_path: str = "/data/geoip/dbip-city-lite.mmdb"
+
+    @property
+    def platega_enabled(self) -> bool:
+        return bool(self.platega_merchant_id and self.platega_secret)
 
     @property
     def db_url(self) -> str:

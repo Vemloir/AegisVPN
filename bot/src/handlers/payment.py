@@ -1,6 +1,3 @@
-import uuid
-from datetime import UTC, datetime, timedelta
-
 from aiogram import Bot, F, Router, html
 from aiogram.types import (
     CallbackQuery,
@@ -12,16 +9,20 @@ from aiogram.types import (
 )
 from sqlalchemy import select
 
+from src.core.config import settings
 from src.core.database import async_session_maker
 from src.core.logger import logger
-from src.models import Payment, Plan, Subscription, User
+from src.models import Payment, Plan, User
 from src.services import (
-    ServerAccessService,
     SubscriptionService,
     UserService,
+    apply_paid_subscription,
+    confirm_platega_payment,
     get_user_language,
     t,
+    user_grant_lock,
 )
+from src.services.platega_client import PlategaError, create_sbp_transaction, get_transaction_status
 
 router = Router()
 
@@ -47,10 +48,11 @@ def payment_method_keyboard(language: str, plan: Plan) -> InlineKeyboardMarkup:
             ]
         )
     if plan.rub_price:
+        sbp_key = "pay_sbp_button" if settings.platega_enabled else "pay_sbp_button_soon"
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=t(language, "pay_sbp_button", rub=plan.rub_price),
+                    text=t(language, sbp_key, rub=plan.rub_price),
                     callback_data=f"paysbp_{plan.id}",
                 )
             ]
@@ -109,9 +111,115 @@ async def choose_payment_method(call: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("paysbp_"))
-async def pay_sbp_soon(call: CallbackQuery):
+async def pay_sbp(call: CallbackQuery):
+    plan_id = int(call.data.split("_")[1])  # type: ignore[index]
     language = await get_user_language(call.from_user.id)
-    await call.answer(t(language, "sbp_soon"), show_alert=True)
+
+    if not settings.platega_enabled:
+        await call.answer(t(language, "sbp_soon"), show_alert=True)
+        return
+    if not await UserService.is_privacy_accepted(call.from_user.id):
+        await call.answer(t(language, "privacy_required"), show_alert=True)
+        return
+
+    has_active = await UserService.has_active_subscription(call.from_user.id)
+    async with async_session_maker() as session:
+        plan = await session.get(Plan, plan_id)
+        if not plan or not plan.is_active or not plan.rub_price:
+            await call.answer(t(language, "plan_unavailable"), show_alert=True)
+            return
+        user = (
+            await session.execute(select(User).where(User.tg_id == call.from_user.id))
+        ).scalar_one_or_none()
+        if user is None:
+            await call.answer(t(language, "plan_unavailable"), show_alert=True)
+            return
+
+        desc_key = "invoice_desc_renew" if has_active else "invoice_desc_buy"
+        return_url = settings.bot_public_url or "https://t.me"
+        try:
+            resp = await create_sbp_transaction(
+                amount_rub=plan.rub_price,
+                description=t(language, desc_key, days=plan.days),
+                payload=f"sbp_{plan.id}_{call.from_user.id}",
+                user_id=call.from_user.id,
+                username=call.from_user.username,
+                return_url=return_url,
+                failed_url=return_url,
+            )
+        except PlategaError as exc:
+            logger.error(f"Platega create failed (user {call.from_user.id}, plan {plan_id}): {exc}")
+            await call.answer(t(language, "sbp_error"), show_alert=True)
+            return
+
+        tx_id = resp.get("transactionId")
+        redirect = resp.get("redirect")
+        if not tx_id or not redirect:
+            logger.error(f"Platega create returned no tx/redirect: {resp}")
+            await call.answer(t(language, "sbp_error"), show_alert=True)
+            return
+
+        # Pending row: maps the transaction back to (user, plan_days) reliably and
+        # is the idempotency key for the callback, independent of payload round-trip.
+        session.add(
+            Payment(
+                user_id=user.id,
+                tg_payment_id=f"platega_{tx_id}",
+                stars_amount=0,
+                plan_days=plan.days,
+                provider="platega",
+                rub_amount=plan.rub_price,
+                status="pending",
+            )
+        )
+        await session.commit()
+        rub = plan.rub_price
+        days = plan.days
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=t(language, "pay_now"), url=redirect)],
+            [InlineKeyboardButton(text=t(language, "sbp_check"), callback_data=f"sbppaid_{tx_id}")],
+            [InlineKeyboardButton(text=t(language, "back"), callback_data=f"plan_{plan_id}")],
+        ]
+    )
+    await call.message.edit_text(t(language, "sbp_invoice", rub=rub, days=days), reply_markup=kb)  # type: ignore
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("sbppaid_"))
+async def check_sbp_payment(call: CallbackQuery, bot: Bot):
+    tx_id = call.data.split("_", 1)[1]  # type: ignore[union-attr]
+    language = await get_user_language(call.from_user.id)
+
+    async with async_session_maker() as session:
+        payment = (
+            await session.execute(select(Payment).where(Payment.tg_payment_id == f"platega_{tx_id}"))
+        ).scalar_one_or_none()
+        if payment is None:
+            await call.answer(t(language, "sbp_error"), show_alert=True)
+            return
+        if payment.status == "confirmed":
+            await call.answer(t(language, "sbp_already_paid"), show_alert=True)
+            return
+
+        try:
+            resp = await get_transaction_status(tx_id)
+        except PlategaError as exc:
+            logger.error(f"Platega status check failed for {tx_id}: {exc}")
+            await call.answer(t(language, "sbp_error"), show_alert=True)
+            return
+
+        status = (resp.get("status") or "").upper()
+        if status == "CONFIRMED":
+            await confirm_platega_payment(session, payment, bot=bot)
+            await call.answer(t(language, "sbp_confirmed_alert"), show_alert=True)
+        elif status in ("CANCELED", "CHARGEBACKED"):
+            payment.status = "chargeback" if status == "CHARGEBACKED" else "canceled"
+            await session.commit()
+            await call.answer(t(language, "sbp_canceled"), show_alert=True)
+        else:
+            await call.answer(t(language, "sbp_pending"), show_alert=True)
 
 
 @router.callback_query(F.data.startswith("paystars_"))
@@ -180,7 +288,6 @@ async def process_successful_payment(message: Message, bot: Bot):
     parts = payload.split("_")
     plan_id = int(parts[2])
     tg_id = int(parts[3])
-    is_renewal = payload.startswith("renew_plan_")
 
     async with async_session_maker() as session:
         user_result = await session.execute(select(User).where(User.tg_id == tg_id))
@@ -191,69 +298,20 @@ async def process_successful_payment(message: Message, bot: Bot):
             logger.error(f"Payment payload references missing data: user={tg_id}, plan={plan_id}")
             return
 
-        payment = Payment(
-            user_id=user.id,
-            tg_payment_id=payment_info.telegram_payment_charge_id,  # type: ignore[arg-type]
-            stars_amount=payment_info.total_amount,  # type: ignore[arg-type]
-            plan_days=plan.days,
-        )
-        session.add(payment)
-
-        now = datetime.now(UTC).replace(tzinfo=None)
-
-        # Try to find an active subscription first
-        sub_result = await session.execute(
-            select(Subscription).where(
-                Subscription.user_id == user.id,
-                Subscription.is_active == True,
+        session.add(
+            Payment(
+                user_id=user.id,
+                tg_payment_id=payment_info.telegram_payment_charge_id,  # type: ignore[arg-type]
+                stars_amount=payment_info.total_amount,  # type: ignore[arg-type]
+                plan_days=plan.days,
+                provider="stars",
             )
         )
-        active_sub = sub_result.scalar_one_or_none()
-
-        if active_sub:
-            # Renew existing active subscription (same URL)
-            active_sub.expires_at = max(active_sub.expires_at, now) + timedelta(days=plan.days)
-            sub_token = active_sub.sub_token
-            is_renewal = True
-        else:
-            # No active subscription — try to restore the most recent expired one
-            # (same client_uuid, same sub_token) so the URL stays the same
-            expired_result = await session.execute(
-                select(Subscription)
-                .where(Subscription.user_id == user.id)
-                .order_by(Subscription.expires_at.desc())
-                .limit(1)
-            )
-            expired_sub = expired_result.scalar_one_or_none()
-
-            if expired_sub and expired_sub.expires_at < now:
-                # Restore the expired subscription: reactivate it with the same UUID/token
-                expired_sub.is_active = True
-                expired_sub.plan_days = plan.days
-                expired_sub.expires_at = now + timedelta(days=plan.days)
-                active_sub = expired_sub
-                sub_token = expired_sub.sub_token
-                is_renewal = True
-            else:
-                # No expired subscription to restore — create a brand new one
-                sub_token = await SubscriptionService.generate_sub_token(session)
-                client_uuid = str(uuid.uuid4())
-                active_sub = Subscription(
-                    user_id=user.id,
-                    sub_token=sub_token,
-                    client_uuid=client_uuid,
-                    plan_days=plan.days,
-                    started_at=now,
-                    expires_at=now + timedelta(days=plan.days),
-                    is_active=True,
-                )
-                session.add(active_sub)
-                is_renewal = False
-
-        await session.flush()
-        active_servers = await ServerAccessService.get_accessible_servers_for_user(session, user.id)
-        await SubscriptionService.sync_subscription_to_servers(session, active_sub, active_servers)
-        await session.commit()
+        # Serialise the grant per-user so a concurrent Stars/Platega confirmation
+        # can't lose one payment's extension (read-modify-write on expires_at).
+        async with user_grant_lock(user.id):
+            sub_token, is_renewal = await apply_paid_subscription(session, user, plan.days)
+            await session.commit()
 
         language = user.language
         link = html.code(SubscriptionService.build_subscription_url(sub_token))
