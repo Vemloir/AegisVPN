@@ -1,3 +1,6 @@
+import asyncio
+import contextlib
+
 from aiogram import Bot, F, Router, html
 from aiogram.types import (
     CallbackQuery,
@@ -47,12 +50,12 @@ def payment_method_keyboard(language: str, plan: Plan) -> InlineKeyboardMarkup:
             ]
         )
     if plan.rub_price:
-        sbp_key = "pay_sbp_button" if settings.platega_enabled else "pay_sbp_button_soon"
+        rub_key = "pay_sbp_button" if settings.platega_enabled else "pay_sbp_button_soon"
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=t(language, sbp_key, rub=plan.rub_price),
-                    callback_data=f"paysbp_{plan.id}",
+                    text=t(language, rub_key, rub=plan.rub_price),
+                    callback_data=f"payrub_{plan.id}",
                 )
             ]
         )
@@ -109,6 +112,56 @@ async def choose_payment_method(call: CallbackQuery):
     await call.answer()
 
 
+_SBP_EXPIRY_TASKS: set[asyncio.Task] = set()
+
+
+def _parse_expires_seconds(raw: str | None, default: int = 1800) -> int:
+    """Parse Platega's ``expiresIn`` ("HH:MM:SS") to seconds; default 30 min."""
+    try:
+        h, m, s = (int(x) for x in (raw or "").split(":"))
+        total = h * 3600 + m * 60 + s
+        return total if total > 0 else default
+    except (ValueError, TypeError):
+        return default
+
+
+async def _expire_sbp_invoice(bot: Bot, chat_id: int, message_id: int, payment_id: int, language: str, delay: int):
+    """When the payment window closes, replace the "Оплатить" screen if the payment
+    never confirmed (the Platega link is dead by then anyway)."""
+    await asyncio.sleep(delay)
+    async with async_session_maker() as session:
+        payment = await session.get(Payment, payment_id)
+    if payment is None or payment.status == "confirmed":
+        return
+    with contextlib.suppress(Exception):
+        await bot.edit_message_text(
+            t(language, "sbp_expired"),
+            chat_id=chat_id,
+            message_id=message_id,
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text=t(language, "back"), callback_data="buy_plan")]]
+            ),
+        )
+
+
+@router.callback_query(F.data.startswith("payrub_"))
+async def pay_rub_methods(call: CallbackQuery):
+    """Ruble payment: let the user pick the method (СБП now, cards later)."""
+    plan_id = int(call.data.split("_")[1])  # type: ignore[index]
+    language = await get_user_language(call.from_user.id)
+    if not settings.platega_enabled:
+        await call.answer(t(language, "sbp_soon"), show_alert=True)
+        return
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=t(language, "pay_method_sbp"), callback_data=f"paysbp_{plan_id}")],
+            [InlineKeyboardButton(text=t(language, "back"), callback_data=f"plan_{plan_id}")],
+        ]
+    )
+    await call.message.edit_text(t(language, "choose_rub_method"), reply_markup=kb)  # type: ignore
+    await call.answer()
+
+
 @router.callback_query(F.data.startswith("paysbp_"))
 async def pay_sbp(call: CallbackQuery):
     plan_id = int(call.data.split("_")[1])  # type: ignore[index]
@@ -160,20 +213,24 @@ async def pay_sbp(call: CallbackQuery):
 
         # Pending row: maps the transaction back to (user, plan_days) reliably and
         # is the idempotency key for the callback, independent of payload round-trip.
-        session.add(
-            Payment(
-                user_id=user.id,
-                tg_payment_id=f"platega_{tx_id}",
-                stars_amount=0,
-                plan_days=plan.days,
-                provider="platega",
-                rub_amount=plan.rub_price,
-                status="pending",
-            )
+        payment = Payment(
+            user_id=user.id,
+            tg_payment_id=f"platega_{tx_id}",
+            stars_amount=0,
+            plan_days=plan.days,
+            provider="platega",
+            rub_amount=plan.rub_price,
+            status="pending",
         )
+        session.add(payment)
+        await session.flush()
+        payment_id = payment.id
         await session.commit()
         rub = plan.rub_price
         days = plan.days
+
+    expire_seconds = _parse_expires_seconds(resp.get("expiresIn"))
+    expire_minutes = max(1, round(expire_seconds / 60))
 
     # No "check payment" button: confirmation is fully automatic via the Platega
     # callback (POST /payment/platega/callback), with reconcile_pending_platega as
@@ -184,8 +241,20 @@ async def pay_sbp(call: CallbackQuery):
             [InlineKeyboardButton(text=t(language, "back"), callback_data=f"plan_{plan_id}")],
         ]
     )
-    await call.message.edit_text(t(language, "sbp_invoice", rub=rub, days=days), reply_markup=kb)  # type: ignore
+    await call.message.edit_text(  # type: ignore
+        t(language, "sbp_invoice", rub=rub, days=days, mins=expire_minutes), reply_markup=kb
+    )
     await call.answer()
+
+    # Close the pay window when the Platega link expires. Kept referenced so the
+    # task isn't garbage-collected mid-flight.
+    task = asyncio.create_task(
+        _expire_sbp_invoice(
+            call.bot, call.message.chat.id, call.message.message_id, payment_id, language, expire_seconds
+        )
+    )
+    _SBP_EXPIRY_TASKS.add(task)
+    task.add_done_callback(_SBP_EXPIRY_TASKS.discard)
 
 
 @router.callback_query(F.data.startswith("paystars_"))
