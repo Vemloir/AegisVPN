@@ -55,7 +55,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "subscription_choose_format": "Выберите формат подписки кнопками ниже.",
         "v2ray_title": "Подписка",
         "back_to_subscription": "Назад в подписку",
-        "v2ray_detail_hint": "Вставьте эту ссылку как подписку в приложение (Happ, Hiddify, v2rayTun и др.).",
+        "v2ray_detail_hint": "Вставьте эту ссылку как подписку в приложение (Happ, v2rayTun, v2rayNG и др.).",
         "start_text": (
             "Привет, {name}! Я Aegis VPN бот.\n\n"
             "Основные команды:\n"
@@ -113,7 +113,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "setup_text": ("Откройте /subscription, выберите нужный формат подписки и используйте инструкцию внутри него."),
         "setup_text_v2ray": (
             "Как подключиться:\n\n"
-            "1. Установите приложение: Happ, Hiddify, v2rayTun, v2rayNG или другое совместимое.\n\n"
+            "1. Установите приложение: Happ, v2rayTun, v2rayNG или другое совместимое (Xray-ядро).\n\n"
             "2. Откройте /subscription и скопируйте ссылку на подписку.\n\n"
             "3. В приложении выберите «Добавить подписку» (import by URL) и вставьте ссылку.\n\n"
             "4. Импортируйте локации и подключайтесь.\n\n"
@@ -242,7 +242,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "subscription_choose_format": "Choose the subscription format with the buttons below.",
         "v2ray_title": "Subscription",
         "back_to_subscription": "Back to subscription",
-        "v2ray_detail_hint": "Paste this link as a subscription into your app (Happ, Hiddify, v2rayTun, etc.).",
+        "v2ray_detail_hint": "Paste this link as a subscription into your app (Happ, v2rayTun, v2rayNG, etc.).",
         "start_text": (
             "Hello, {name}! I am the Aegis VPN bot.\n\n"
             "Main commands:\n"
@@ -302,7 +302,7 @@ TEXTS: dict[str, dict[str, str]] = {
         ),
         "setup_text_v2ray": (
             "How to connect:\n\n"
-            "1. Install an app: Happ, Hiddify, v2rayTun, v2rayNG, or another compatible client.\n\n"
+            "1. Install an app: Happ, v2rayTun, v2rayNG, or another compatible (Xray-core) client.\n\n"
             "2. Open /subscription and copy your subscription link.\n\n"
             "3. In the app, choose \"Add subscription\" (import by URL) and paste the link.\n\n"
             "4. Import the locations and connect.\n\n"
