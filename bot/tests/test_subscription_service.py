@@ -9,16 +9,16 @@ from src.services import SubscriptionService
 _AGENT_RAW = (
     "vless://0146ca3d-e9b9-459a-8e54-b611dc601bec@agent-host:443?type=xhttp"
     "&security=reality&encryption=none&sni=gateway.icloud.com&fp=firefox"
-    "&pbk=AGENTPBK&sid=AGENTSID&path=%2Fgr-xh&mode=auto#Greece"
+    "&pbk=AGENTPBK&sid=AGENTSID&path=%2Fgr-xh&mode=auto#Testland"
 )
 
 
-def _greece_server() -> Server:
+def _hy2_node_server() -> Server:
     return Server(
         id=1,
-        name="Greece",
+        name="Testland",
         flag="\U0001F1EC\U0001F1F7",
-        host="45.142.31.13",
+        host="203.0.113.10",
         port=443,
         public_key="GRPBK",
         short_id="GRSID",
@@ -31,7 +31,7 @@ def _xhttp_only_server() -> Server:
         id=2,
         name="Finland",
         flag="\U0001F1EB\U0001F1EE",
-        host="1.2.3.4",
+        host="203.0.113.20",
         port=443,
         public_key="FIPBK",
         short_id="FISID",
@@ -141,7 +141,7 @@ def test_extract_build_none_when_absent():
 
 def test_vless_link_to_xray_config_xhttp_has_recovery_knobs_and_clean_routing():
     link = (
-        "vless://0146ca3d-e9b9-459a-8e54-b611dc601bec@1.2.3.4:443?type=xhttp"
+        "vless://0146ca3d-e9b9-459a-8e54-b611dc601bec@203.0.113.20:443?type=xhttp"
         "&security=reality&encryption=none&sni=gateway.icloud.com&fp=firefox"
         "&pbk=PUBKEY&sid=SID&path=%2Ffi-xh&mode=auto#%F0%9F%87%AB%F0%9F%87%AE Finland"
     )
@@ -167,11 +167,18 @@ def test_vless_link_to_xray_config_xhttp_has_recovery_knobs_and_clean_routing():
         for r in cfg["routing"]["rules"]
         for v in (r.get("domain", []) + r.get("ip", []))
     )
-    # DNS resolves DIRECT (https+local), never through the proxy -> recovery works
-    assert all(
-        (s if isinstance(s, str) else s["address"]).startswith("https+local://")
-        for s in cfg["dns"]["servers"]
-    )
+    # The client resolves nothing but its own direct traffic, via the system
+    # resolver. Two invariants at once: no third-party resolver is handed the
+    # user's real IP (tunneled domains are resolved by the exit node, because
+    # sniffing + routing AsIs pass the hostname through), and DNS never depends
+    # on the proxy, so a Wi-Fi<->cellular switch recovers with no stall.
+    addrs = [(s if isinstance(s, str) else s["address"]) for s in cfg["dns"]["servers"]]
+    assert addrs == ["localhost"]
+    # Sniffing is what makes the above true — without destOverride the outbound
+    # would get an IP and the client would have to resolve it first.
+    assert all(i["sniffing"]["enabled"] for i in cfg["inbounds"])
+    assert all("tls" in i["sniffing"]["destOverride"] for i in cfg["inbounds"])
+    assert cfg["routing"]["domainStrategy"] == "AsIs"
     assert cfg["remarks"] == "🇫🇮 Finland"
 
 
@@ -181,7 +188,7 @@ def test_vless_link_to_xray_config_xhttp_has_recovery_knobs_and_clean_routing():
 def test_default_transport_is_byte_identical():
     """A user with no preference (transport=None) gets EXACTLY the same link as
     before this change: the legacy code path used transport=None implicitly."""
-    server = _greece_server()
+    server = _hy2_node_server()
     # `None` is what every server without a pref resolves to in _collect_links.
     with_none = SubscriptionService.normalize_vless_uri(_AGENT_RAW, server, transport=None)
     # Explicitly asking for xhttp must produce the identical string too.
@@ -189,18 +196,18 @@ def test_default_transport_is_byte_identical():
     assert with_none == with_xhttp
     # And it is the xhttp link on port 443 with the bot's reality keypair.
     assert "type=xhttp" in with_none
-    assert "@45.142.31.13:443" in with_none
+    assert "@203.0.113.10:443" in with_none
     assert "pbk=GRPBK" in with_none and "sid=GRSID" in with_none
     assert "flow=" not in with_none
 
 
 def test_tcp_transport_uses_tcp_port_and_vision_flow():
-    server = _greece_server()
+    server = _hy2_node_server()
     link = SubscriptionService.normalize_vless_uri(_AGENT_RAW, server, transport="tcp")
     assert "type=tcp" in link
-    assert "@45.142.31.13:2053" in link  # server.tcp_port
+    assert "@203.0.113.10:2053" in link  # server.tcp_port
     assert "headerType=none" in link
-    # Greece tcp alt-transport runs TCP+REALITY with the vision flow (must match
+    # Testland tcp alt-transport runs TCP+REALITY with the vision flow (must match
     # the agent's vless-in-tcp inbound clients).
     assert "flow=xtls-rprx-vision" in link
     cfg = SubscriptionService._vless_link_to_xray_config(link, server)
@@ -221,14 +228,14 @@ def test_every_server_offers_the_settings_screen():
     assert SubscriptionService.available_transports(server) == ["xhttp"]
 
 
-def test_greece_offers_xhttp_and_tcp_transports():
-    server = _greece_server()
+def test_hy2_node_offers_xhttp_and_tcp_transports():
+    server = _hy2_node_server()
     assert server.has_alt_transports is True
     assert SubscriptionService.available_transports(server) == ["xhttp", "tcp"]
 
 
 def test_hy2_pref_falls_back_to_xhttp():
-    server = _greece_server()
+    server = _hy2_node_server()
     # resolve_transport collapses an hy2 pref to the default xhttp (no backend).
     assert SubscriptionService.resolve_transport(server, "hy2", "xhttp") == "xhttp"
     assert SubscriptionService.resolve_transport(server, "hy2", "tcp") == "xhttp"

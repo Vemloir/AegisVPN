@@ -5,23 +5,9 @@
     "dnsLog": false
   },
   "dns": {
-    "hosts": {
-      "cloudflare-dns.com": [
-        "1.1.1.1",
-        "1.0.0.1"
-      ]
-    },
     "servers": [
-      {
-        "address": "https://77.88.8.8/dns-query",
-        "domains": [
-          "geosite:private",
-          "geosite:category-ru"
-        ],
-        "skipFallback": true
-      },
-      "https://1.1.1.1/dns-query",
-      "https://1.0.0.1/dns-query"
+      "https://9.9.9.9/dns-query",
+      "https://149.112.112.112/dns-query"
     ],
     "queryStrategy": "UseIPv4"
   },

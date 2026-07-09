@@ -36,14 +36,23 @@ _UA_MAC_VER_RE = re.compile(r"Mac OS X[/ ]([\d_]+)", re.IGNORECASE)
 # Wi-Fi<->cellular switch — the #1 cause of "internet doesn't come back".
 _XRAY_CLEAN_DNS = {
     "queryStrategy": "UseIPv4",
-    # iOS-safe: no geosite/geoip DNS split — those pull the geo .dat files into
-    # the tunnel and blow the ~50 MB iOS Network Extension cap (XrayCore dies
-    # with "tunnel memory limit exceeded"). Yandex primary (good RU CDN
-    # resolution), Cloudflare fallback.
-    "servers": [
-        "https+local://77.88.8.8/dns-query",
-        "https+local://1.1.1.1/dns-query",
-    ],
+    # This section resolves ONLY direct-outbound traffic, and that is the whole
+    # design. The inbounds sniff the destination domain and routing runs AsIs, so
+    # a tunneled connection reaches the vless outbound carrying its HOSTNAME: the
+    # exit node resolves it, and the client never emits a query for it. What is
+    # left here feeds `freedom` (domainStrategy UseIP) — i.e. the RU/CN suffixes
+    # below, which bypass the tunnel anyway.
+    #
+    # Hence `localhost` (the system resolver):
+    #   - no third-party resolver ever learns a tunneled domain, and none is
+    #     handed the user's real IP;
+    #   - the system resolver is reachable even while the proxy is momentarily
+    #     dead, so a Wi-Fi<->cellular switch recovers seamlessly — no in-tunnel
+    #     DNS to deadlock on;
+    #   - RU domains get their ISP's CDN answers, exactly as with the VPN off.
+    # No geosite/geoip either: the geo .dat files blow the ~50 MB iOS Network
+    # Extension cap ("XrayCore: tunnel memory limit exceeded").
+    "servers": ["localhost"],
 }
 _XRAY_CLEAN_INBOUNDS = [
     {
@@ -104,7 +113,7 @@ class SubscriptionService:
     def available_transports(server: Server) -> list[str]:
         """VLESS transports this server can serve, in display order. Always
         includes xhttp (the default inbound); tcp only when the tcp_port
-        capability is set (Greece today)."""
+        capability is set."""
         transports = [SubscriptionService.TRANSPORT_XHTTP]
         if getattr(server, "tcp_port", None):
             transports.append(SubscriptionService.TRANSPORT_TCP)
@@ -147,11 +156,11 @@ class SubscriptionService:
         validates normally (no insecure). The server runs BBR (low gaming latency).
 
         salamander obfs is emitted ONLY when the node carries an obfs password
-        (``server.hy2_obfs_password``). Without obfs the QUIC handshake passes a
-        wired DPI but the data streams get dropped (proven server-side: auth OK,
-        then "accepting stream failed: timeout"); obfs hides the stream packets so
-        they survive. A no-obfs node looks like plain HTTP/3 QUIC, which RU mobile
-        passes. Per-node so we can serve both kinds.
+        (``server.hy2_obfs_password``). On some networks a no-obfs connection
+        completes the QUIC handshake but loses its data streams (observed
+        server-side: auth OK, then "accepting stream failed: timeout"); obfs
+        keeps the stream packets intact. A no-obfs node looks like plain HTTP/3
+        QUIC, which other networks carry fine. Per-node so we can serve both kinds.
         Returns None when not Hy2-capable so the caller falls back to a vless link.
         """
         if not getattr(server, "hy2_capable", False) or not device_uuid:
@@ -397,10 +406,10 @@ class SubscriptionService:
         ``transport`` selects which of the server's VLESS+REALITY inbounds to
         target. ``None`` (the default for every server without a per-location
         preference) keeps EXACTLY today's behavior: the transport is taken from
-        the incoming link (xhttp on Greece + every xhttp-only node), so the
-        produced link is byte-identical to before this change. An explicit
-        ``"tcp"`` retargets the port + stream params to the Greece node's
-        alternative inbound, reusing the same reality keypair and emitting
+        the incoming link (xhttp on every xhttp-only node), so the produced link
+        is byte-identical to before this change. An explicit ``"tcp"`` retargets
+        the port + stream params to that node's alternative inbound, reusing the
+        same reality keypair and emitting
         flow=xtls-rprx-vision (matching that inbound's clients).
         """
         parts = urlsplit(raw_uri)
@@ -424,7 +433,7 @@ class SubscriptionService:
         if is_tcp:
             query["type"] = "tcp"
             query["headerType"] = "none"
-            # The Greece tcp alt-transport runs TCP+REALITY with the vision flow
+            # The tcp alt-transport runs TCP+REALITY with the vision flow
             # (must match the agent's vless-in-tcp inbound, whose clients carry
             # flow=xtls-rprx-vision). No Mux/xudp — vision breaks under Mux.
             query["flow"] = "xtls-rprx-vision"
@@ -721,7 +730,7 @@ class SubscriptionService:
             }
             stream["sockopt"] = {"tcpKeepAliveIdle": 10, "tcpKeepAliveInterval": 5}
         elif q.get("flow"):
-            # tcp/REALITY with the vision flow (the Greece tcp alt-transport, and
+            # tcp/REALITY with the vision flow (the tcp alt-transport, and
             # any legacy tcp inbound). Plain reality stream settings, no Mux/xudp —
             # Mux breaks xtls-rprx-vision (see the note in main.py).
             user["flow"] = q["flow"]
@@ -756,7 +765,7 @@ class SubscriptionService:
         subscription down to a flat link list. The client validates the real Let's
         Encrypt cert (no allowInsecure). BBR congestion (low gaming latency, no
         bufferbloat). salamander obfs is added (finalmask.udp) only when the link
-        carries it, for nodes whose path needs the QUIC streams hidden from DPI.
+        carries it, for nodes whose network path drops un-obfuscated QUIC streams.
         """
         if not link.startswith("hysteria2://"):
             return None
@@ -789,9 +798,9 @@ class SubscriptionService:
                 "finalmask": {"quicParams": {"debug": False, "congestion": "bbr"}},
             },
         }
-        # salamander obfs (when the link carries it) hides the QUIC stream packets
-        # so a wired DPI that drops un-obfuscated QUIC streams (handshake passes,
-        # then "accepting stream failed: timeout") can't kill them. Lives under
+        # salamander obfs (when the link carries it) keeps the QUIC stream packets
+        # intact on paths that drop un-obfuscated streams (handshake passes, then
+        # "accepting stream failed: timeout"). Lives under
         # finalmask.udp alongside quicParams in the xray fork's hysteria outbound.
         if q.get("obfs") == "salamander" and q.get("obfs-password"):
             proxy["streamSettings"]["finalmask"]["udp"] = [
