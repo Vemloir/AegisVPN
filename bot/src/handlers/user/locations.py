@@ -4,10 +4,10 @@ A drill-down: the per-location screen shows the current protocol (and, on VLESS,
 the current transport) as buttons that open dedicated choosers. The choice is
 persisted as a ``ServerTransportPref`` row (keyed by user+server) and re-applied
 on every subscription fetch — the subscription URL/token never changes. A
-location with no alternative transports (every node except Greece today) shows a
-short "standard only" notice instead of the selectors.
+location with no alternative transports shows a short "standard only" notice
+instead of the selectors.
 
-Hysteria2 is SELECTABLE on an Hy2-capable node (Greece): tapping it persists
+Hysteria2 is SELECTABLE on an Hy2-capable node: tapping it persists
 protocol=hy2 and the subscription then carries a hysteria2:// link for that
 location (Hy2 has no transport sub-choice). On every other node Hy2 is shown but
 disabled — tapping it only flashes a "not available" answer and never persists,
@@ -200,8 +200,8 @@ async def cq_location_protocol_set(call: CallbackQuery):
     server, _protocol, transport, _available = loaded
 
     # Defense-in-depth: hy2 only persists on an Hy2-capable node. On a node that
-    # can't serve Hy2 (every node except Greece today, or one missing its obfs
-    # password) tapping it just flashes "not available" and changes nothing — so
+    # can't serve Hy2 (one missing its obfs password, say) tapping it just
+    # flashes "not available" and changes nothing — so
     # the bot can never be coerced into emitting a Hy2 link a node can't honor.
     if protocol == SubscriptionService.PROTOCOL_HY2 and not server.hy2_capable:
         await call.answer(t(language, "location_hy2_unavailable"), show_alert=True)

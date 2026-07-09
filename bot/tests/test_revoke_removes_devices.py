@@ -52,7 +52,7 @@ async def _seed(key: int) -> tuple[int, str, list[str]]:
         server = Server(
             name="N",
             flag="N",
-            host="1.2.3.4",
+            host="203.0.113.20",
             port=443,
             public_key="pk",
             short_id="sid",

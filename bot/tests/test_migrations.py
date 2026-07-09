@@ -15,7 +15,7 @@ async def _table_columns(session, table: str) -> set[str]:
 async def test_run_migrations_adds_missing_columns_idempotently():
     # Start from a minimal, pre-migration schema: each table with only an id.
     # `servers` additionally keeps `host`, which create_all always provides in
-    # production and the Greece transport backfill (post_sql) references.
+    # production.
     async with async_session_maker() as session:
         for table in MIGRATIONS:
             await session.execute(text(f"DROP TABLE IF EXISTS {table}"))
@@ -45,46 +45,37 @@ async def test_run_migrations_adds_missing_columns_idempotently():
         assert value in ("safe", None)
 
 
-async def test_greece_hy2_backfill_only_greece_and_not_the_secret():
-    """The Hy2 capability backfill targets ONLY the Greece node (host 45.142.31.13)
-    and leaves the obfs password NULL (a secret the operator sets out-of-band)."""
+async def test_hy2_columns_are_added_but_never_populated():
+    """The migration only ADDS the Hy2 capability columns. It never populates them
+    for any node: every value (including the obfs password and SNI secrets) is set
+    out-of-band by the operator, so a freshly migrated server is not Hy2-capable."""
     async with async_session_maker() as session:
         await session.execute(text("DROP TABLE IF EXISTS servers"))
         await session.execute(
             text("CREATE TABLE servers (id INTEGER PRIMARY KEY, host VARCHAR(255))")
         )
-        await session.execute(
-            text("INSERT INTO servers (id, host) VALUES (1, '45.142.31.13'), (2, '1.2.3.4')")
-        )
+        await session.execute(text("INSERT INTO servers (id, host) VALUES (1, '203.0.113.10')"))
         await session.commit()
 
     await run_migrations()
     await run_migrations()  # idempotent
 
     async with async_session_maker() as session:
-        gr = (
+        row = (
             await session.execute(
                 text(
-                    "SELECT hy2_enabled, hy2_port, hy2_hop_start, hy2_hop_end, "
-                    "hy2_obfs_password, hy2_up, hy2_down FROM servers WHERE id = 1"
+                    "SELECT tcp_port, hy2_enabled, hy2_port, hy2_hop_start, hy2_hop_end, "
+                    "hy2_obfs_password, hy2_sni, hy2_up, hy2_down FROM servers WHERE id = 1"
                 )
             )
         ).fetchone()
-        other = (
-            await session.execute(
-                text("SELECT hy2_enabled, hy2_port, hy2_obfs_password FROM servers WHERE id = 2")
-            )
-        ).fetchone()
 
-    assert gr.hy2_enabled in (1, True)
-    assert gr.hy2_port == 36500
-    assert gr.hy2_hop_start == 20000
-    assert gr.hy2_hop_end == 50000
-    assert gr.hy2_up == "100 mbps"
-    assert gr.hy2_down == "100 mbps"
-    # The obfs password is a secret and is deliberately NOT backfilled.
-    assert gr.hy2_obfs_password is None
-    # A non-Greece node is untouched.
-    assert other.hy2_enabled in (0, False, None)
-    assert other.hy2_port is None
-    assert other.hy2_obfs_password is None
+    assert row.tcp_port is None
+    assert row.hy2_enabled in (0, False, None)
+    assert row.hy2_port is None
+    assert row.hy2_hop_start is None
+    assert row.hy2_hop_end is None
+    assert row.hy2_obfs_password is None
+    assert row.hy2_sni is None
+    assert row.hy2_up is None
+    assert row.hy2_down is None

@@ -22,12 +22,12 @@ from src.models.base import Base
 from src.services import SubscriptionService
 
 
-def _greece(**overrides) -> Server:
-    """A Greece-like, fully Hy2-provisioned server (UDP :443 + LE-cert SNI)."""
+def _hy2_node(**overrides) -> Server:
+    """A fully provisioned, fully Hy2-provisioned server (UDP :443 + LE-cert SNI)."""
     fields = {
-        "name": "Greece",
+        "name": "Testland",
         "flag": "\U0001f1ec\U0001f1f7",
-        "host": "45.142.31.13",
+        "host": "203.0.113.10",
         "port": 443,
         "public_key": "PBK",
         "short_id": "SID",
@@ -45,20 +45,20 @@ def _greece(**overrides) -> Server:
 
 
 def test_hy2_capable_requires_enabled_port_and_sni():
-    assert _greece().hy2_capable is True
+    assert _hy2_node().hy2_capable is True
     # No CA cert SNI (operator-set, left NULL by the migration) -> not capable.
-    assert _greece(hy2_sni=None).hy2_capable is False
+    assert _hy2_node(hy2_sni=None).hy2_capable is False
     # Not enabled -> not capable.
-    assert _greece(hy2_enabled=False).hy2_capable is False
+    assert _hy2_node(hy2_enabled=False).hy2_capable is False
     # No client target port -> not capable.
-    assert _greece(hy2_port=None).hy2_capable is False
+    assert _hy2_node(hy2_port=None).hy2_capable is False
     # The obfs password is NO LONGER part of capability (Hy2 is bare QUIC on :443).
-    assert _greece(hy2_obfs_password=None).hy2_capable is True
+    assert _hy2_node(hy2_obfs_password=None).hy2_capable is True
 
 
 def test_has_alt_transports_true_for_hy2_only_node():
     # A node with Hy2 but no tcp_port still offers a protocol choice.
-    assert _greece(tcp_port=None).has_alt_transports is True
+    assert _hy2_node(tcp_port=None).has_alt_transports is True
 
 
 # --- resolve_protocol --------------------------------------------------------
@@ -68,10 +68,10 @@ def test_resolve_protocol_always_vless_hy2_disabled():
     # Hy2 is disabled fleet-wide: EVERY input resolves to vless, even a stored
     # "hy2" pref on a fully-capable node (emission is gated off; server config
     # is left intact for a possible future re-enable).
-    assert SubscriptionService.resolve_protocol(_greece(), "hy2") == "vless"
-    assert SubscriptionService.resolve_protocol(_greece(hy2_sni=None), "hy2") == "vless"
-    assert SubscriptionService.resolve_protocol(_greece(), "vless") == "vless"
-    assert SubscriptionService.resolve_protocol(_greece(), None) == "vless"
+    assert SubscriptionService.resolve_protocol(_hy2_node(), "hy2") == "vless"
+    assert SubscriptionService.resolve_protocol(_hy2_node(hy2_sni=None), "hy2") == "vless"
+    assert SubscriptionService.resolve_protocol(_hy2_node(), "vless") == "vless"
+    assert SubscriptionService.resolve_protocol(_hy2_node(), None) == "vless"
 
 
 # --- link shape --------------------------------------------------------------
@@ -79,14 +79,14 @@ def test_resolve_protocol_always_vless_hy2_disabled():
 
 def test_build_hy2_link_shape():
     uuid = "11111111-2222-3333-4444-555555555555"
-    link = SubscriptionService.build_hy2_link(_greece(), uuid)
+    link = SubscriptionService.build_hy2_link(_hy2_node(), uuid)
     assert link is not None
     parts = urlsplit(link)
     assert parts.scheme == "hysteria2"
     # Auth is the device/sub UUID; host:port is the bare UDP :443 (no hop range,
     # so the port parses cleanly).
     assert parts.username == uuid
-    assert parts.hostname == "45.142.31.13"
+    assert parts.hostname == "203.0.113.10"
     assert parts.port == 443
     q = parse_qs(parts.query)
     # ONLY sni — no obfs, no obfs-password, no mport/hop, no insecure, no pinSHA256.
@@ -96,14 +96,14 @@ def test_build_hy2_link_shape():
     assert "mport" not in link and "," not in parts.netloc
     assert "up=" not in link and "down=" not in link
     # The flag/name fragment is preserved (Happ shows it).
-    assert "Greece" in link
+    assert "Testland" in link
 
 
 def test_build_hy2_link_emits_obfs_when_node_has_password():
-    # A node carrying an obfs password (wired-DPI nodes) emits salamander obfs;
-    # a node without one stays plain QUIC (mobile-friendly).
+    # A node carrying an obfs password emits salamander obfs; a node without one
+    # stays plain QUIC (mobile-friendly).
     link = SubscriptionService.build_hy2_link(
-        _greece(hy2_obfs_password="s4l4m"), "11111111-2222-3333-4444-555555555555"
+        _hy2_node(hy2_obfs_password="s4l4m"), "11111111-2222-3333-4444-555555555555"
     )
     q = parse_qs(urlsplit(link).query)
     assert q["obfs"] == ["salamander"]
@@ -112,7 +112,7 @@ def test_build_hy2_link_emits_obfs_when_node_has_password():
 
 
 def test_xray_json_hy2_obfs_added_only_with_password():
-    server = _greece(hy2_obfs_password="s4l4m")
+    server = _hy2_node(hy2_obfs_password="s4l4m")
     link = SubscriptionService.build_hy2_link(server, "11111111-2222-3333-4444-555555555555")
     cfg = SubscriptionService._hy2_link_to_xray_config(link, server)
     proxy = next(o for o in cfg["outbounds"] if o["tag"] == "proxy")
@@ -122,8 +122,8 @@ def test_xray_json_hy2_obfs_added_only_with_password():
     assert fm["udp"][0]["settings"]["password"] == "s4l4m"
     # And the no-obfs node has NO finalmask.udp.
     plain = SubscriptionService._hy2_link_to_xray_config(
-        SubscriptionService.build_hy2_link(_greece(), "11111111-2222-3333-4444-555555555555"),
-        _greece(),
+        SubscriptionService.build_hy2_link(_hy2_node(), "11111111-2222-3333-4444-555555555555"),
+        _hy2_node(),
     )
     pproxy = next(o for o in plain["outbounds"] if o["tag"] == "proxy")
     assert "udp" not in pproxy["streamSettings"]["finalmask"]
@@ -131,18 +131,18 @@ def test_xray_json_hy2_obfs_added_only_with_password():
 
 def test_build_hy2_link_none_when_not_capable():
     # No CA cert SNI -> not emittable -> None (caller falls back to vless).
-    assert SubscriptionService.build_hy2_link(_greece(hy2_sni=None), "uuid") is None
+    assert SubscriptionService.build_hy2_link(_hy2_node(hy2_sni=None), "uuid") is None
     # No client target port -> None.
-    assert SubscriptionService.build_hy2_link(_greece(hy2_port=None), "uuid") is None
+    assert SubscriptionService.build_hy2_link(_hy2_node(hy2_port=None), "uuid") is None
     # Empty device uuid -> None.
-    assert SubscriptionService.build_hy2_link(_greece(), "") is None
+    assert SubscriptionService.build_hy2_link(_hy2_node(), "") is None
 
 
 # --- end-to-end delivery -----------------------------------------------------
 
 
 async def _seed_hy2_sub(*, capable: bool) -> str:
-    """One user + one Greece server (Hy2 capable or not) + an active sub synced
+    """One user + one Testland server (Hy2 capable or not) + an active sub synced
     to it + a protocol=hy2 pref. Returns the sub token."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
@@ -151,7 +151,7 @@ async def _seed_hy2_sub(*, capable: bool) -> str:
         user = User(tg_id=920001)
         session.add(user)
         await session.flush()
-        server = _greece(hy2_sni="aegis.example.test" if capable else None)
+        server = _hy2_node(hy2_sni="aegis.example.test" if capable else None)
         session.add(server)
         await session.flush()
         now = datetime.now(UTC).replace(tzinfo=None)

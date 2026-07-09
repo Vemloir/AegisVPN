@@ -20,16 +20,16 @@ async def _fresh_db() -> None:
 
 
 async def _seed(alt: bool = True) -> tuple[int, int]:
-    """Create one user + one Greece-like server. Returns (user_id, server_id)."""
+    """Create one user + one fully provisioned server. Returns (user_id, server_id)."""
     await _fresh_db()
     async with async_session_maker() as session:
         user = User(tg_id=910001)
         session.add(user)
         await session.flush()
         server = Server(
-            name="Greece",
+            name="Testland",
             flag="GR",
-            host="45.142.31.13",
+            host="203.0.113.10",
             port=443,
             public_key="PBK",
             short_id="SID",

@@ -44,7 +44,7 @@ def find_vless_inbound(config: dict, preferred_network: str | None = None) -> di
 
 def build_client_record(uuid: str, email: str, inbound: dict) -> dict:
     # tcp/REALITY clients carry the vision flow (xtls-rprx-vision); xhttp/grpc
-    # stay flow-less. Greece shares ONE reality keypair across inbounds — only
+    # stay flow-less. A node shares ONE reality keypair across inbounds — only
     # the per-client flow differs, set per the inbound the client lands on.
     record = {
         "id": uuid,

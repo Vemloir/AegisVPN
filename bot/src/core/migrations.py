@@ -80,59 +80,21 @@ MIGRATIONS: dict[str, list[Column]] = {
         # MTProto-proxy listen port. No post_sql: operator-set with the secret.
         Column("mtproxy_port", "INTEGER", "INTEGER"),
         # Alternative VLESS+REALITY transport port (same reality keypair). NULL =
-        # xhttp/443 only, no transport choice. ONLY the Greece node is backfilled
-        # here; every other server stays NULL. This is the single allowed
-        # prod-DB effect for the per-location-transport feature.
-        Column(
-            "tcp_port",
-            "INTEGER",
-            "INTEGER",
-            post_sql="UPDATE servers SET tcp_port = 2053 WHERE host = '45.142.31.13'",
-        ),
-        # --- Hysteria2 capability. ONLY the Greece node is backfilled, and the
-        # obfs password (a secret) is deliberately LEFT NULL: until the operator
-        # sets it via a direct DB UPDATE, hy2_capable is False and the bot falls
-        # back to vless rather than shipping a broken Hy2 link.
-        Column(
-            "hy2_enabled",
-            "BOOLEAN DEFAULT 0",
-            "BOOLEAN DEFAULT FALSE",
-            post_sql="UPDATE servers SET hy2_enabled = 1 WHERE host = '45.142.31.13'",
-        ),
-        Column(
-            "hy2_port",
-            "INTEGER",
-            "INTEGER",
-            post_sql="UPDATE servers SET hy2_port = 36500 WHERE host = '45.142.31.13'",
-        ),
-        Column(
-            "hy2_hop_start",
-            "INTEGER",
-            "INTEGER",
-            post_sql="UPDATE servers SET hy2_hop_start = 20000 WHERE host = '45.142.31.13'",
-        ),
-        Column(
-            "hy2_hop_end",
-            "INTEGER",
-            "INTEGER",
-            post_sql="UPDATE servers SET hy2_hop_end = 50000 WHERE host = '45.142.31.13'",
-        ),
-        # No post_sql: the obfs password is a secret, set out-of-band by the operator.
+        # xhttp/443 only, no transport choice. Operator-set per node.
+        Column("tcp_port", "INTEGER", "INTEGER"),
+        # --- Hysteria2 capability. Every field here is operator-set via a direct
+        # DB UPDATE, never backfilled from the migration: the obfs password and
+        # the SNI are secrets, and until they are present hy2_capable is False and
+        # the bot falls back to vless rather than shipping a broken Hy2 link.
+        Column("hy2_enabled", "BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE"),
+        Column("hy2_port", "INTEGER", "INTEGER"),
+        Column("hy2_hop_start", "INTEGER", "INTEGER"),
+        Column("hy2_hop_end", "INTEGER", "INTEGER"),
         Column("hy2_obfs_password", "VARCHAR(255)", "VARCHAR(255)"),
-        Column(
-            "hy2_up",
-            "VARCHAR(32)",
-            "VARCHAR(32)",
-            post_sql="UPDATE servers SET hy2_up = '100 mbps' WHERE host = '45.142.31.13'",
-        ),
-        Column(
-            "hy2_down",
-            "VARCHAR(32)",
-            "VARCHAR(32)",
-            post_sql="UPDATE servers SET hy2_down = '100 mbps' WHERE host = '45.142.31.13'",
-        ),
-        # No post_sql: the Hy2 TLS SNI (the shared CA/Let's Encrypt cert domain) is
-        # set out-of-band by the operator via a direct DB update, like the obfs
+        Column("hy2_up", "VARCHAR(32)", "VARCHAR(32)"),
+        Column("hy2_down", "VARCHAR(32)", "VARCHAR(32)"),
+        # The Hy2 TLS SNI (the shared CA/Let's Encrypt cert domain) is set
+        # out-of-band by the operator via a direct DB update, like the obfs
         # password — never the actual domain in the (public) migration.
         Column("hy2_sni", "VARCHAR(255)", "VARCHAR(255)"),
     ],

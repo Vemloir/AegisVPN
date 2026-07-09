@@ -181,7 +181,7 @@ def build_inbound(port: int, transport: str, tag: str) -> dict:
     settings["decryption"] = "none"
     # Clients are shared across all inbounds (same id+email), but the flow is set
     # PER INBOUND: tcp/REALITY carries the vision flow (xtls-rprx-vision), while
-    # xhttp/grpc stay flow-less. Greece shares one reality keypair across
+    # xhttp/grpc stay flow-less. A node shares one reality keypair across
     # inbounds; only this per-client flow differs.
     clients = []
     for client in client_map.values():

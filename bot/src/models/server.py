@@ -33,7 +33,7 @@ class Server(Base):
     mtproxy_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Alternative VLESS+REALITY transport port on the SAME reality keypair
     # (public_key / short_id). NULL means the node serves xhttp/443 only and
-    # offers no transport choice. Only the Greece node carries this today.
+    # offers no transport choice.
     tcp_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # --- Hysteria2 capability (a separate process; xray-core cannot speak it) ---
@@ -42,7 +42,8 @@ class Server(Base):
     # sets it via a direct DB update, and emission falls back to vless until it is.
     hy2_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # Client target port (the Hy2 server :listen port); the port-hop range start
-    # in mport lets the client rotate UDP ports against ТСПУ throttling.
+    # in mport lets the client rotate UDP ports when a network throttles a
+    # long-lived flow on a single port.
     hy2_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
     hy2_hop_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     hy2_hop_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -60,10 +61,9 @@ class Server(Base):
     def has_alt_transports(self) -> bool:
         """Every location exposes the per-location settings screen (Protocol:
         VLESS + Transport: the inbound it serves), so all locations are configured
-        identically — a new node like Germany is no longer the odd one out showing
-        "standard transport only". Hy2 is gated off in the bot, so it no longer
-        drives this; a node with a tcp_port (Greece) additionally offers a real
-        transport choice in that screen."""
+        identically — no node is the odd one out showing "standard transport only".
+        Hy2 is gated off in the bot, so it no longer drives this; a node with a
+        tcp_port additionally offers a real transport choice in that screen."""
         return True
 
     @property

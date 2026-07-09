@@ -41,7 +41,7 @@ Usage examples:
   python update.py --split-migrate \\
                    --node NODE_IP:ROOT_PASSWORD --node NODE_IP:ROOT_PASSWORD
 
-  # Roll the full Greece-canary stack (xray raw-TCP+VISION :2053 + Hysteria2)
+  # Roll the full canary stack (xray raw-TCP+VISION :2053 + Hysteria2)
   # onto a node and sync its bot DB row. Idempotent + safe to re-run. The
   # geo-SNI (Hy2 cert CN) is REQUIRED via --geo-sni (never hardcoded — public repo):
   python update.py --provision-stack \\
@@ -335,9 +335,9 @@ def set_db_keys(main_c: paramiko.SSHClient, host: str, pubkey: str, sid: str) ->
 # Full-stack provisioning (--provision-stack)
 # ---------------------------------------------------------------------------
 #
-# Encodes the steps that were done by hand on the Greece canary (45.142.31.13)
-# so the same multi-inbound (xray tcp+VISION) + Hysteria2 stack rolls onto the
-# other nodes with one command. Every step is IDEMPOTENT and COMPOSABLE:
+# Encodes the steps that were done by hand on the first canary node so the same
+# multi-inbound (xray tcp+VISION) + Hysteria2 stack rolls onto the other nodes
+# with one command. Every step is IDEMPOTENT and COMPOSABLE:
 #
 #   provision_agent_env(c, host, geo_sni)  -> A) per-node agent.env knobs
 #   provision_hysteria(c, host, geo_sni)   -> B) cert + secrets + config + ports
@@ -377,9 +377,9 @@ XRAY_CONN_IDLE = 30
 # was dropped on RU mobile and bufferbloated CS latency.
 HY2_LISTEN_PORT = 443
 HY2_STATS_URL = "http://127.0.0.1:9999"
-MTPROXY_PORT = 2083         # Cloudflare-HTTPS-alt port: RU mobile (Megafon ТСПУ)
-                            # lets these through (like 2053), unlike high random
-                            # ports (8765 was blocked on mobile)
+MTPROXY_PORT = 2083         # Cloudflare-HTTPS-alt port: mobile networks carry
+                            # these reliably (like 2053), unlike high random
+                            # ports (8765 was unreachable on mobile)
 
 REMOTE_HY2_DIR = "/root/aegis/deploy/vps/data/hysteria"
 REMOTE_HY2_CONFIG = f"{REMOTE_HY2_DIR}/config.yaml"
@@ -772,7 +772,7 @@ def verify_stack(c: paramiko.SSHClient, host: str) -> None:
         "\"${XRAY_CONFIG_PATH:-/etc/xray/config.json}\"' 2>/dev/null || echo 0",
         "count vless", timeout=30).strip()
     print(f"    vless inbound count: {out}")
-    # Greece runs 2 vless inbounds today (primary + tcp); gRPC is dropped. Warn
+    # A provisioned node runs 2 vless inbounds (primary + tcp); gRPC is dropped. Warn
     # rather than hard-fail so a 2-vs-3 expectation drift doesn't abort a good run.
     try:
         n = int(out.splitlines()[-1])
@@ -920,7 +920,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--provision-stack", action="store_true",
-        help="Roll the full Greece canary stack (xray tcp+VISION :2053 + "
+        help="Roll the full canary stack (xray tcp+VISION :2053 + "
              "Hysteria2) onto --node targets and sync the bot DB. Idempotent + "
              "re-runnable. Requires --main-password (for the DB write).",
     )

@@ -12,9 +12,9 @@ from src.services import SubscriptionService
 def _server(**overrides) -> Server:
     """A server with a fake-TLS mtg secret + listen port provisioned."""
     fields = {
-        "name": "Greece",
+        "name": "Testland",
         "flag": "GR",
-        "host": "45.142.31.13",
+        "host": "203.0.113.10",
         "port": 443,
         "public_key": "PBK",
         "short_id": "SID",
@@ -43,7 +43,7 @@ def test_build_mtproxy_link_shape():
     assert parts.netloc == "t.me"
     assert parts.path == "/proxy"
     q = parse_qs(parts.query)
-    assert q["server"] == ["45.142.31.13"]
+    assert q["server"] == ["203.0.113.10"]
     assert q["port"] == ["8765"]
     assert q["secret"][0].startswith("ee")  # fake-TLS secret carried verbatim
 

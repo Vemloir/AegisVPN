@@ -64,10 +64,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--xhttp-port", "--xray-port", dest="xhttp_port", default="443",
                    help="XHTTP (primary VLESS+REALITY) inbound port; registered as the "
                         "server's connect port in the bot DB (default 443). On a fresh IP "
-                        "whose :443 is throttled by ТСПУ (common on flagged US/datacenter "
+                        "whose :443 proves unreliable (common on flagged US/datacenter "
                         "ranges — the reality ClientHello gets reset), set an alt-HTTPS port "
-                        "like 2083: the same port class as --tcp-port 2053, which slips past "
-                        "the :443 inspection. (--xray-port is a back-compat alias.)")
+                        "like 2083: the same port class as --tcp-port 2053, which connects "
+                        "reliably. (--xray-port is a back-compat alias.)")
     p.add_argument("--reality-dest", required=True,
                    help="REALITY dest, e.g. csc.fi:443 — a geo-matched, China-reachable "
                         "TLS1.3 site. NO default (gateway.icloud.com is implausible on a "

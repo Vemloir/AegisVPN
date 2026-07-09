@@ -1,9 +1,9 @@
 # Hysteria2 "gaming" server for AegisVPN. Provisioning fills __STATS_SECRET__
 # into ./data/hysteria/config.yaml on the node; the real Let's Encrypt cert + key
-# are installed separately (cert.pem/key.pem). Tuned for low CS2 jitter + RU
-# mobile (Megafon ТСПУ) survival.
+# are installed separately (cert.pem/key.pem). Tuned for low CS2 jitter and
+# reliability on mobile networks.
 #
-# - listen on UDP 443: it looks like HTTP/3 QUIC, so RU mobile passes it. High
+# - listen on UDP 443: it looks like HTTP/3 QUIC, which mobile networks carry. High
 #   random UDP ports (36500 + a 20000-50000 hop range) + salamander obfs made the
 #   traffic NOT look like QUIC and got it dropped on mobile — so both are gone
 #   (no obfs, no port hopping; single :443).
