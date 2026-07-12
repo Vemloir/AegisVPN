@@ -56,6 +56,24 @@ services:
       - ./data/bot:/data
       - ./data/vpn:/vpn-data:ro
 
+  # Public website API (FastAPI, src.api.main:app). Reuses the bot image (same
+  # deps + code), reads the SAME sqlite as the bot so the site can never disagree
+  # with what the bot sells (plans/prices/locations). Loopback-only; Caddy on the
+  # host proxies aegisvpn.org/api/* here. Control-host only, like the bot.
+  siteapi:
+    build:
+      context: ../../bot
+      dockerfile: Dockerfile.deploy
+    container_name: aegis-siteapi
+    restart: unless-stopped
+    env_file:
+      - ./bot.env
+    network_mode: host
+    command: ["python", "-m", "uvicorn", "src.api.main:app", "--host", "127.0.0.1", "--port", "8000"]
+    logging: *default-logging
+    volumes:
+      - ./data/bot:/data
+
   # Support bot (@AegisVPNsupportBot): two-way user<->operator relay used as the
   # official feedback channel. Long-polling (no inbound port). Token + operator
   # IDs come from ./support.env (never in the repo). Separate Telegram bot, so it
@@ -92,6 +110,9 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./data/caddy:/data
       - ./config/caddy:/config
+      # Built website SPA (web/dist), served for aegisvpn.org. Only present on
+      # the control host; nodes don't run caddy so the missing dir is harmless.
+      - ./web:/srv/web:ro
 
   # Hysteria2 "gaming" data plane — opt-in via the `hysteria` profile, so nodes
   # without it run nothing extra. apernet/hysteria on its own UDP port; per-user
