@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 from src.models import Server, Subscription
 from src.services import SubscriptionService
+from src.services.subscription_service import _RU_CN_DIRECT_DOMAINS
 
 # A raw vless link as the agent returns it from /sub/<uuid> (xhttp default
 # inbound). The bot's normalize_vless_uri rewrites it onto the bot's
@@ -167,15 +168,25 @@ def test_vless_link_to_xray_config_xhttp_has_recovery_knobs_and_clean_routing():
         for r in cfg["routing"]["rules"]
         for v in (r.get("domain", []) + r.get("ip", []))
     )
-    # The client resolves nothing but its own direct traffic, via the system
-    # resolver. Two invariants at once: no third-party resolver is handed the
-    # user's real IP (tunneled domains are resolved by the exit node, because
-    # sniffing + routing AsIs pass the hostname through), and DNS never depends
-    # on the proxy, so a Wi-Fi<->cellular switch recovers with no stall.
-    addrs = [(s if isinstance(s, str) else s["address"]) for s in cfg["dns"]["servers"]]
-    assert addrs == ["localhost"]
-    # Sniffing is what makes the above true — without destOverride the outbound
-    # would get an IP and the client would have to resolve it first.
+    # DNS must not leak. The system resolver may serve ONLY the domains whose
+    # traffic bypasses the tunnel anyway (RU/CN); everything else must resolve
+    # through the tunnel, or the user's ISP sees every name they visit from their
+    # real IP — which is exactly what a dnsleak test catches.
+    servers = cfg["dns"]["servers"]
+    local = [s for s in servers if isinstance(s, dict) and s["address"] == "localhost"]
+    assert len(local) == 1, "the system resolver must be scoped, never a catch-all"
+    assert local[0]["domains"] == _RU_CN_DIRECT_DOMAINS
+    assert local[0].get("skipFallback") is True, "a miss must not fall back to the ISP"
+
+    # The catch-all resolver rides the tunnel: plain https://, never https+local://
+    # (the +local suffix is what sends a query out the direct outbound).
+    catch_all = [s for s in servers if isinstance(s, str)]
+    assert catch_all, "there must be a resolver for everything that is not RU/CN"
+    assert all(s.startswith("https://") for s in catch_all)
+    assert not any("+local" in s for s in catch_all)
+
+    # Sniffing + AsIs keep the hostname on the wire to the exit node, so the node
+    # resolves what it connects to.
     assert all(i["sniffing"]["enabled"] for i in cfg["inbounds"])
     assert all("tls" in i["sniffing"]["destOverride"] for i in cfg["inbounds"])
     assert cfg["routing"]["domainStrategy"] == "AsIs"

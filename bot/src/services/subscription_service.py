@@ -31,28 +31,52 @@ _UA_MAC_VER_RE = re.compile(r"Mac OS X[/ ]([\d_]+)", re.IGNORECASE)
 # --- xray-JSON subscription building blocks ---------------------------------
 # Clean "default-proxy" policy: everything is tunneled EXCEPT RU/CN/private,
 # which go direct (so RU banking/gosuslugi see the user's real RU IP, not the
-# exit's). DNS uses https+local:// so it resolves via the Freedom outbound
-# (direct) and never deadlocks on a momentarily-dead proxy during a
-# Wi-Fi<->cellular switch — the #1 cause of "internet doesn't come back".
+# exit's).
+
+# RU/CN kept off the tunnel as a small static suffix list instead of
+# geosite:category-ru / geosite:cn (those .dat files blow the iOS 50 MB cap).
+# National TLDs + a couple of big RU services that aren't on a .ru TLD.
+_RU_CN_DIRECT_DOMAINS = [
+    "domain:ru", "domain:su", "domain:рф", "domain:moscow",
+    "domain:cn", "domain:中国",
+    "domain:vk.com", "domain:yandex.net",
+]
+
+# Split DNS. The rule that matters: a name whose traffic rides the tunnel must be
+# RESOLVED through the tunnel too.
+#
+# It is not enough that routing forwards the hostname to the exit node (sniffing
+# + domainStrategy AsIs do exactly that). The client still asks for the name
+# first — in TUN mode the OS query lands in this dns section — and whatever this
+# section does with it is visible to whoever answers. Point it at the system
+# resolver and every domain the user visits goes to their ISP in clear text, from
+# their real IP, tunnel or no tunnel. That is a textbook DNS leak, and dnsleak
+# tests report it as such.
+#
+# So:
+#   - RU/CN suffixes -> the system resolver. Their traffic bypasses the tunnel
+#     anyway, so this reveals nothing the ISP cannot already see, and it keeps RU
+#     CDN answers local and fast.
+#   - everything else -> DoH over `https://` (NOT `https+local://`). Without the
+#     +local suffix the query follows the routing rules, so it rides the vless
+#     outbound: the resolver sees the exit node's IP and never the user's.
+#
+# The node address in the outbound is a literal IP, so there is no bootstrap
+# name to resolve and no chicken-and-egg: after a Wi-Fi<->cellular switch the
+# tunnel re-establishes on its own and DNS resumes with it.
+#
+# No geosite/geoip: the geo .dat files blow the ~50 MB iOS Network Extension cap
+# ("XrayCore: tunnel memory limit exceeded").
 _XRAY_CLEAN_DNS = {
     "queryStrategy": "UseIPv4",
-    # This section resolves ONLY direct-outbound traffic, and that is the whole
-    # design. The inbounds sniff the destination domain and routing runs AsIs, so
-    # a tunneled connection reaches the vless outbound carrying its HOSTNAME: the
-    # exit node resolves it, and the client never emits a query for it. What is
-    # left here feeds `freedom` (domainStrategy UseIP) — i.e. the RU/CN suffixes
-    # below, which bypass the tunnel anyway.
-    #
-    # Hence `localhost` (the system resolver):
-    #   - no third-party resolver ever learns a tunneled domain, and none is
-    #     handed the user's real IP;
-    #   - the system resolver is reachable even while the proxy is momentarily
-    #     dead, so a Wi-Fi<->cellular switch recovers seamlessly — no in-tunnel
-    #     DNS to deadlock on;
-    #   - RU domains get their ISP's CDN answers, exactly as with the VPN off.
-    # No geosite/geoip either: the geo .dat files blow the ~50 MB iOS Network
-    # Extension cap ("XrayCore: tunnel memory limit exceeded").
-    "servers": ["localhost"],
+    "servers": [
+        {
+            "address": "localhost",
+            "domains": _RU_CN_DIRECT_DOMAINS,
+            "skipFallback": True,
+        },
+        "https://9.9.9.9/dns-query",
+    ],
 }
 _XRAY_CLEAN_INBOUNDS = [
     {
@@ -69,14 +93,6 @@ _XRAY_CLEAN_INBOUNDS = [
 _PRIVATE_CIDRS = [
     "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
     "169.254.0.0/16", "::1/128", "fc00::/7", "fe80::/10",
-]
-# RU/CN kept off the tunnel as a small static suffix list instead of
-# geosite:category-ru / geosite:cn (those .dat files blow the iOS 50 MB cap).
-# National TLDs + a couple of big RU services that aren't on a .ru TLD.
-_RU_CN_DIRECT_DOMAINS = [
-    "domain:ru", "domain:su", "domain:рф", "domain:moscow",
-    "domain:cn", "domain:中国",
-    "domain:vk.com", "domain:yandex.net",
 ]
 _XRAY_CLEAN_ROUTING = {
     # AsIs: never resolve a domain to an IP for matching, so geoip.dat is never
