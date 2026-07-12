@@ -998,9 +998,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    if not any((args.bot, args.nodes, args.mtproxy, args.set_network,
+    if not any((args.bot, args.nodes, args.patch_dns, args.mtproxy, args.set_network,
                 args.split_migrate, args.provision_stack, args.renew_hy2_cert)):
-        raise SystemExit("Specify --bot, --nodes, --mtproxy, --set-network, "
+        raise SystemExit("Specify --bot, --nodes, --patch-dns, --mtproxy, --set-network, "
                          "--split-migrate, --provision-stack, and/or --renew-hy2-cert")
     if args.renew_hy2_cert and (not args.main_password or not args.nodes_list):
         raise SystemExit("--renew-hy2-cert requires --main-password (ACME host) "
