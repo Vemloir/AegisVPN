@@ -1,0 +1,30 @@
+/* Headings are set in Newsreader, which ships no Cyrillic subset. Rather than
+   replace it (and lose the design's voice on Latin), pair it with a Cyrillic
+   old-style serif: browsers fall back per GLYPH, so English renders in exactly
+   the intended face and Russian picks up EB Garamond instead of a system serif.
+   The two share a bookish, high-contrast build, so the seam is hard to spot. */
+@import '@fontsource/newsreader/400.css';
+@import '@fontsource/newsreader/500.css';
+@import '@fontsource/newsreader/600.css';
+@import '@fontsource/newsreader/400-italic.css';
+@import '@fontsource/newsreader/500-italic.css';
+
+@import '@fontsource/eb-garamond/cyrillic-400.css';
+@import '@fontsource/eb-garamond/cyrillic-500.css';
+@import '@fontsource/eb-garamond/cyrillic-600.css';
+@import '@fontsource/eb-garamond/cyrillic-400-italic.css';
+@import '@fontsource/eb-garamond/cyrillic-500-italic.css';
+
+@import '@fontsource/onest/400.css';
+@import '@fontsource/onest/500.css';
+@import '@fontsource/onest/600.css';
+@import '@fontsource/onest/700.css';
+
+body { margin: 0; }
+* { -webkit-font-smoothing: antialiased; box-sizing: border-box; }
+::selection { background: #CC785C; color: #fff; }
+/* Native focus rings (e.g. the plan-term <select>) default to browser blue,
+   which doesn't exist anywhere else in this palette. Recolor, don't remove —
+   still visible for keyboard users, just not blue. */
+:focus-visible { outline-color: var(--accent); }
+@keyframes vpnSpin { to { transform: rotate(360deg); } }
