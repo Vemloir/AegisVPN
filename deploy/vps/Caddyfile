@@ -10,3 +10,25 @@ http://vpn.example.com {
 https://vpn.example.com:8443 {
     reverse_proxy 127.0.0.1:8080
 }
+
+# Public website: static SPA + its API.
+site.example.com, www.site.example.com {
+    encode zstd gzip
+
+    # Hashed bundles never change under the same name: cache forever.
+    # Everything else (index.html above all) must be revalidated on every
+    # load, or users keep seeing a stale page pointing at old bundles.
+    @assets path /assets/*
+    header @assets Cache-Control "public, max-age=31536000, immutable"
+    @page not path /assets/* /api/*
+    header @page Cache-Control "no-cache"
+
+    handle /api/* {
+        reverse_proxy 127.0.0.1:8000
+    }
+    handle {
+        root * /srv/web
+        try_files {path} /index.html
+        file_server
+    }
+}
