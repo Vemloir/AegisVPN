@@ -60,6 +60,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--main-password", required=True)
     p.add_argument("--new-host", required=True, help="Fresh VPS IP/hostname")
     p.add_argument("--new-password", required=True)
+    p.add_argument("--new-username", default="root",
+                   help="SSH user on the fresh VPS (default root). Cloud images that "
+                        "ship a non-root sudo account instead (e.g. OVH's 'ubuntu') are "
+                        "handled by bootstrapping root login from it first: root's password "
+                        "is set to --new-password and password SSH is enabled, then the rest "
+                        "of the provisioning runs as root unchanged.")
     p.add_argument("--server-name", required=True,
                    help="Display name with flag emoji at the start, e.g. '🇯🇵 Japan | Tokyo'")
     p.add_argument("--server-domain", required=True,
@@ -127,8 +133,8 @@ def parse_args() -> argparse.Namespace:
 _dir_cache: dict[int, set[str]] = {}  # sftp_id -> set of paths we've already ensured
 
 
-def connect(host: str, password: str, attempts: int = 6) -> paramiko.SSHClient:
-    """Open an SSH session as root, retrying past rate-limit drops with
+def connect(host: str, password: str, attempts: int = 6, username: str = "root") -> paramiko.SSHClient:
+    """Open an SSH session (root by default), retrying past rate-limit drops with
     exponential backoff."""
     delay = 5.0
     last: Exception | None = None
@@ -137,7 +143,7 @@ def connect(host: str, password: str, attempts: int = 6) -> paramiko.SSHClient:
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         try:
             client.connect(
-                hostname=host, username="root", password=password,
+                hostname=host, username=username, password=password,
                 timeout=60, banner_timeout=60, auth_timeout=60,
             )
             return client
@@ -423,6 +429,24 @@ def shell_quote(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
 
 
+def enable_root_command(password: str) -> str:
+    """Shell command (run as a non-root sudo user) that gives us root SSH: set
+    root's password to ``password``, enable PermitRootLogin + PasswordAuthentication
+    (in sshd_config AND any cloud-init drop-in that overrides them), and restart
+    sshd. Idempotent. Piping the password into ``sudo -S`` works whether the sudo
+    account needs a password or is NOPASSWD (then the piped line is just ignored)."""
+    inner = (
+        f"echo {shell_quote('root:' + password)} | chpasswd && "
+        "sed -i 's/^#\\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && "
+        "sed -i 's/^#\\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && "
+        "find /etc/ssh/sshd_config.d -type f -exec sed -i "
+        "'s/^#\\?PasswordAuthentication.*/PasswordAuthentication yes/; "
+        "s/^#\\?PermitRootLogin.*/PermitRootLogin yes/' {} + 2>/dev/null; "
+        "(systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null)"
+    )
+    return f"echo {shell_quote(password)} | sudo -S -p '' sh -c {shell_quote(inner)}"
+
+
 # --- main flow -------------------------------------------------------------
 
 def main() -> int:
@@ -444,6 +468,18 @@ def main() -> int:
     # Open ONE session per host and hold it for the entire flow. The naive
     # version reconnected 4× (twice per host); fresh VPS sshd / fail2ban
     # would rate-limit the second connect within ~30s and the script died.
+    # Cloud images with a non-root sudo account (OVH 'ubuntu' etc.): bootstrap
+    # root SSH from it first, then everything below runs as root unchanged.
+    if args.new_username != "root":
+        print(f"[0/6] bootstrapping root login from {args.new_username}@{args.new_host}…")
+        boot_client = connect(args.new_host, args.new_password, username=args.new_username)
+        try:
+            run_or_die(boot_client, enable_root_command(args.new_password), "enable root", timeout=90)
+        finally:
+            try: boot_client.close()
+            except Exception: pass
+        time.sleep(2)  # let sshd finish restarting before the root connect
+
     print(f"[1/6] connecting to new VPS {args.new_host}…")
     new_client = connect(args.new_host, args.new_password)
     main_client: paramiko.SSHClient | None = None
