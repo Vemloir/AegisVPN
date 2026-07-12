@@ -76,6 +76,38 @@ MIGRATIONS: dict[str, list[Column]] = {
             post_sql="UPDATE servers SET subscription_group = 'safe' WHERE subscription_group IS NULL",
         ),
         Column("display_order", "INTEGER DEFAULT 0", "INTEGER DEFAULT 0"),
+        # Lifetime per-location traffic, kept on the server row so it outlives the
+        # SubscriptionServer links (which reconcile deletes on disable/re-sync,
+        # taking their per-location bytes with them). Seeded once from whatever the
+        # surviving links still hold — the only per-location figure the DB retains;
+        # traffic on already-deleted links is unrecoverable, so pre-existing
+        # locations start from an undercount and are exact from here on.
+        Column(
+            "traffic_up_bytes",
+            "BIGINT DEFAULT 0",
+            "BIGINT DEFAULT 0",
+            post_sql=(
+                "UPDATE servers SET traffic_up_bytes = COALESCE("
+                "(SELECT SUM(traffic_up_bytes) FROM subscription_servers "
+                "WHERE subscription_servers.server_id = servers.id), 0)"
+            ),
+        ),
+        Column(
+            "traffic_down_bytes",
+            "BIGINT DEFAULT 0",
+            "BIGINT DEFAULT 0",
+            post_sql=(
+                "UPDATE servers SET traffic_down_bytes = COALESCE("
+                "(SELECT SUM(traffic_down_bytes) FROM subscription_servers "
+                "WHERE subscription_servers.server_id = servers.id), 0)"
+            ),
+        ),
+        # The website's only presentation field: an ISO 3166-1 alpha-2 code. The
+        # globe derives the country outline and its camera target from the atlas,
+        # and the region filter is a function of the code — storing either here
+        # would be a second copy of something already known. Operator-set; a node
+        # without it is still served, just not drawn on the globe.
+        Column("country_code", "VARCHAR(2)", "VARCHAR(2)"),
         Column("mtproxy_secret", "VARCHAR(64)", "VARCHAR(64)"),
         # MTProto-proxy listen port. No post_sql: operator-set with the secret.
         Column("mtproxy_port", "INTEGER", "INTEGER"),

@@ -246,10 +246,13 @@ async def poll_traffic():
                 if delta_up:
                     sub.traffic_up_bytes = (sub.traffic_up_bytes or 0) + delta_up
                     link.traffic_up_bytes = (link.traffic_up_bytes or 0) + delta_up
+                    # Location total lives on the server row so it survives link churn.
+                    server.traffic_up_bytes = (server.traffic_up_bytes or 0) + delta_up
                     changed = True
                 if delta_down:
                     sub.traffic_down_bytes = (sub.traffic_down_bytes or 0) + delta_down
                     link.traffic_down_bytes = (link.traffic_down_bytes or 0) + delta_down
+                    server.traffic_down_bytes = (server.traffic_down_bytes or 0) + delta_down
                     changed = True
                 if cursors != (link.traffic_cursors or {}):
                     link.traffic_cursors = cursors  # reassign so ORM flags the change

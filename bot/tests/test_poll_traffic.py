@@ -7,6 +7,8 @@ own user/subscription/server with a unique key to avoid UNIQUE collisions.
 
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import delete, select
+
 from src.core.database import async_session_maker, engine
 from src.models import Server, Subscription, SubscriptionServer, User
 from src.models.base import Base
@@ -68,6 +70,12 @@ async def _totals(sub_id: int) -> tuple[int, int]:
         return sub.traffic_up_bytes, sub.traffic_down_bytes
 
 
+async def _server_totals(server_id: int) -> tuple[int, int]:
+    async with async_session_maker() as session:
+        server = await session.get(Server, server_id)
+        return server.traffic_up_bytes, server.traffic_down_bytes
+
+
 async def test_per_device_emails_are_aggregated(monkeypatch):
     sub_id, prefix = await _seed(1)
 
@@ -108,6 +116,27 @@ async def test_xray_restart_counts_current_value(monkeypatch):
     _patch_stats(monkeypatch, {f"{prefix}_dev_1": {"uplink": 30, "downlink": 40}})
     await tasks.poll_traffic()
     assert await _totals(sub_id) == (530, 540)
+
+
+async def test_server_counter_accumulates_and_survives_link_deletion(monkeypatch):
+    sub_id, prefix = await _seed(4)
+    async with async_session_maker() as session:
+        server_id = (await session.execute(select(Server.id))).scalar_one()
+
+    _patch_stats(monkeypatch, {f"{prefix}_dev_1": {"uplink": 100, "downlink": 1000}})
+    await tasks.poll_traffic()  # baseline, nothing counted yet
+    _patch_stats(monkeypatch, {f"{prefix}_dev_1": {"uplink": 400, "downlink": 1500}})
+    await tasks.poll_traffic()  # +300 / +500
+
+    assert await _server_totals(server_id) == (300, 500)
+
+    # Reconcile deletes the link when a location is disabled or a sub re-synced.
+    # The per-location total must NOT disappear with it — that was the bug.
+    async with async_session_maker() as session:
+        await session.execute(delete(SubscriptionServer).where(SubscriptionServer.server_id == server_id))
+        await session.commit()
+
+    assert await _server_totals(server_id) == (300, 500)
 
 
 async def test_base_email_still_counted(monkeypatch):

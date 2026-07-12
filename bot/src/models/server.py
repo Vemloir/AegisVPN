@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Integer, String
+from sqlalchemy import BigInteger, Boolean, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -22,6 +22,12 @@ class Server(Base):
     short_id: Mapped[str] = mapped_column(String(255))
     agent_url: Mapped[str] = mapped_column(String(255))
     agent_token: Mapped[str] = mapped_column(String(255))
+    # Website presentation only — never used to route or connect. ISO 3166-1
+    # alpha-2 ("FI"). The site derives the globe outline, the camera target and
+    # the region filter from it; a node without it is served by the bot but not
+    # drawn on the globe.
+    country_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
+
     access_mode: Mapped[str] = mapped_column(String(32), default="public")
     subscription_group: Mapped[str] = mapped_column(String(16), default="safe")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -35,6 +41,14 @@ class Server(Base):
     # (public_key / short_id). NULL means the node serves xhttp/443 only and
     # offers no transport choice.
     tcp_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Lifetime traffic through this location, accumulated by the poll_traffic task
+    # alongside the per-subscription counters. It lives on the Server row (not only
+    # on SubscriptionServer links) precisely so a location's history survives the
+    # link churn that disabling/re-syncing causes — the link rows are deleted on
+    # reconcile, this total is not.
+    traffic_up_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    traffic_down_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
 
     # --- Hysteria2 capability (a separate process; xray-core cannot speak it) ---
     # A node is Hy2-capable only when hy2_enabled AND an obfs password is set.

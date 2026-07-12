@@ -14,14 +14,19 @@ async def _table_columns(session, table: str) -> set[str]:
 
 async def test_run_migrations_adds_missing_columns_idempotently():
     # Start from a minimal, pre-migration schema: each table with only an id.
-    # `servers` additionally keeps `host`, which create_all always provides in
-    # production.
+    # A few base columns that create_all always provides in production are kept so
+    # backfills can reference them: `servers.host`, and `subscription_servers.server_id`
+    # (the FK the servers traffic backfill correlates on).
     async with async_session_maker() as session:
         for table in MIGRATIONS:
             await session.execute(text(f"DROP TABLE IF EXISTS {table}"))
             if table == "servers":
                 await session.execute(
                     text("CREATE TABLE servers (id INTEGER PRIMARY KEY, host VARCHAR(255))")
+                )
+            elif table == "subscription_servers":
+                await session.execute(
+                    text("CREATE TABLE subscription_servers (id INTEGER PRIMARY KEY, server_id INTEGER)")
                 )
             else:
                 await session.execute(text(f"CREATE TABLE {table} (id INTEGER PRIMARY KEY)"))
