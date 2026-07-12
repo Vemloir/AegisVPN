@@ -37,9 +37,9 @@ def admin_stats_keyboard() -> InlineKeyboardMarkup:
 
 
 def build_duplicate_name_keys(servers: list[Server]) -> set[str]:
-    # Key on the country part (labels drop the city) so two same-country nodes —
-    # e.g. an old inactive Germany and a new one — both get the №id suffix.
-    counts = Counter(SubscriptionService.server_country(server).casefold() for server in servers)
+    # Key on the full display name so two identically named nodes — e.g. an old
+    # inactive Germany | Frankfurt and a new one — both get the №id suffix.
+    counts = Counter(SubscriptionService.server_display_name(server).casefold() for server in servers)
     return {name for name, count in counts.items() if count > 1}
 
 

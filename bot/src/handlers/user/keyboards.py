@@ -64,8 +64,8 @@ def locations_list_keyboard(language: str, servers: list) -> InlineKeyboardMarku
     duplicate_keys: set[str] = set()
     seen: dict[str, int] = {}
     for s in servers:
-        # Key on the country (labels drop the city) so same-country nodes get №id.
-        key = SubscriptionService.server_country(s).casefold()
+        # Key on the full display name so identically named nodes get №id.
+        key = SubscriptionService.server_display_name(s).casefold()
         seen[key] = seen.get(key, 0) + 1
     duplicate_keys = {k for k, c in seen.items() if c > 1}
     for s in servers:

@@ -392,17 +392,16 @@ class SubscriptionService:
         return (1, 0 if is_exp else 1, base_name, server.id)
 
     @staticmethod
-    def server_country(server: Server) -> str:
-        """User-facing label text: the country part of the name \u2014 everything
-        before the ' | <City>' separator. City names were dropped from the VPN
-        labels; the stored name keeps the city (admin/operator clarity, and the
-        host already identifies the box)."""
+    def server_display_name(server: Server) -> str:
+        """User-facing label text: the full stored name, e.g. 'Germany | Frankfurt'.
+        Locations are shown as 'Country | City' both in the bot UI and in the
+        subscription (the per-server remark carried in the vless link fragment)."""
         name = (server.name or "").strip()
-        return name.split("|", 1)[0].strip() or name or f"Server {server.id}"
+        return name or f"Server {server.id}"
 
     @staticmethod
     def format_server_label(server: Server, duplicate_name_keys: set[str] | None = None) -> str:
-        name = SubscriptionService.server_country(server)
+        name = SubscriptionService.server_display_name(server)
         key = name.casefold()
         suffix = f" \u2116{server.id}" if duplicate_name_keys and key in duplicate_name_keys else ""
         label = f"{server.flag} {name}{suffix}".strip()
@@ -603,7 +602,7 @@ class SubscriptionService:
 
         servers = sorted(servers, key=SubscriptionService.server_sort_key)
         server_name_counts = Counter(
-            SubscriptionService.server_country(server).casefold() for server in servers
+            SubscriptionService.server_display_name(server).casefold() for server in servers
         )
         duplicate_name_keys = {name for name, count in server_name_counts.items() if count > 1}
 
