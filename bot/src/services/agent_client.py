@@ -4,6 +4,9 @@ import aiohttp
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 _default_timeout = aiohttp.ClientTimeout(total=10, connect=3, sock_read=8)
+# Tighter budget for calls to a node we are taking out of service: it is probably
+# already gone, and the operator is waiting.
+_decommission_timeout = aiohttp.ClientTimeout(total=4, connect=2, sock_read=3)
 _session: aiohttp.ClientSession | None = None
 
 
@@ -43,6 +46,27 @@ class AgentClient:
             if resp.status == 200:
                 return True
             resp.raise_for_status()
+            return False
+
+    async def remove_client_best_effort(self, uuid: str) -> bool:
+        """Remove a client without retrying, swallowing every failure.
+
+        For paths where the node is being decommissioned or is already gone. The
+        retrying :meth:`remove_client` turns one unreachable node into ~15-40s of
+        backoff PER subscription, and those calls run once per active
+        subscription — enough to stall an operator action for minutes and let a
+        dead node effectively veto it. Here a node that cannot answer simply
+        doesn't, and we move on; it has no clients to strip anyway.
+        """
+        try:
+            async with get_session().post(
+                f"{self.base_url}/client/remove",
+                json={"uuid": uuid},
+                headers=self.headers,
+                timeout=_decommission_timeout,
+            ) as resp:
+                return resp.status == 200
+        except Exception:
             return False
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))

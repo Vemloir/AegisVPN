@@ -1,3 +1,5 @@
+import asyncio
+
 from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -59,7 +61,12 @@ class ServerAccessService:
         best-effort). Re-enabling adds it back. Reversible decommission for a node
         we stopped paying for, without deleting its row/traffic history."""
         server.is_active = is_active
-        await session.flush()
+        # Commit the flag BEFORE touching the node. A location is taken offline
+        # precisely because its node is going away, so the node is usually already
+        # unreachable — and an unreachable node must not be able to delay, let
+        # alone veto, the operator's decision. Everything after this point is
+        # cleanup that can fail harmlessly.
+        await session.commit()
         await ServerAccessService.reconcile_server_subscriptions(session, server.id)
 
     @staticmethod
@@ -87,6 +94,22 @@ class ServerAccessService:
         return True
 
     @staticmethod
+    async def _flush_removals(removals: set[tuple[str, str, str]]) -> None:
+        """Strip clients from nodes, all at once and best-effort.
+
+        Concurrent, because these calls are independent and one dead node used to
+        serialise the backoff of every other. Best-effort, because a node we
+        cannot reach has no client left to strip.
+        """
+        if not removals:
+            return
+
+        async def strip(agent_url: str, agent_token: str, client_uuid: str) -> None:
+            await AgentClient(agent_url, agent_token).remove_client_best_effort(client_uuid)
+
+        await asyncio.gather(*(strip(*removal) for removal in removals))
+
+    @staticmethod
     async def reconcile_user_subscriptions(session: AsyncSession, user_id: int) -> None:
         result = await session.execute(
             select(Subscription).where(
@@ -95,8 +118,12 @@ class ServerAccessService:
             )
         )
         subscriptions = result.scalars().all()
+        removals: set[tuple[str, str, str]] = set()
         for subscription in subscriptions:
-            await ServerAccessService.reconcile_subscription_servers(session, subscription)
+            await ServerAccessService.reconcile_subscription_servers(
+                session, subscription, removals=removals
+            )
+        await ServerAccessService._flush_removals(removals)
 
     @staticmethod
     async def reconcile_server_subscriptions(session: AsyncSession, server_id: int) -> None:
@@ -104,15 +131,29 @@ class ServerAccessService:
             select(Subscription).join(User, User.id == Subscription.user_id).where(Subscription.is_active == True)
         )
         subscriptions = result.scalars().all()
+        removals: set[tuple[str, str, str]] = set()
         for subscription in subscriptions:
-            await ServerAccessService.reconcile_subscription_servers(session, subscription, target_server_id=server_id)
+            await ServerAccessService.reconcile_subscription_servers(
+                session, subscription, target_server_id=server_id, removals=removals
+            )
+        await ServerAccessService._flush_removals(removals)
 
     @staticmethod
     async def reconcile_subscription_servers(
         session: AsyncSession,
         subscription: Subscription,
         target_server_id: int | None = None,
+        removals: set[tuple[str, str, str]] | None = None,
     ) -> None:
+        """Bring one subscription's links in line with what its user may access.
+
+        ``removals`` lets a caller looping over many subscriptions collect the
+        agent calls and fire them together at the end (see :meth:`_flush_removals`)
+        instead of paying a dead node's timeout once per subscription.
+        """
+        own_removals = removals is None
+        if removals is None:
+            removals = set()
         allowed_servers = await ServerAccessService.get_accessible_servers_for_user(session, subscription.user_id)
         allowed_server_ids = {server.id for server in allowed_servers}
         if target_server_id is not None:
@@ -147,14 +188,15 @@ class ServerAccessService:
             )
 
             if link.is_synced and not shared_agent_still_allowed:
-                client = AgentClient(link.server.agent_url, link.server.agent_token)
-                try:
-                    await client.remove_client(subscription.client_uuid)
-                except Exception:
-                    pass
+                removals.add(
+                    (link.server.agent_url, link.server.agent_token, subscription.client_uuid)
+                )
             await session.execute(
                 delete(SubscriptionServer).where(
                     SubscriptionServer.subscription_id == subscription.id,
                     SubscriptionServer.server_id == link.server_id,
                 )
             )
+
+        if own_removals:
+            await ServerAccessService._flush_removals(removals)
