@@ -4,21 +4,42 @@ import { feature, mesh } from 'topojson-client'
 import world from 'world-atlas/countries-110m.json'
 import { CENTROID_OVERRIDE, ISO_NUMERIC, POINT_LOCATION } from './countries.js'
 
-// Ocean matches the page's --bg exactly in each theme. Land/grat/border/coast
-// (dark) had blue nudged 1-2 points above red/green, same bias as the old
-// DARK_VARS — neutralized to true grey. Land is pulled MUCH closer to ocean
-// (gap of ~7 instead of ~36) so the whole globe reads as a subtler part of
-// the page rather than a distinct light-grey block sitting on it.
+// There is deliberately NO ocean/background fill: the sphere is left
+// transparent so the page background shows through the globe. That makes
+// "the globe block matches the page background" true by construction, in any
+// theme — nothing to keep in sync with --bg.
 //
 // hi/hiSel/hiLine/hiSelLine (fill and outline of highlighted locations) are
 // IDENTICAL in both themes by explicit request — the highlight is the brand
 // accent and must not shift between themes. Only the map's structural colors
-// (ocean/land/graticule/borders) differ per theme.
+// (land/graticule/borders) differ per theme.
 const HIGHLIGHT = { hi: '#CC785C', hiSel: '#C2613D', hiLine: '#A34E2F', hiSelLine: '#A34E2F' }
 const PALETTE = {
-  light: { ocean: '#F3F1EA', land: '#D5D0C2', grat: '#DBD6C9', border: '#C6C0B0', coast: '#BDB7A6', ...HIGHLIGHT },
-  dark: { ocean: '#161616', land: '#1D1D1D', grat: '#232323', border: '#333333', coast: '#333333', ...HIGHLIGHT },
+  light: { land: '#D5D0C2', grat: '#DBD6C9', border: '#C6C0B0', coast: '#BDB7A6', ...HIGHLIGHT },
+  dark: { land: '#1D1D1D', grat: '#232323', border: '#333333', coast: '#333333', ...HIGHLIGHT },
 }
+
+// The globe's lower half dissolves into the page. This used to be a CSS
+// mask-image over the whole canvas, which was wrong in two ways: it faded the
+// highlight fills together with the map, so the SAME highlight hex read
+// salmon in the light theme and muddy brown in the dark one (it was being
+// blended into a cream vs a near-black page), and the half-transparent map
+// itself read as "the globe block has a different background". Painting the
+// fade inside the canvas instead lets the map and the highlights dissolve on
+// their own schedules: the map starts fading at 58% of the height, the
+// highlights keep their true color almost to the bottom edge (85%) and only
+// fade there to avoid a hard clip at the canvas edge.
+function fadeOut(ctx, w, h, from) {
+  const g = ctx.createLinearGradient(0, h * from, 0, h)
+  g.addColorStop(0, 'rgba(0,0,0,0)')
+  g.addColorStop(1, 'rgba(0,0,0,1)')
+  ctx.globalCompositeOperation = 'destination-out'
+  ctx.fillStyle = g
+  ctx.fillRect(0, 0, w, h)
+  ctx.globalCompositeOperation = 'source-over'
+}
+const MAP_FADE_START = 0.58
+const HIGHLIGHT_FADE_START = 0.85
 
 const countriesFC = feature(world, world.objects.countries)
 const borders = mesh(world, world.objects.countries, (a, b) => a !== b)
@@ -122,21 +143,19 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
       ctx.clearRect(0, 0, w, h)
       const path = geoPath(proj, ctx)
 
-      ctx.beginPath(); path({ type: 'Sphere' }); ctx.fillStyle = pal.ocean; ctx.fill()
+      // Structural map first — graticule, land, borders — then its fade, so
+      // the highlights drawn AFTER are untouched by it.
       ctx.beginPath(); path(geoGraticule().step([20, 20])()); ctx.strokeStyle = pal.grat; ctx.lineWidth = 0.6; ctx.stroke()
       ctx.beginPath(); path(countriesFC); ctx.fillStyle = pal.land; ctx.fill()
+      ctx.beginPath(); path(borders); ctx.strokeStyle = pal.border; ctx.lineWidth = 0.5; ctx.stroke()
+      ctx.beginPath(); path(coast); ctx.strokeStyle = pal.coast; ctx.lineWidth = 0.7; ctx.stroke()
+      fadeOut(ctx, w, h, MAP_FADE_START)
 
       for (const hl of highlights) {
         if (!hl.feat) continue
         ctx.beginPath(); path(hl.feat)
         ctx.fillStyle = hl.id === selected ? pal.hiSel : pal.hi
         ctx.fill()
-      }
-      ctx.beginPath(); path(borders); ctx.strokeStyle = pal.border; ctx.lineWidth = 0.5; ctx.stroke()
-      ctx.beginPath(); path(coast); ctx.strokeStyle = pal.coast; ctx.lineWidth = 0.7; ctx.stroke()
-      for (const hl of highlights) {
-        if (!hl.feat) continue
-        ctx.beginPath(); path(hl.feat)
         // All ~5 locations are highlighted at once (not just the selected one),
         // so this color renders 5x every frame regardless of selection — it
         // must vary with selection too, not just the line width.
@@ -162,6 +181,7 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
         ctx.lineWidth = sel ? 1 : 0.8
         ctx.stroke()
       }
+      fadeOut(ctx, w, h, HIGHLIGHT_FADE_START)
       ctx.restore()
 
       raf = requestAnimationFrame(draw)
