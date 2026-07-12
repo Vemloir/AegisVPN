@@ -94,35 +94,56 @@ export default function App() {
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 900)
   const [menuOpen, setMenuOpen] = useState(false)
 
-  // The hero description column must start and end at the exact same height
-  // as the H1 next to it. Text wraps unpredictably (different content length,
-  // language, viewport), so no static CSS number can guarantee that. Matching
-  // the CONTAINER height alone is not enough either: the paragraph's natural
-  // height rarely equals the H1's, so centering it just spills the overflow
-  // evenly past both edges. The only way N wrapped lines can span exactly the
-  // H1's height is line-height = H1 height / N, so that's what is measured
-  // and applied. If the ideal line-height would drop below readability
-  // (narrow viewports wrap the text into many short lines), alignment is
-  // abandoned for that size rather than overlapping glyphs.
+  // The hero description must visually align with the H1 beside it: the cap
+  // top of its first line level with the H1's cap top, the BASELINE of its
+  // last line level with the H1's last baseline. Comparing boxes is not
+  // enough — a line box includes leading above the caps and room below the
+  // baseline for descenders (the hooks of y/g/р), and those must not count.
+  // So real font metrics (cap height, ascent, descent) are measured via
+  // canvas, and the paragraph's line-height and top offset are solved so
+  // caps and baselines land exactly level: from "para cap top == H1 cap top"
+  // and "para last baseline == H1 last baseline" the half-leading terms
+  // cancel and line-height = (H1 capTop→lastBaseline span − para cap height)
+  // / (para lines − 1). Falls back to plain flow when the solution would be
+  // unreadably tight (narrow viewports wrap the text into many short lines).
   const heroH1Ref = useRef(null)
   const heroSubRef = useRef(null)
-  const [heroH1Height, setHeroH1Height] = useState(null)
-  const [heroSubLH, setHeroSubLH] = useState(null)
+  const [heroSubFit, setHeroSubFit] = useState(null) // { lh, mt } in px
   useEffect(() => {
     const h1 = heroH1Ref.current
     const p = heroSubRef.current
     if (!h1 || !p) return
+    const ctx = document.createElement('canvas').getContext('2d')
+    // capChar comes from the element's own text so Cyrillic content measures
+    // the fallback serif that actually renders it, not Newsreader.
+    const metricsOf = (el) => {
+      const cs = getComputedStyle(el)
+      ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`
+      const m = ctx.measureText('Hg')
+      return {
+        lh: parseFloat(cs.lineHeight),
+        fs: parseFloat(cs.fontSize),
+        ascent: m.fontBoundingBoxAscent,
+        descent: m.fontBoundingBoxDescent,
+        cap: ctx.measureText((el.textContent || 'H').trim()[0] || 'H').actualBoundingBoxAscent,
+      }
+    }
     const measure = () => {
-      const h = h1.getBoundingClientRect().height
-      setHeroH1Height(h)
-      const cs = getComputedStyle(p)
-      const lh = parseFloat(cs.lineHeight) || 1
-      const fs = parseFloat(cs.fontSize) || 16
-      // Line count depends only on wrapping width, not on line-height, so this
-      // stays stable when the computed ideal is applied back to the element.
-      const lines = Math.max(1, Math.round(p.scrollHeight / lh))
-      const ideal = h / lines
-      setHeroSubLH(ideal >= fs * 1.25 ? ideal : null)
+      if (isMobile) { setHeroSubFit(null); return }
+      const m1 = metricsOf(h1)
+      const mp = metricsOf(p)
+      if (!m1.ascent || !mp.ascent) { setHeroSubFit(null); return }
+      const lines1 = Math.max(1, Math.round(h1.getBoundingClientRect().height / m1.lh))
+      const linesP = Math.max(1, Math.round(p.scrollHeight / mp.lh))
+      if (linesP < 2) { setHeroSubFit(null); return }
+      const halfLead1 = (m1.lh - m1.ascent - m1.descent) / 2
+      const capTop1 = halfLead1 + m1.ascent - m1.cap
+      const baseLast1 = (lines1 - 1) * m1.lh + halfLead1 + m1.ascent
+      const lh = (baseLast1 - capTop1 - mp.cap) / (linesP - 1)
+      if (!(lh >= mp.fs * 1.2)) { setHeroSubFit(null); return }
+      const halfLeadP = (lh - mp.ascent - mp.descent) / 2
+      const capTopP = halfLeadP + mp.ascent - mp.cap
+      setHeroSubFit({ lh, mt: capTop1 - capTopP })
     }
     measure()
     const ro = new ResizeObserver(measure)
@@ -348,23 +369,17 @@ export default function App() {
                 {t.hero_eyebrow}
               </div>
             )}
-            <div
+            <p
+              ref={heroSubRef}
               style={{
-                height: !isMobile && heroH1Height ? `${heroH1Height}px` : undefined,
-                display: 'flex',
-                alignItems: 'center',
+                ...css("font-family:'Newsreader','EB Garamond',serif; font-size:clamp(20px,2.4vw,26px); line-height:1.85; color:var(--muted); margin:0;"),
+                ...(!isMobile && heroSubFit
+                  ? { lineHeight: `${heroSubFit.lh}px`, marginTop: `${heroSubFit.mt}px` }
+                  : null),
               }}
             >
-              <p
-                ref={heroSubRef}
-                style={{
-                  ...css("font-family:'Newsreader','EB Garamond',serif; font-size:clamp(20px,2.4vw,26px); line-height:1.85; color:var(--muted); margin:0;"),
-                  ...(!isMobile && heroSubLH ? { lineHeight: `${heroSubLH}px`, width: '100%' } : null),
-                }}
-              >
-                {t.hero_sub}
-              </p>
-            </div>
+              {t.hero_sub}
+            </p>
           </div>
         </div>
       </section>

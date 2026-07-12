@@ -9,14 +9,15 @@ import { CENTROID_OVERRIDE, ISO_NUMERIC, POINT_LOCATION } from './countries.js'
 // "the globe block matches the page background" true by construction, in any
 // theme — nothing to keep in sync with --bg.
 //
-// hi/hiSel/hiLine/hiSelLine (fill and outline of highlighted locations) are
-// IDENTICAL in both themes by explicit request — the highlight is the brand
-// accent and must not shift between themes. Only the map's structural colors
-// (land/graticule/borders) differ per theme.
-const HIGHLIGHT = { hi: '#CC785C', hiSel: '#C2613D', hiLine: '#A34E2F', hiSelLine: '#A34E2F' }
+// The highlight FILLS are theme-dependent on purpose: the same hex reads
+// noticeably brighter against a near-black page than against cream
+// (simultaneous contrast), so the dark theme uses fills darkened ~10% to
+// LOOK like the light theme's, not to be byte-identical to them. The
+// OUTLINES read the same on both backgrounds and stay shared.
+const OUTLINE = { hiLine: '#A34E2F', hiSelLine: '#A34E2F' }
 const PALETTE = {
-  light: { land: '#D5D0C2', grat: '#DBD6C9', border: '#C6C0B0', coast: '#BDB7A6', ...HIGHLIGHT },
-  dark: { land: '#1D1D1D', grat: '#232323', border: '#333333', coast: '#333333', ...HIGHLIGHT },
+  light: { land: '#D5D0C2', grat: '#DBD6C9', border: '#C6C0B0', coast: '#BDB7A6', hi: '#CC785C', hiSel: '#C2613D', ...OUTLINE },
+  dark: { land: '#1D1D1D', grat: '#232323', border: '#333333', coast: '#333333', hi: '#B86C53', hiSel: '#AF5737', ...OUTLINE },
 }
 
 // The globe's lower half dissolves into the page. This used to be a CSS
