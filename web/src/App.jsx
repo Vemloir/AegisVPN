@@ -382,7 +382,7 @@ export default function App() {
             selected={selected}
             onSelect={setSelected}
             theme={theme}
-            style={css('position:absolute; inset:0; z-index:0; -webkit-mask-image:linear-gradient(to bottom, #000 58%, transparent 100%); mask-image:linear-gradient(to bottom, #000 58%, transparent 100%);')}
+            style={css('position:absolute; inset:0; z-index:0;')}
           />
           <div style={css('position:relative; z-index:2; max-width:720px; margin:0 auto; padding:clamp(32px,9vw,48px) clamp(16px,4.5vw,28px) 0; text-align:center; pointer-events:none;')}>
             <div style={css('font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); font-weight:600; margin-bottom:16px;')}>{t.globe_kicker}</div>
