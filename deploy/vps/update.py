@@ -52,7 +52,9 @@ Usage examples:
 from __future__ import annotations
 
 import argparse
+import json
 import posixpath
+import shlex
 import stat
 import time
 from pathlib import Path
@@ -166,6 +168,9 @@ def update_bot(c: paramiko.SSHClient) -> None:
 
 COMPOSE_LOCAL = ROOT / "deploy/vps/docker-compose.yml"
 REMOTE_COMPOSE = "/root/aegis/deploy/vps/docker-compose.yml"
+# The running xray config. Rendered from template.json ONCE, at first boot, and
+# never again — it carries the node's live client list.
+REMOTE_XRAY_CONFIG = "/root/aegis/deploy/vps/data/vpn/xray-config.json"
 
 
 def _upload_agent_sources(c: paramiko.SSHClient, host: str) -> None:
@@ -180,6 +185,49 @@ def _upload_agent_sources(c: paramiko.SSHClient, host: str) -> None:
     for f in base_files + sorted((AGENT_DIR / "app").glob("*.py")):
         rel = f.relative_to(AGENT_DIR)
         upload(c, f, f"/root/aegis/agent/{rel.as_posix()}")
+
+
+def patch_node_dns(c: paramiko.SSHClient, host: str) -> None:
+    """Replace the DNS block of a LIVE node's xray config, in place.
+
+    Uploading a new template.json does nothing to a node already in service:
+    entrypoint.sh only renders the template when no config exists yet ("Keep
+    existing config to preserve current clients across restarts"). So a node keeps
+    whatever resolver it was born with, and a template change is a silent no-op.
+
+    This rewrites just the `dns` object of the running config — every client, key
+    and inbound is left exactly as it is — and restarts xray to pick it up.
+    Restarting xray drops the sessions on this node for a moment; that is the
+    whole cost, and it is why this is a separate, explicit operation.
+    """
+    dns_block = json.loads((AGENT_DIR / "template.json").read_text())["dns"]
+
+    print(f"  [{host}] patching the live xray config's DNS…")
+    remote_py = (
+        "import json,os,tempfile\n"
+        f"p='{REMOTE_XRAY_CONFIG}'\n"
+        "cfg=json.load(open(p))\n"
+        f"cfg['dns']={json.dumps(dns_block)}\n"
+        "d=os.path.dirname(p)\n"
+        "fd,tmp=tempfile.mkstemp(dir=d)\n"
+        "json.dump(cfg,os.fdopen(fd,'w'),indent=2)\n"
+        "os.replace(tmp,p)\n"
+        "print('clients kept:',sum(len(i.get('settings',{}).get('clients',[])) "
+        "for i in cfg.get('inbounds',[])))\n"
+        "print('dns now:',json.dumps(cfg['dns']))\n"
+    )
+    out = run(
+        c,
+        f"python3 -c {shlex.quote(remote_py)}",
+        "patch dns",
+        timeout=60,
+    )
+    print("    " + out.strip().replace("\n", "\n    "))
+
+    print(f"  [{host}] restarting xray (brief session drop on this node)…")
+    run(c, "cd /root/aegis/deploy/vps && docker compose restart xray 2>&1 | tail -2",
+        "restart xray", timeout=120)
+    print(f"  [{host}] DNS patched ✓")
 
 
 def update_agent(c: paramiko.SSHClient, host: str) -> None:
@@ -264,13 +312,14 @@ def set_network(
 
     current = (env.get("XRAY_NETWORK") or "tcp").lower()
     if network == "xhttp":
-        pubkey, sid = env.get("PUBLIC_KEY"), env.get("SHORT_ID")
         env.setdefault("XHTTP_PATH", "/")
         env["XHTTP_MODE"] = xhttp_mode
         env.setdefault("XRAY_CONN_IDLE", "60")
-    else:
-        pubkey = env.get("PUBLIC_KEY_TCP") or env.get("PUBLIC_KEY")
-        sid = env.get("SHORT_ID_TCP") or env.get("SHORT_ID")
+    # ONE keypair per node, whatever the transport: entrypoint.sh builds every
+    # inbound from PRIVATE_KEY/SHORT_ID. Selecting *_TCP here (as this used to for
+    # tcp) published a public key whose private half the node never signs with —
+    # a silent, total REALITY handshake failure for every client of that node.
+    pubkey, sid = env.get("PUBLIC_KEY"), env.get("SHORT_ID")
     if not pubkey or not sid:
         raise SystemExit(
             f"[{host}] agent.env missing reality keys for {network} "
@@ -884,6 +933,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--bot", action="store_true", help="Update the bot on the main VPS")
     p.add_argument("--nodes", action="store_true", help="Update agent on --node targets")
     p.add_argument(
+        "--patch-dns", action="store_true",
+        help="Rewrite the DNS block of the LIVE xray config on --node targets from "
+             "agent/template.json, keeping every client, then restart xray. Needed "
+             "because a node in service never re-renders the template, so shipping a "
+             "new template.json alone changes nothing. Costs a brief session drop "
+             "on each patched node.",
+    )
+    p.add_argument(
         "--node", action="append", dest="nodes_list", metavar="IP:PASSWORD",
         help="Node to update (repeatable). Format: ip:password",
     )
@@ -954,8 +1011,8 @@ def main() -> None:
         raise SystemExit("--provision-stack requires at least one --node IP:PASSWORD")
     if args.provision_stack and not args.main_password:
         raise SystemExit("--provision-stack requires --main-password (to update the bot DB)")
-    if (args.nodes or args.mtproxy) and not args.nodes_list:
-        raise SystemExit("--nodes/--mtproxy requires at least one --node")
+    if (args.nodes or args.mtproxy or args.patch_dns) and not args.nodes_list:
+        raise SystemExit("--nodes/--mtproxy/--patch-dns requires at least one --node")
     if args.mtproxy and not args.main_password:
         raise SystemExit("--mtproxy requires --main-password (to update the bot DB)")
     if args.split_migrate and not args.nodes_list:
@@ -1068,7 +1125,7 @@ def main() -> None:
 
     main_c: paramiko.SSHClient | None = None
 
-    if args.nodes or args.mtproxy:
+    if args.nodes or args.mtproxy or args.patch_dns:
         for node_str in args.nodes_list:
             parts = node_str.split(":")
             if args.mtproxy:
@@ -1088,6 +1145,8 @@ def main() -> None:
             try:
                 if args.nodes:
                     update_agent(c, ip)
+                if args.patch_dns:
+                    patch_node_dns(c, ip)
                 if args.mtproxy:
                     if main_c is None:
                         main_c = connect(args.main_host, args.main_password)

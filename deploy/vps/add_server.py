@@ -43,8 +43,12 @@ except ImportError as exc:  # pragma: no cover
 ROOT = Path(__file__).resolve().parents[2]
 AGENT_DIR = ROOT / "agent"
 COMPOSE_FILE = ROOT / "deploy" / "vps" / "docker-compose.yml"
-MAIN_REGISTER_SCRIPT = ROOT / ".codex_tmp" / "register_external_server.py"
-MAIN_RESYNC_SCRIPT = ROOT / ".codex_tmp" / "resync_server_by_id.py"
+# Both live beside this script. They used to be pulled from an untracked scratch
+# directory (.codex_tmp/, which is gitignored), so a fresh clone of the repo could
+# not add a server at all — the deploy path depended on files that were never
+# committed.
+MAIN_REGISTER_SCRIPT = ROOT / "deploy" / "vps" / "register_external_server.py"
+MAIN_RESYNC_SCRIPT = ROOT / "deploy" / "vps" / "resync_server_by_id.py"
 REMOTE_SETUP_SCRIPT = "/root/aegis/setup_server.sh"
 REMOTE_REGISTER_SCRIPT = "/root/aegis/register_external_server.py"
 REMOTE_RESYNC_SCRIPT = "/root/aegis/resync_server_by_id.py"
@@ -61,6 +65,21 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--server-domain", required=True,
                    help="IP/hostname the client connects to (use bare IP, not sslip.io)")
     p.add_argument("--agent-url", help="Defaults to http://<new-host>:8444")
+    # Everything below is a field the bot reads about a node. They used to be
+    # unreachable from this script, so every new node silently landed on the
+    # schema default and differed from the nodes already in service.
+    p.add_argument("--country-code", metavar="XX",
+                   help="ISO 3166-1 alpha-2 (FI, SE, DE, JP, US). The website's globe "
+                        "draws a location only if this is set; the bot serves it either way.")
+    p.add_argument("--subscription-group", default="safe", choices=["safe", "fast", "both"],
+                   help="Which subscription profile(s) show this node (default: safe). Match "
+                        "the nodes already in service — a mismatch here means the new location "
+                        "simply never appears for users on the other profile.")
+    p.add_argument("--access-mode", default="public", choices=["public", "restricted"],
+                   help="public = everyone; restricted = only users with an explicit grant "
+                        "(default: public)")
+    p.add_argument("--display-order", type=int, default=0,
+                   help="Sort position in the location list (default 0 = alphabetical fallback)")
     p.add_argument("--xhttp-port", "--xray-port", dest="xhttp_port", default="443",
                    help="XHTTP (primary VLESS+REALITY) inbound port; registered as the "
                         "server's connect port in the bot DB (default 443). On a fresh IP "
@@ -361,15 +380,19 @@ def parse_env(content: str) -> dict[str, str]:
 
 
 def pick_reality_keys(env: dict[str, str], xray_network: str = "xhttp") -> tuple[str, str]:
-    """Agent generates TWO Reality keypairs: PUBLIC_KEY/SHORT_ID for the
-    XHTTP inbound and *_TCP for the TCP inbound. Pick the right one based
-    on which transport is active on XRAY_PORT."""
-    if xray_network == "tcp":
-        pk = env.get("PUBLIC_KEY_TCP") or env.get("PUBLIC_KEY")
-        sid = env.get("SHORT_ID_TCP") or env.get("SHORT_ID")
-    else:  # xhttp
-        pk = env.get("PUBLIC_KEY") or env.get("PUBLIC_KEY_TCP")
-        sid = env.get("SHORT_ID") or env.get("SHORT_ID_TCP")
+    """The node signs REALITY with ONE keypair, whatever the transport.
+
+    entrypoint.sh builds every inbound — xhttp and tcp alike — from PRIVATE_KEY /
+    SHORT_ID ("SINGLE shared reality keypair for every transport"). It still
+    generates a *_TCP pair into agent.env, but nothing ever loads it.
+
+    This used to hand the bot PUBLIC_KEY_TCP whenever tcp was the primary
+    transport. That public key belongs to a private key the node never signs
+    with, so every client of such a node failed its REALITY handshake. Always
+    report the pair the node actually uses; the *_TCP values are inert.
+    """
+    pk = env.get("PUBLIC_KEY")
+    sid = env.get("SHORT_ID")
     if not pk or not sid:
         raise SystemExit(f"agent.env missing Reality keys (network={xray_network})")
     return pk, sid
@@ -476,6 +499,10 @@ def main() -> int:
             f"SHORT_ID={shell_quote(short_id)} "
             f"AGENT_URL={shell_quote(agent_url)} "
             f"AGENT_TOKEN={shell_quote(agent_token)} "
+            f"SUBSCRIPTION_GROUP={shell_quote(args.subscription_group)} "
+            f"ACCESS_MODE={shell_quote(args.access_mode)} "
+            f"COUNTRY_CODE={shell_quote(args.country_code or '')} "
+            f"DISPLAY_ORDER={shell_quote(str(args.display_order))} "
             f"python3 {REMOTE_REGISTER_SCRIPT}"
         )
         out = run_or_die(main_client, register_command, "register", timeout=300)
@@ -537,18 +564,22 @@ def main() -> int:
                     f"--no-deps mtg run {mtproxy_secret} --bind 0.0.0.0:80 2>&1 | tail -2",
                     "start mtg", timeout=60,
                 )
-                # Store secret in bot DB
+                # Store secret AND port in the bot DB. Server.mtproxy_capable
+                # requires both — writing only the secret left mtproxy_port NULL,
+                # so the node ran mtg happily and the bot never showed anyone the
+                # link. (The success line below printed a working link anyway,
+                # which is what made this look provisioned when it wasn't.)
                 update_cmd = (
                     f"docker exec aegis-bot python3 -c "
                     f"'import asyncio; from sqlalchemy import text; from src.core.database import async_session_maker\n"
                     f"exec(\"\"\"async def q():\\n"
                     f"    async with async_session_maker() as s:\\n"
-                    f"        await s.execute(text(\\\"UPDATE servers SET mtproxy_secret=\\\\\\\"{mtproxy_secret}\\\\\\\" WHERE id={server_id}\\\"))\\n"
+                    f"        await s.execute(text(\\\"UPDATE servers SET mtproxy_secret=\\\\\\\"{mtproxy_secret}\\\\\\\", mtproxy_port=80 WHERE id={server_id}\\\"))\\n"
                     f"        await s.commit()\\n"
                     f"        print(\\\"ok\\\")\\n"
                     f"asyncio.run(q())\"\"\")'"
                 )
-                run_or_die(main_client, update_cmd, "save mtproxy_secret", timeout=30)
+                run_or_die(main_client, update_cmd, "save mtproxy_secret + port", timeout=30)
                 print(f"     MTProxy ready — secret={mtproxy_secret[:8]}…")
                 print(f"     Link: https://t.me/proxy?server={args.server_domain}&port=80&secret={mtproxy_secret}")
             else:
