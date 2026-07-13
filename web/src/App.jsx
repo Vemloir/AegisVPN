@@ -159,14 +159,18 @@ function TermSelect({ plans, value, onChange, lang }) {
           <path d="M1 1L5 5L9 1" stroke="var(--muted2)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
+      {/* A true CAPSULE, like the trigger pill stretched vertically:
+          border-radius 999px clamps to half the width, so the top and
+          bottom ends are semicircles. The vertical padding keeps the
+          first/last rows clear of the curved caps. */}
       {open && (
         <div
           role="listbox"
           style={{
             ...css(
               'position:absolute; right:0; top:calc(100% + 6px); z-index:30; min-width:100%; ' +
-              'background:var(--card); border:1px solid var(--hair); border-radius:12px; ' +
-              'box-shadow:0 8px 28px rgba(0,0,0,.14); padding:6px; display:flex; flex-direction:column; gap:2px;',
+              'background:var(--card); border:1px solid var(--hair); border-radius:999px; ' +
+              'box-shadow:0 8px 28px rgba(0,0,0,.14); padding:26px 8px; display:flex; flex-direction:column; gap:2px;',
             ),
             animation: 'vpnMenuIn .12s ease',
           }}
@@ -180,8 +184,8 @@ function TermSelect({ plans, value, onChange, lang }) {
               onClick={() => pick(p)}
               onMouseEnter={() => setActive(i)}
               style={css(
-                'display:flex; align-items:center; justify-content:space-between; gap:14px; ' +
-                'padding:8px 12px; border:none; border-radius:8px; text-align:left; white-space:nowrap; ' +
+                'display:flex; align-items:center; justify-content:center; gap:8px; ' +
+                'padding:8px 14px; border:none; border-radius:999px; white-space:nowrap; ' +
                 'font-family:inherit; font-size:14px; font-weight:500; cursor:pointer; ' +
                 `background:${active === i ? 'var(--rowHover)' : 'transparent'}; ` +
                 `color:${p.id === value ? 'var(--accent)' : 'var(--ink)'};`,
