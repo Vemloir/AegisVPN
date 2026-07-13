@@ -159,18 +159,20 @@ function TermSelect({ plans, value, onChange, lang }) {
           <path d="M1 1L5 5L9 1" stroke="var(--muted2)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
-      {/* A true CAPSULE, like the trigger pill stretched vertically:
-          border-radius 999px clamps to half the width, so the top and
-          bottom ends are semicircles. The vertical padding keeps the
-          first/last rows clear of the curved caps. */}
+      {/* The open menu IS the trigger pill stretched downward: it overlays
+          the button at its exact position and width, keeps the pill's own
+          background/border, and keeps the pill's CORNER radius (18px = half
+          the 36px button height — quarter-circle corners, not a capsule's
+          semicircular caps). Rows sit where the button's content sat; the
+          selected row's check lands where the chevron was. */}
       {open && (
         <div
           role="listbox"
           style={{
             ...css(
-              'position:absolute; right:0; top:calc(100% + 6px); z-index:30; min-width:100%; ' +
-              'background:var(--card); border:1px solid var(--hair); border-radius:999px; ' +
-              'box-shadow:0 8px 28px rgba(0,0,0,.14); padding:26px 8px; display:flex; flex-direction:column; gap:2px;',
+              'position:absolute; right:0; top:0; z-index:30; min-width:100%; ' +
+              'background:var(--seg); border:1px solid var(--hair2); border-radius:18px; ' +
+              'padding:4px; display:flex; flex-direction:column; gap:2px;',
             ),
             animation: 'vpnMenuIn .12s ease',
           }}
@@ -184,10 +186,10 @@ function TermSelect({ plans, value, onChange, lang }) {
               onClick={() => pick(p)}
               onMouseEnter={() => setActive(i)}
               style={css(
-                'display:flex; align-items:center; justify-content:center; gap:8px; ' +
-                'padding:8px 14px; border:none; border-radius:999px; white-space:nowrap; ' +
-                'font-family:inherit; font-size:14px; font-weight:500; cursor:pointer; ' +
-                `background:${active === i ? 'var(--rowHover)' : 'transparent'}; ` +
+                'display:flex; align-items:center; justify-content:space-between; gap:10px; ' +
+                'padding:6px 12px; border:none; border-radius:999px; white-space:nowrap; ' +
+                'font-family:inherit; font-size:14px; font-weight:600; cursor:pointer; ' +
+                `background:${active === i ? 'var(--segActive)' : 'transparent'}; ` +
                 `color:${p.id === value ? 'var(--accent)' : 'var(--ink)'};`,
               )}
             >
