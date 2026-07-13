@@ -226,7 +226,13 @@ export default function App() {
     // which breaks `position:sticky` on the header (it starts sticking to THIS
     // box instead of the viewport). `clip` prevents the same horizontal
     // overflow without creating that container.
-    ...css("font-family:'Onest',-apple-system,sans-serif; color:var(--ink); background:var(--bg); overflow-x:clip; transition:background .4s ease, color .4s ease;"),
+    //
+    // NOTE: background deliberately has NO CSS transition. The theme
+    // crossfade of the page background is driven by the globe's draw loop
+    // (see Globe.jsx), which paints the page and its own opaque canvas from
+    // the same interpolated value in the same frame — a CSS transition here
+    // would run on a separate clock and visibly desync from the globe.
+    ...css("font-family:'Onest',-apple-system,sans-serif; color:var(--ink); background:var(--bg); overflow-x:clip; transition:color .4s ease;"),
   }
 
   const langBtn = (on) =>
