@@ -227,12 +227,7 @@ export default function App() {
     // box instead of the viewport). `clip` prevents the same horizontal
     // overflow without creating that container.
     //
-    // NOTE: background deliberately has NO CSS transition. The theme
-    // crossfade of the page background is driven by the globe's draw loop
-    // (see Globe.jsx), which paints the page and its own opaque canvas from
-    // the same interpolated value in the same frame — a CSS transition here
-    // would run on a separate clock and visibly desync from the globe.
-    ...css("font-family:'Onest',-apple-system,sans-serif; color:var(--ink); background:var(--bg); overflow-x:clip; transition:color .4s ease;"),
+    ...css("font-family:'Onest',-apple-system,sans-serif; color:var(--ink); background:var(--bg); overflow-x:clip; transition:background .4s ease, color .4s ease;"),
   }
 
   const langBtn = (on) =>
@@ -245,12 +240,13 @@ export default function App() {
   return (
     <div style={rootStyle}>
       {/* ============================ HEADER ============================ */}
-      {/* background:inherit, NOT a translucent film + backdrop blur: any
-          semi-transparent layer is blended by the GPU compositor in linear
-          space and re-quantized ±1 (#151515/#171717 specks against the
-          #161616 page — eyedropper-visible). inherit keeps the header opaque
-          AND tracking the root's JS-driven crossfade color every frame. */}
-      <header style={css('position:sticky; top:0; z-index:60; background:inherit; border-bottom:1px solid var(--hair); transition:border-color .4s ease;')}>
+      {/* Solid var(--bg), NOT a translucent film + backdrop blur: any
+          semi-transparent layer is blended by the GPU compositor and
+          re-quantized ±1 (eyedropper-visible specks against the page). The
+          background transition matches the root's exactly (same property,
+          duration, curve), and two CSS transitions with identical parameters
+          interpolate in lockstep — no seam during the theme crossfade. */}
+      <header style={css('position:sticky; top:0; z-index:60; background:var(--bg); border-bottom:1px solid var(--hair); transition:background .4s ease, border-color .4s ease;')}>
         <div style={css('max-width:1180px; margin:0 auto; padding:15px clamp(16px,4vw,28px); display:flex; align-items:center; justify-content:space-between; gap:24px;')}>
           <a href="#top" onClick={(e) => scrollToSection(e, 'top')} style={css('display:flex; align-items:center; text-decoration:none; color:inherit;')}>
             <span style={css('font-weight:600; font-size:18px; letter-spacing:-.015em;')}>AegisVPN</span>
