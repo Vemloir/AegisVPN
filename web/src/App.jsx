@@ -407,8 +407,11 @@ export default function App() {
             style={css('position:absolute; inset:0; z-index:0;')}
           />
           <div style={css('position:relative; z-index:2; max-width:720px; margin:0 auto; padding:clamp(32px,9vw,48px) clamp(16px,4.5vw,28px) 0; text-align:center; pointer-events:none;')}>
-            <div style={css('font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); font-weight:600; margin-bottom:16px;')}>{t.globe_kicker}</div>
-            <h2 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(28px,3.6vw,40px); line-height:1.2; letter-spacing:-.01em; margin:0 0 24px; color:var(--ink);")}>{t.globe_title}</h2>
+            {/* The wrapper is pointer-events:none so clicks fall through to
+                the canvas (country picking); the texts themselves re-enable
+                pointer events, otherwise they can't be selected or copied. */}
+            <div style={css('pointer-events:auto; font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); font-weight:600; margin-bottom:16px;')}>{t.globe_kicker}</div>
+            <h2 style={css("pointer-events:auto; font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(28px,3.6vw,40px); line-height:1.2; letter-spacing:-.01em; margin:0 0 24px; color:var(--ink);")}>{t.globe_title}</h2>
             {t.globe_sub ? <p style={css('font-size:17px; line-height:1.55; color:var(--muted); max-width:480px; margin:0 auto 24px;')}>{t.globe_sub}</p> : null}
             <HoverLink
               href="#servers"
@@ -452,7 +455,6 @@ export default function App() {
               key={s.id}
               style={css('display:flex; align-items:center; gap:14px; padding:16px 18px; border-bottom:1px solid var(--hair); font-size:15px; color:var(--ink);')}
             >
-              <span style={css('font-size:20px;')}>{s.flag}</span>
               <span style={css('font-weight:500;')}>{s.name}</span>
               <span style={css('margin-left:auto; font-size:13px; color:var(--faint);')}>
                 {t[`reg_${regionOf(s.code)}_l`]}
