@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef } from 'react'
 import { geoOrthographic, geoPath, geoGraticule, geoCentroid, geoDistance } from 'd3-geo'
 import { feature, mesh } from 'topojson-client'
 import world from 'world-atlas/countries-110m.json'
-import { CENTROID_OVERRIDE, ISO_NUMERIC, POINT_LOCATION } from './countries.js'
+import { CENTROID_OVERRIDE, ISO_NUMERIC } from './countries.js'
+import hkFeature from './hk.json'
 
 // The canvas is TRANSPARENT: every flat pixel in the globe block — the
 // "ocean", everything around the artwork — is the page's own DOM pixel, so
@@ -95,19 +96,37 @@ const countriesFC = feature(world, world.objects.countries)
 const borders = mesh(world, world.objects.countries, (a, b) => a !== b)
 const coast = mesh(world, world.objects.countries, (a, b) => a === b)
 
+// Territories missing from the 110m atlas (city-states / SARs), with their
+// real outline pre-extracted from the 50m atlas into a tiny committed JSON,
+// and a scale factor. At true scale Hong Kong is ~5px on this globe —
+// technically honest, practically invisible. Scaling the real outline around
+// its own centroid keeps the recognizable silhouette and the same visual
+// language as every other country, just readable. Common cartographic
+// practice for city-states; tune or set to 1 to go purist.
+const EXTRA_FEATURES = { HK: { feat: hkFeature, scale: 2.25 } }
+
+function scaleFeature(feat, factor) {
+  const [cx, cy] = geoCentroid(feat)
+  const scale = (c) =>
+    Array.isArray(c[0]) ? c.map(scale) : [cx + (c[0] - cx) * factor, cy + (c[1] - cy) * factor]
+  return {
+    ...feat,
+    geometry: { ...feat.geometry, coordinates: scale(feat.geometry.coordinates) },
+  }
+}
+
 function buildHighlights(locations) {
   return locations
     .map((loc) => {
       const numeric = ISO_NUMERIC[loc.code]
-      const feat = numeric ? countriesFC.features.find((f) => f.id === numeric) : null
-      if (feat) {
-        const centroid = CENTROID_OVERRIDE[loc.code] || geoCentroid(feat)
-        return { id: loc.id, feat, centroid }
+      let feat = numeric ? countriesFC.features.find((f) => f.id === numeric) : null
+      if (!feat && EXTRA_FEATURES[loc.code]) {
+        const extra = EXTRA_FEATURES[loc.code]
+        feat = scaleFeature(extra.feat, extra.scale)
       }
-      // No atlas polygon (city-states / SARs like Hong Kong) → a point marker.
-      const point = POINT_LOCATION[loc.code]
-      if (point) return { id: loc.id, feat: null, centroid: point }
-      return null
+      if (!feat) return null
+      const centroid = CENTROID_OVERRIDE[loc.code] || geoCentroid(feat)
+      return { id: loc.id, feat, centroid }
     })
     .filter(Boolean)
 }
@@ -226,7 +245,6 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
       fadeOut(ctx, w, h, MAP_FADE_START)
 
       for (const hl of highlights) {
-        if (!hl.feat) continue
         ctx.beginPath(); path(hl.feat)
         ctx.fillStyle = hl.id === selected ? C('hiSel') : C('hi')
         ctx.fill()
@@ -235,24 +253,6 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
         // must vary with selection too, not just the line width.
         ctx.strokeStyle = hl.id === selected ? C('hiSelLine') : C('hiLine')
         ctx.lineWidth = hl.id === selected ? 1.2 : 0.8
-        ctx.stroke()
-      }
-      // Point markers for locations with no atlas polygon (e.g. Hong Kong). A
-      // marker on the far side of the sphere is hidden by the geoDistance gate.
-      const near = [-st.rotation[0], -st.rotation[1]]
-      for (const hl of highlights) {
-        if (hl.feat) continue
-        if (geoDistance(hl.centroid, near) > Math.PI / 2) continue
-        const xy = proj(hl.centroid)
-        if (!xy) continue
-        const sel = hl.id === selected
-        // Flat fill + thin outline — the same visual language as the country
-        // highlights, so a city-state reads as one of them, not a glowing pin.
-        ctx.beginPath(); ctx.arc(xy[0], xy[1], sel ? 5 : 4.5, 0, 2 * Math.PI)
-        ctx.fillStyle = sel ? C('hiSel') : C('hi')
-        ctx.fill()
-        ctx.strokeStyle = sel ? C('hiSelLine') : C('hiLine')
-        ctx.lineWidth = sel ? 1 : 0.8
         ctx.stroke()
       }
       fadeOut(ctx, w, h, HIGHLIGHT_FADE_START)
