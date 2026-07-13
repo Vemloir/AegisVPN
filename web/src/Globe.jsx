@@ -139,10 +139,11 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
     let projection = null
     let w = 0, h = 0, dpr = 1
 
-    // Nearest ancestor that actually paints a background. Its computed
-    // backgroundColor is what the canvas copies every frame — during a theme
-    // toggle getComputedStyle returns the CSS transition's current
-    // interpolated value, so the canvas tracks the page mid-animation too.
+    // Nearest ancestor that actually paints a background. During the theme
+    // crossfade the draw loop WRITES the interpolated color onto it (and
+    // clears the inline override when done) — the page and the canvas get
+    // the same value in the same frame. Found before any inline write, so
+    // the probe sees the stylesheet background, not our override.
     let bgEl = cv.parentElement
     while (
       bgEl &&
@@ -200,24 +201,22 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
       const proj = projection.rotate(st.rotation)
       const ctx = cv.getContext('2d', { alpha: false })
 
-      // The base color is COPIED off the page each frame, never predicted:
-      // whatever getComputedStyle says the page background is right now —
-      // including the CSS transition's in-between values during a theme
-      // toggle — is what the canvas paints. No separate clock or easing
-      // curve that could drift out of phase with the page.
+      // SINGLE WRITER for the theme crossfade. Every earlier scheme animated
+      // the page (CSS transition) and the canvas (JS lerp, or JS copying the
+      // CSS value) on separate clocks, and on real hardware they drifted a
+      // frame or more apart — very visible at the steep part of the curve.
+      // Now the draw loop owns the 400ms transition outright: it computes
+      // ONE interpolated color per frame and applies it to both the page
+      // background (inline style on bgEl; App.jsx sets no CSS transition on
+      // background for exactly this reason) and its own opaque base. Two
+      // surfaces painted from the same number in the same tick cannot lag
+      // each other.
       const themeKey = theme === 'dark' ? 'dark' : 'light'
-      const bgm =
-        bgEl && /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)/.exec(getComputedStyle(bgEl).backgroundColor)
-      const bg = bgm
-        ? [Math.round(+bgm[1]), Math.round(+bgm[2]), Math.round(+bgm[3])]
-        : themeKey === 'dark' ? [22, 22, 22] : [243, 241, 234]
-
-      // The map/highlight colors still animate on their own 400ms ease; a
-      // tiny phase difference there is invisible — unlike the base, they
-      // never meet the page background across a straight edge.
       if (st.palTheme !== themeKey) {
         st.palTheme = themeKey
-        st.palTarget = PAL_RGB[themeKey]
+        const v = getComputedStyle(cv).getPropertyValue('--bg').trim()
+        const bgHex = /^#[0-9a-fA-F]{6}$/.test(v) ? v : themeKey === 'dark' ? '#161616' : '#F3F1EA'
+        st.palTarget = { ...PAL_RGB[themeKey], bg: hexToRgb(bgHex) }
         if (st.pal) {
           st.palFrom = { ...st.pal }
           st.palStart = performance.now()
@@ -228,13 +227,22 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
       if (st.palFrom) {
         const p = Math.min(1, (performance.now() - st.palStart) / THEME_TRANSITION_MS)
         st.pal = lerpPal(st.palFrom, st.palTarget, cssEase(p))
-        if (p >= 1) st.palFrom = null
+        if (bgEl) {
+          bgEl.style.backgroundColor = `rgb(${st.pal.bg[0]},${st.pal.bg[1]},${st.pal.bg[2]})`
+        }
+        if (p >= 1) {
+          st.palFrom = null
+          // Hand the page back to its stylesheet var(--bg) — same color the
+          // lerp just landed on, so releasing the override is invisible.
+          if (bgEl) bgEl.style.backgroundColor = ''
+        }
       }
       const C = (k) => `rgb(${st.pal[k][0]},${st.pal[k][1]},${st.pal[k][2]})`
+      const bg = st.pal.bg
 
       ctx.save()
       ctx.scale(dpr, dpr)
-      ctx.fillStyle = `rgb(${bg[0]},${bg[1]},${bg[2]})`
+      ctx.fillStyle = C('bg')
       ctx.fillRect(0, 0, w, h)
       const path = geoPath(proj, ctx)
 
