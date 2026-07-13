@@ -18,13 +18,6 @@ export const REGION = {
   JP: 'as', KZ: 'as', AE: 'as', SG: 'as', HK: 'as',
 }
 
-// City-states / SARs the 110m atlas has no standalone polygon for (Hong Kong is
-// folded into China). The globe can't fill a country outline for these, so it
-// draws a point marker at these [lon, lat] coordinates instead.
-export const POINT_LOCATION = {
-  HK: [114.15, 22.35],
-}
-
 // The geometric centroid of a country is not always where you want the camera:
 // Alaska drags the US centroid far north-west of anywhere a user thinks of as
 // "the United States". These are corrections to the atlas, not to the database.
