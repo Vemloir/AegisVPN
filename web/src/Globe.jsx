@@ -53,6 +53,43 @@ function hexToRgb(hex) {
   return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
 }
 
+const PAL_RGB = Object.fromEntries(
+  ['light', 'dark'].map((th) => [
+    th,
+    Object.fromEntries(Object.entries(PALETTE[th]).map(([k, v]) => [k, hexToRgb(v)])),
+  ]),
+)
+
+// The page background transitions between themes with CSS `background .4s
+// ease`. The canvas is opaque (see above), so it no longer inherits that
+// transition for free — it must animate its own palette with the SAME
+// duration and curve, or the globe block visibly lags the page for 400ms on
+// every theme toggle. This evaluates CSS 'ease' = cubic-bezier(.25,.1,.25,1).
+const THEME_TRANSITION_MS = 400
+function cssEase(t) {
+  const p1x = 0.25, p1y = 0.1, p2x = 0.25, p2y = 1
+  const cx = 3 * p1x, bx = 3 * (p2x - p1x) - cx, ax = 1 - cx - bx
+  const cy = 3 * p1y, by = 3 * (p2y - p1y) - cy, ay = 1 - cy - by
+  let u = t
+  for (let i = 0; i < 5; i++) {
+    const x = ((ax * u + bx) * u + cx) * u - t
+    if (Math.abs(x) < 1e-4) break
+    const d = (3 * ax * u + 2 * bx) * u + cx
+    if (Math.abs(d) < 1e-6) break
+    u -= x / d
+  }
+  u = Math.min(1, Math.max(0, u))
+  return ((ay * u + by) * u + cy) * u
+}
+
+function lerpPal(from, to, e) {
+  const out = {}
+  for (const k of Object.keys(to)) {
+    out[k] = to[k].map((c, i) => Math.round(from[k][i] + (c - from[k][i]) * e))
+  }
+  return out
+}
+
 const countriesFC = feature(world, world.objects.countries)
 const borders = mesh(world, world.objects.countries, (a, b) => a !== b)
 const coast = mesh(world, world.objects.countries, (a, b) => a === b)
@@ -148,39 +185,53 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
 
       const proj = projection.rotate(st.rotation)
       const ctx = cv.getContext('2d', { alpha: false })
-      const pal = PALETTE[theme === 'dark' ? 'dark' : 'light']
-      // Resolve the page background from the live CSS var so the opaque base
-      // can never drift from the page; cached per theme, not per frame.
-      if (st.bgTheme !== theme) {
-        st.bgTheme = theme
+
+      // Theme change → start a palette transition matching the page's CSS
+      // one. The bg target is resolved from the live --bg var so the opaque
+      // base can never drift from the page.
+      const themeKey = theme === 'dark' ? 'dark' : 'light'
+      if (st.palTheme !== themeKey) {
+        st.palTheme = themeKey
         const v = getComputedStyle(cv).getPropertyValue('--bg').trim()
-        st.bgHex = /^#[0-9a-fA-F]{6}$/.test(v) ? v : theme === 'dark' ? '#161616' : '#F3F1EA'
-        st.bgRgb = hexToRgb(st.bgHex)
+        const bgHex = /^#[0-9a-fA-F]{6}$/.test(v) ? v : themeKey === 'dark' ? '#161616' : '#F3F1EA'
+        st.palTarget = { ...PAL_RGB[themeKey], bg: hexToRgb(bgHex) }
+        if (st.pal) {
+          st.palFrom = { ...st.pal }
+          st.palStart = performance.now()
+        } else {
+          st.pal = st.palTarget // first frame: no animation
+        }
       }
+      if (st.palFrom) {
+        const p = Math.min(1, (performance.now() - st.palStart) / THEME_TRANSITION_MS)
+        st.pal = lerpPal(st.palFrom, st.palTarget, cssEase(p))
+        if (p >= 1) st.palFrom = null
+      }
+      const C = (k) => `rgb(${st.pal[k][0]},${st.pal[k][1]},${st.pal[k][2]})`
 
       ctx.save()
       ctx.scale(dpr, dpr)
-      ctx.fillStyle = st.bgHex
+      ctx.fillStyle = C('bg')
       ctx.fillRect(0, 0, w, h)
       const path = geoPath(proj, ctx)
 
       // Structural map first — graticule, land, borders — then its fade, so
       // the highlights drawn AFTER are untouched by it.
-      ctx.beginPath(); path(geoGraticule().step([20, 20])()); ctx.strokeStyle = pal.grat; ctx.lineWidth = 0.6; ctx.stroke()
-      ctx.beginPath(); path(countriesFC); ctx.fillStyle = pal.land; ctx.fill()
-      ctx.beginPath(); path(borders); ctx.strokeStyle = pal.border; ctx.lineWidth = 0.5; ctx.stroke()
-      ctx.beginPath(); path(coast); ctx.strokeStyle = pal.coast; ctx.lineWidth = 0.7; ctx.stroke()
-      fadeToBg(ctx, w, h, MAP_FADE_START, st.bgRgb)
+      ctx.beginPath(); path(geoGraticule().step([20, 20])()); ctx.strokeStyle = C('grat'); ctx.lineWidth = 0.6; ctx.stroke()
+      ctx.beginPath(); path(countriesFC); ctx.fillStyle = C('land'); ctx.fill()
+      ctx.beginPath(); path(borders); ctx.strokeStyle = C('border'); ctx.lineWidth = 0.5; ctx.stroke()
+      ctx.beginPath(); path(coast); ctx.strokeStyle = C('coast'); ctx.lineWidth = 0.7; ctx.stroke()
+      fadeToBg(ctx, w, h, MAP_FADE_START, st.pal.bg)
 
       for (const hl of highlights) {
         if (!hl.feat) continue
         ctx.beginPath(); path(hl.feat)
-        ctx.fillStyle = hl.id === selected ? pal.hiSel : pal.hi
+        ctx.fillStyle = hl.id === selected ? C('hiSel') : C('hi')
         ctx.fill()
         // All ~5 locations are highlighted at once (not just the selected one),
         // so this color renders 5x every frame regardless of selection — it
         // must vary with selection too, not just the line width.
-        ctx.strokeStyle = hl.id === selected ? pal.hiSelLine : pal.hiLine
+        ctx.strokeStyle = hl.id === selected ? C('hiSelLine') : C('hiLine')
         ctx.lineWidth = hl.id === selected ? 1.2 : 0.8
         ctx.stroke()
       }
@@ -196,13 +247,13 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
         // Flat fill + thin outline — the same visual language as the country
         // highlights, so a city-state reads as one of them, not a glowing pin.
         ctx.beginPath(); ctx.arc(xy[0], xy[1], sel ? 5 : 4.5, 0, 2 * Math.PI)
-        ctx.fillStyle = sel ? pal.hiSel : pal.hi
+        ctx.fillStyle = sel ? C('hiSel') : C('hi')
         ctx.fill()
-        ctx.strokeStyle = sel ? pal.hiSelLine : pal.hiLine
+        ctx.strokeStyle = sel ? C('hiSelLine') : C('hiLine')
         ctx.lineWidth = sel ? 1 : 0.8
         ctx.stroke()
       }
-      fadeToBg(ctx, w, h, HIGHLIGHT_FADE_START, st.bgRgb)
+      fadeToBg(ctx, w, h, HIGHLIGHT_FADE_START, st.pal.bg)
       ctx.restore()
 
       raf = requestAnimationFrame(draw)
