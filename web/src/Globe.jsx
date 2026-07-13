@@ -6,17 +6,17 @@ import { CENTROID_OVERRIDE, ISO_NUMERIC, POINT_LOCATION } from './countries.js'
 
 // The canvas is TRANSPARENT: every flat pixel in the globe block — the
 // "ocean", everything around the artwork — is the page's own DOM pixel, so
-// it can never differ from the page background in any browser. This was
-// learned the hard way, in both directions. An OPAQUE canvas that paints
-// the background itself is byte-exact under the compositor's blending, but
-// it is a separately rasterized surface, and Chromium's display color
-// management (ICC/wide-gamut monitors) can quantize that whole surface one
-// RGB step away from the DOM around it (#151515 vs #161616 across the
-// canvas edge; Firefox is unaffected). A transparent canvas hands the flat
-// area back to the DOM; the price is that PARTIALLY transparent pixels
-// (antialiased lines, the dissolve zone) are blended with the page by the
-// GPU and can round ±1 — but those sit inside drawn artwork where a ±1 is
-// meaningless, not across a flat background.
+// it can never differ from the page background in any browser. This rule
+// was earned empirically: on some Chromium + monitor-profile combinations
+// DOM rasterization and canvas rasterization are color-converted through
+// DIFFERENT paths (measured on a real machine via /colortest.html: the DOM
+// renders #161616 as #151515 while a canvas renders it as #161616 — one
+// step apart; Firefox shows no split). Which surface is "right" doesn't
+// matter — any design where a flat canvas area meets a flat DOM area shows
+// a seam there. Transparent canvas means flat = DOM everywhere, seams
+// impossible; the price is ±1 rounding on PARTIALLY transparent artwork
+// pixels (line antialiasing, the dissolve), which sit inside the drawing
+// where ±1 is meaningless.
 //
 // The highlight FILLS are theme-dependent on purpose: the same hex reads
 // noticeably brighter against a near-black page than against cream
@@ -139,19 +139,6 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
     let projection = null
     let w = 0, h = 0, dpr = 1
 
-    // Nearest ancestor that actually paints a background. During the theme
-    // crossfade the draw loop WRITES the interpolated color onto it (and
-    // clears the inline override when done) — the page and the canvas get
-    // the same value in the same frame. Found before any inline write, so
-    // the probe sees the stylesheet background, not our override.
-    let bgEl = cv.parentElement
-    while (
-      bgEl &&
-      bgEl !== document.documentElement &&
-      getComputedStyle(bgEl).backgroundColor === 'rgba(0, 0, 0, 0)'
-    ) {
-      bgEl = bgEl.parentElement
-    }
 
     // Measure the canvas itself, never the window. The sphere is deliberately
     // larger than its box and centred below it (translate y = 1.18h), so a
@@ -201,22 +188,16 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
       const proj = projection.rotate(st.rotation)
       const ctx = cv.getContext('2d')
 
-      // SINGLE WRITER for the theme crossfade. Every earlier scheme animated
-      // the page (CSS transition) and the canvas (JS lerp, or JS copying the
-      // CSS value) on separate clocks, and on real hardware they drifted a
-      // frame or more apart — very visible at the steep part of the curve.
-      // Now the draw loop owns the 400ms transition outright: it computes
-      // ONE interpolated color per frame and applies it to both the page
-      // background (inline style on bgEl; App.jsx sets no CSS transition on
-      // background for exactly this reason) and its own opaque base. Two
-      // surfaces painted from the same number in the same tick cannot lag
-      // each other.
+      // The page's own theme crossfade is plain CSS (App.jsx). The canvas is
+      // transparent, so its flat area IS the page and needs nothing; only
+      // the drawn artwork's colors are lerped here, over the same 400ms and
+      // curve as the CSS transition. A small phase difference is possible
+      // and fine — these colors live inside the artwork, never meeting the
+      // page background across a flat edge.
       const themeKey = theme === 'dark' ? 'dark' : 'light'
       if (st.palTheme !== themeKey) {
         st.palTheme = themeKey
-        const v = getComputedStyle(cv).getPropertyValue('--bg').trim()
-        const bgHex = /^#[0-9a-fA-F]{6}$/.test(v) ? v : themeKey === 'dark' ? '#161616' : '#F3F1EA'
-        st.palTarget = { ...PAL_RGB[themeKey], bg: hexToRgb(bgHex) }
+        st.palTarget = PAL_RGB[themeKey]
         if (st.pal) {
           st.palFrom = { ...st.pal }
           st.palStart = performance.now()
@@ -227,15 +208,7 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
       if (st.palFrom) {
         const p = Math.min(1, (performance.now() - st.palStart) / THEME_TRANSITION_MS)
         st.pal = lerpPal(st.palFrom, st.palTarget, cssEase(p))
-        if (bgEl) {
-          bgEl.style.backgroundColor = `rgb(${st.pal.bg[0]},${st.pal.bg[1]},${st.pal.bg[2]})`
-        }
-        if (p >= 1) {
-          st.palFrom = null
-          // Hand the page back to its stylesheet var(--bg) — same color the
-          // lerp just landed on, so releasing the override is invisible.
-          if (bgEl) bgEl.style.backgroundColor = ''
-        }
+        if (p >= 1) st.palFrom = null
       }
       const C = (k) => `rgb(${st.pal[k][0]},${st.pal[k][1]},${st.pal[k][2]})`
 
