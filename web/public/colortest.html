@@ -1,0 +1,52 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>canvas vs DOM — тест цветов</title>
+<style>
+  body { margin: 0; font: 14px system-ui; background: #161616; color: #ddd; }
+  p { padding: 12px 16px; margin: 0; line-height: 1.5; }
+  .row { display: flex; height: 110px; position: relative; }
+  .dom { flex: 1; }
+  canvas { flex: 1; display: block; height: 110px; }
+  .lbl {
+    position: absolute; left: 50%; top: 6px; transform: translateX(-50%);
+    font-size: 12px; color: #aaa; background: rgba(0,0,0,.45);
+    padding: 2px 8px; border-radius: 4px; pointer-events: none;
+  }
+</style>
+<p>
+  Каждая полоса: <b>слева</b> цвет нарисован страницей (DOM), <b>справа</b> —
+  канвасом. Hex один и тот же. Если посередине видна граница или пипетка даёт
+  слева и справа разные значения — канвас в этом браузере проходит другую
+  цветовую конвертацию. Запишите, какие полосы различаются и какие два
+  значения даёт пипетка.
+</p>
+<div id="rows"></div>
+<script>
+  const cases = [
+    ['#161616', {}],
+    ['#161616', { alpha: false }],
+    ['#1D1D1D', {}],
+    ['#1F1F1F', {}],
+    ['#232323', {}],
+    ['#864F3C', {}],
+    ['#CC785C', {}],
+    ['#D5D0C2', {}],
+    ['#F3F1EA', {}],
+  ]
+  for (const [c, opts] of cases) {
+    const row = document.createElement('div'); row.className = 'row'
+    const d = document.createElement('div'); d.className = 'dom'; d.style.background = c
+    const cv = document.createElement('canvas')
+    const l = document.createElement('div'); l.className = 'lbl'
+    l.textContent = c + (opts.alpha === false ? ' (alpha:false)' : '')
+    row.append(d, cv, l)
+    document.getElementById('rows').append(row)
+    requestAnimationFrame(() => {
+      cv.width = cv.clientWidth * devicePixelRatio
+      cv.height = cv.clientHeight * devicePixelRatio
+      const ctx = cv.getContext('2d', opts)
+      ctx.fillStyle = c
+      ctx.fillRect(0, 0, cv.width, cv.height)
+    })
+  }
+</script>
