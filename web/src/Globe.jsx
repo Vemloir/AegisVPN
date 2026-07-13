@@ -4,15 +4,19 @@ import { feature, mesh } from 'topojson-client'
 import world from 'world-atlas/countries-110m.json'
 import { CENTROID_OVERRIDE, ISO_NUMERIC, POINT_LOCATION } from './countries.js'
 
-// The canvas is fully OPAQUE and paints the page background itself (copied
-// each frame from the nearest painted ancestor's computed backgroundColor,
-// so CSS transitions are tracked live). A transparent canvas looks equivalent, but
-// its semi-transparent pixels (antialiasing, the dissolve) get blended with
-// the page by the GPU compositor in linear space and re-quantized, landing
-// one RGB step off (#151515 on a #161616 page) — an eyedropper-visible seam
-// that software rasterization doesn't reproduce. An opaque layer is copied
-// byte-for-byte instead of blended, so every blend happens inside this 2D
-// context with one consistent rounding.
+// The canvas is TRANSPARENT: every flat pixel in the globe block — the
+// "ocean", everything around the artwork — is the page's own DOM pixel, so
+// it can never differ from the page background in any browser. This was
+// learned the hard way, in both directions. An OPAQUE canvas that paints
+// the background itself is byte-exact under the compositor's blending, but
+// it is a separately rasterized surface, and Chromium's display color
+// management (ICC/wide-gamut monitors) can quantize that whole surface one
+// RGB step away from the DOM around it (#151515 vs #161616 across the
+// canvas edge; Firefox is unaffected). A transparent canvas hands the flat
+// area back to the DOM; the price is that PARTIALLY transparent pixels
+// (antialiased lines, the dissolve zone) are blended with the page by the
+// GPU and can round ±1 — but those sit inside drawn artwork where a ±1 is
+// meaningless, not across a flat background.
 //
 // The highlight FILLS are theme-dependent on purpose: the same hex reads
 // noticeably brighter against a near-black page than against cream
@@ -27,24 +31,20 @@ const PALETTE = {
   dark: { land: '#1D1D1D', grat: '#232323', border: '#333333', coast: '#333333', hi: '#864F3C', hiSel: '#7F4028', ...OUTLINE },
 }
 
-// The globe's lower half dissolves into the page. This used to be a CSS
-// mask-image over the whole canvas, which was wrong in two ways: it faded the
-// highlight fills together with the map, so the SAME highlight hex read
-// salmon in the light theme and muddy brown in the dark one (it was being
-// blended into a cream vs a near-black page), and the half-transparent map
-// itself read as "the globe block has a different background". The fade is
-// painted inside the canvas instead — as a gradient of the BACKGROUND color
-// over the content (not an alpha erase; the canvas must stay opaque, see
-// above) — so the map and the highlights dissolve on their own schedules:
-// the map starts fading at 58% of the height, the highlights keep their true
-// color almost to the bottom edge (85%) and only fade there to avoid a hard
-// clip at the canvas edge.
-function fadeToBg(ctx, w, h, from, rgb) {
+// The globe's lower half dissolves into the page: an alpha erase inside the
+// canvas (the canvas is transparent, see above — erased pixels become the
+// page's own DOM pixels). Applied in two stages so the map and the
+// highlights dissolve on their own schedules: the map starts fading at 58%
+// of the height, the highlights keep their true color almost to the bottom
+// edge (85%) and only fade there to avoid a hard clip at the canvas edge.
+function fadeOut(ctx, w, h, from) {
   const g = ctx.createLinearGradient(0, h * from, 0, h)
-  g.addColorStop(0, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0)`)
-  g.addColorStop(1, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},1)`)
+  g.addColorStop(0, 'rgba(0,0,0,0)')
+  g.addColorStop(1, 'rgba(0,0,0,1)')
+  ctx.globalCompositeOperation = 'destination-out'
   ctx.fillStyle = g
   ctx.fillRect(0, 0, w, h)
+  ctx.globalCompositeOperation = 'source-over'
 }
 const MAP_FADE_START = 0.58
 const HIGHLIGHT_FADE_START = 0.85
@@ -199,7 +199,7 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
       }
 
       const proj = projection.rotate(st.rotation)
-      const ctx = cv.getContext('2d', { alpha: false })
+      const ctx = cv.getContext('2d')
 
       // SINGLE WRITER for the theme crossfade. Every earlier scheme animated
       // the page (CSS transition) and the canvas (JS lerp, or JS copying the
@@ -238,12 +238,10 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
         }
       }
       const C = (k) => `rgb(${st.pal[k][0]},${st.pal[k][1]},${st.pal[k][2]})`
-      const bg = st.pal.bg
 
       ctx.save()
       ctx.scale(dpr, dpr)
-      ctx.fillStyle = C('bg')
-      ctx.fillRect(0, 0, w, h)
+      ctx.clearRect(0, 0, w, h)
       const path = geoPath(proj, ctx)
 
       // Structural map first — graticule, land, borders — then its fade, so
@@ -252,7 +250,7 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
       ctx.beginPath(); path(countriesFC); ctx.fillStyle = C('land'); ctx.fill()
       ctx.beginPath(); path(borders); ctx.strokeStyle = C('border'); ctx.lineWidth = 0.5; ctx.stroke()
       ctx.beginPath(); path(coast); ctx.strokeStyle = C('coast'); ctx.lineWidth = 0.7; ctx.stroke()
-      fadeToBg(ctx, w, h, MAP_FADE_START, bg)
+      fadeOut(ctx, w, h, MAP_FADE_START)
 
       for (const hl of highlights) {
         if (!hl.feat) continue
@@ -284,7 +282,7 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
         ctx.lineWidth = sel ? 1 : 0.8
         ctx.stroke()
       }
-      fadeToBg(ctx, w, h, HIGHLIGHT_FADE_START, bg)
+      fadeOut(ctx, w, h, HIGHLIGHT_FADE_START)
       ctx.restore()
 
       raf = requestAnimationFrame(draw)
