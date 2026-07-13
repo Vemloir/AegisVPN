@@ -456,7 +456,10 @@ export default function App() {
       </section>
 
       {/* ============================ PRICING =========================== */}
-      <section id="pricing" style={css('background:var(--bg); transition:background .4s ease;')}>
+      {/* No own background: the root already paints var(--bg), and a second
+          layer painting the same color can rasterize one RGB step off on
+          GPU-composited browsers, showing a faint seam at the section edge. */}
+      <section id="pricing">
         <div style={css('max-width:1180px; margin:0 auto; padding:clamp(56px,10vw,96px) clamp(16px,4.5vw,28px); text-align:center;')}>
           <div style={css('font-size:12.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); margin-bottom:14px;')}>{t.price_kicker}</div>
           <h2 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(32px,4vw,48px); line-height:1.08; letter-spacing:-.02em; margin:0 auto 16px; max-width:640px; color:var(--ink);")}>{t.price_title}</h2>
