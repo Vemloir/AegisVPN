@@ -4,8 +4,9 @@ import { feature, mesh } from 'topojson-client'
 import world from 'world-atlas/countries-110m.json'
 import { CENTROID_OVERRIDE, ISO_NUMERIC, POINT_LOCATION } from './countries.js'
 
-// The canvas is fully OPAQUE and paints the page background (--bg, resolved
-// from CSS at runtime) itself. A transparent canvas looks equivalent, but
+// The canvas is fully OPAQUE and paints the page background itself (copied
+// each frame from the nearest painted ancestor's computed backgroundColor,
+// so CSS transitions are tracked live). A transparent canvas looks equivalent, but
 // its semi-transparent pixels (antialiasing, the dissolve) get blended with
 // the page by the GPU compositor in linear space and re-quantized, landing
 // one RGB step off (#151515 on a #161616 page) — an eyedropper-visible seam
@@ -138,6 +139,19 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
     let projection = null
     let w = 0, h = 0, dpr = 1
 
+    // Nearest ancestor that actually paints a background. Its computed
+    // backgroundColor is what the canvas copies every frame — during a theme
+    // toggle getComputedStyle returns the CSS transition's current
+    // interpolated value, so the canvas tracks the page mid-animation too.
+    let bgEl = cv.parentElement
+    while (
+      bgEl &&
+      bgEl !== document.documentElement &&
+      getComputedStyle(bgEl).backgroundColor === 'rgba(0, 0, 0, 0)'
+    ) {
+      bgEl = bgEl.parentElement
+    }
+
     // Measure the canvas itself, never the window. The sphere is deliberately
     // larger than its box and centred below it (translate y = 1.18h), so a
     // wrong h shifts the visible arc up or down by hundreds of pixels. A single
@@ -186,15 +200,24 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
       const proj = projection.rotate(st.rotation)
       const ctx = cv.getContext('2d', { alpha: false })
 
-      // Theme change → start a palette transition matching the page's CSS
-      // one. The bg target is resolved from the live --bg var so the opaque
-      // base can never drift from the page.
+      // The base color is COPIED off the page each frame, never predicted:
+      // whatever getComputedStyle says the page background is right now —
+      // including the CSS transition's in-between values during a theme
+      // toggle — is what the canvas paints. No separate clock or easing
+      // curve that could drift out of phase with the page.
       const themeKey = theme === 'dark' ? 'dark' : 'light'
+      const bgm =
+        bgEl && /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)/.exec(getComputedStyle(bgEl).backgroundColor)
+      const bg = bgm
+        ? [Math.round(+bgm[1]), Math.round(+bgm[2]), Math.round(+bgm[3])]
+        : themeKey === 'dark' ? [22, 22, 22] : [243, 241, 234]
+
+      // The map/highlight colors still animate on their own 400ms ease; a
+      // tiny phase difference there is invisible — unlike the base, they
+      // never meet the page background across a straight edge.
       if (st.palTheme !== themeKey) {
         st.palTheme = themeKey
-        const v = getComputedStyle(cv).getPropertyValue('--bg').trim()
-        const bgHex = /^#[0-9a-fA-F]{6}$/.test(v) ? v : themeKey === 'dark' ? '#161616' : '#F3F1EA'
-        st.palTarget = { ...PAL_RGB[themeKey], bg: hexToRgb(bgHex) }
+        st.palTarget = PAL_RGB[themeKey]
         if (st.pal) {
           st.palFrom = { ...st.pal }
           st.palStart = performance.now()
@@ -211,7 +234,7 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
 
       ctx.save()
       ctx.scale(dpr, dpr)
-      ctx.fillStyle = C('bg')
+      ctx.fillStyle = `rgb(${bg[0]},${bg[1]},${bg[2]})`
       ctx.fillRect(0, 0, w, h)
       const path = geoPath(proj, ctx)
 
@@ -221,7 +244,7 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
       ctx.beginPath(); path(countriesFC); ctx.fillStyle = C('land'); ctx.fill()
       ctx.beginPath(); path(borders); ctx.strokeStyle = C('border'); ctx.lineWidth = 0.5; ctx.stroke()
       ctx.beginPath(); path(coast); ctx.strokeStyle = C('coast'); ctx.lineWidth = 0.7; ctx.stroke()
-      fadeToBg(ctx, w, h, MAP_FADE_START, st.pal.bg)
+      fadeToBg(ctx, w, h, MAP_FADE_START, bg)
 
       for (const hl of highlights) {
         if (!hl.feat) continue
@@ -253,7 +276,7 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
         ctx.lineWidth = sel ? 1 : 0.8
         ctx.stroke()
       }
-      fadeToBg(ctx, w, h, HIGHLIGHT_FADE_START, st.pal.bg)
+      fadeToBg(ctx, w, h, HIGHLIGHT_FADE_START, bg)
       ctx.restore()
 
       raf = requestAnimationFrame(draw)
