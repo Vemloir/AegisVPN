@@ -4,20 +4,26 @@ import { feature, mesh } from 'topojson-client'
 import world from 'world-atlas/countries-110m.json'
 import { CENTROID_OVERRIDE, ISO_NUMERIC, POINT_LOCATION } from './countries.js'
 
-// There is deliberately NO ocean/background fill: the sphere is left
-// transparent so the page background shows through the globe. That makes
-// "the globe block matches the page background" true by construction, in any
-// theme — nothing to keep in sync with --bg.
+// The canvas is fully OPAQUE and paints the page background (--bg, resolved
+// from CSS at runtime) itself. A transparent canvas looks equivalent, but
+// its semi-transparent pixels (antialiasing, the dissolve) get blended with
+// the page by the GPU compositor in linear space and re-quantized, landing
+// one RGB step off (#151515 on a #161616 page) — an eyedropper-visible seam
+// that software rasterization doesn't reproduce. An opaque layer is copied
+// byte-for-byte instead of blended, so every blend happens inside this 2D
+// context with one consistent rounding.
 //
 // The highlight FILLS are theme-dependent on purpose: the same hex reads
 // noticeably brighter against a near-black page than against cream
-// (simultaneous contrast), so the dark theme fills are ~20% darker — a
-// clearly visible step, per explicit request, not a subtle correction.
+// (simultaneous contrast). The dark values are the light values scaled to
+// ~0.65 luminance with the hue kept — equivalent to compositing one shared
+// translucent base color over each theme's background, which is the model
+// the user picked (between swatches C #8F5540 and D #7C4936 on the strip).
 // The OUTLINES read the same on both backgrounds and stay shared.
 const OUTLINE = { hiLine: '#A34E2F', hiSelLine: '#A34E2F' }
 const PALETTE = {
   light: { land: '#D5D0C2', grat: '#DBD6C9', border: '#C6C0B0', coast: '#BDB7A6', hi: '#CC785C', hiSel: '#C2613D', ...OUTLINE },
-  dark: { land: '#1D1D1D', grat: '#232323', border: '#333333', coast: '#333333', hi: '#A3604A', hiSel: '#9B4E31', ...OUTLINE },
+  dark: { land: '#1D1D1D', grat: '#232323', border: '#333333', coast: '#333333', hi: '#864F3C', hiSel: '#7F4028', ...OUTLINE },
 }
 
 // The globe's lower half dissolves into the page. This used to be a CSS
@@ -25,22 +31,27 @@ const PALETTE = {
 // highlight fills together with the map, so the SAME highlight hex read
 // salmon in the light theme and muddy brown in the dark one (it was being
 // blended into a cream vs a near-black page), and the half-transparent map
-// itself read as "the globe block has a different background". Painting the
-// fade inside the canvas instead lets the map and the highlights dissolve on
-// their own schedules: the map starts fading at 58% of the height, the
-// highlights keep their true color almost to the bottom edge (85%) and only
-// fade there to avoid a hard clip at the canvas edge.
-function fadeOut(ctx, w, h, from) {
+// itself read as "the globe block has a different background". The fade is
+// painted inside the canvas instead — as a gradient of the BACKGROUND color
+// over the content (not an alpha erase; the canvas must stay opaque, see
+// above) — so the map and the highlights dissolve on their own schedules:
+// the map starts fading at 58% of the height, the highlights keep their true
+// color almost to the bottom edge (85%) and only fade there to avoid a hard
+// clip at the canvas edge.
+function fadeToBg(ctx, w, h, from, rgb) {
   const g = ctx.createLinearGradient(0, h * from, 0, h)
-  g.addColorStop(0, 'rgba(0,0,0,0)')
-  g.addColorStop(1, 'rgba(0,0,0,1)')
-  ctx.globalCompositeOperation = 'destination-out'
+  g.addColorStop(0, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0)`)
+  g.addColorStop(1, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},1)`)
   ctx.fillStyle = g
   ctx.fillRect(0, 0, w, h)
-  ctx.globalCompositeOperation = 'source-over'
 }
 const MAP_FADE_START = 0.58
 const HIGHLIGHT_FADE_START = 0.85
+
+function hexToRgb(hex) {
+  const h = hex.replace('#', '')
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
+}
 
 const countriesFC = feature(world, world.objects.countries)
 const borders = mesh(world, world.objects.countries, (a, b) => a !== b)
@@ -136,12 +147,21 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
       }
 
       const proj = projection.rotate(st.rotation)
-      const ctx = cv.getContext('2d')
+      const ctx = cv.getContext('2d', { alpha: false })
       const pal = PALETTE[theme === 'dark' ? 'dark' : 'light']
+      // Resolve the page background from the live CSS var so the opaque base
+      // can never drift from the page; cached per theme, not per frame.
+      if (st.bgTheme !== theme) {
+        st.bgTheme = theme
+        const v = getComputedStyle(cv).getPropertyValue('--bg').trim()
+        st.bgHex = /^#[0-9a-fA-F]{6}$/.test(v) ? v : theme === 'dark' ? '#161616' : '#F3F1EA'
+        st.bgRgb = hexToRgb(st.bgHex)
+      }
 
       ctx.save()
       ctx.scale(dpr, dpr)
-      ctx.clearRect(0, 0, w, h)
+      ctx.fillStyle = st.bgHex
+      ctx.fillRect(0, 0, w, h)
       const path = geoPath(proj, ctx)
 
       // Structural map first — graticule, land, borders — then its fade, so
@@ -150,7 +170,7 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
       ctx.beginPath(); path(countriesFC); ctx.fillStyle = pal.land; ctx.fill()
       ctx.beginPath(); path(borders); ctx.strokeStyle = pal.border; ctx.lineWidth = 0.5; ctx.stroke()
       ctx.beginPath(); path(coast); ctx.strokeStyle = pal.coast; ctx.lineWidth = 0.7; ctx.stroke()
-      fadeOut(ctx, w, h, MAP_FADE_START)
+      fadeToBg(ctx, w, h, MAP_FADE_START, st.bgRgb)
 
       for (const hl of highlights) {
         if (!hl.feat) continue
@@ -182,7 +202,7 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
         ctx.lineWidth = sel ? 1 : 0.8
         ctx.stroke()
       }
-      fadeOut(ctx, w, h, HIGHLIGHT_FADE_START)
+      fadeToBg(ctx, w, h, HIGHLIGHT_FADE_START, st.bgRgb)
       ctx.restore()
 
       raf = requestAnimationFrame(draw)
