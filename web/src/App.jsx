@@ -159,18 +159,17 @@ function TermSelect({ plans, value, onChange, lang }) {
           <path d="M1 1L5 5L9 1" stroke="var(--muted2)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
-      {/* The open menu IS the trigger pill stretched downward: it overlays
-          the button at its exact position and width, keeps the pill's own
-          background/border, and keeps the pill's CORNER radius (18px = half
-          the 36px button height — quarter-circle corners, not a capsule's
-          semicircular caps). Rows sit where the button's content sat; the
-          selected row's check lands where the chevron was. */}
+      {/* The menu DROPS DOWN below the button as the same pill, stretched:
+          the button's width and horizontal position, its background/border,
+          and its CORNER radius (18px = half the 36px button height —
+          quarter-circle corners, not a capsule's semicircular caps). The
+          selected row's check sits where the button's chevron sits. */}
       {open && (
         <div
           role="listbox"
           style={{
             ...css(
-              'position:absolute; right:0; top:0; z-index:30; min-width:100%; ' +
+              'position:absolute; right:0; top:calc(100% + 6px); z-index:30; min-width:100%; ' +
               'background:var(--seg); border:1px solid var(--hair2); border-radius:18px; ' +
               'padding:4px; display:flex; flex-direction:column; gap:2px;',
             ),
