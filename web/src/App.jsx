@@ -23,7 +23,7 @@ const LIGHT_VARS =
   '--bg:#F3F1EA; --ink:#1C1B19; --muted:#56524B; --muted2:#8A857B; --faint:#9A958B;' +
   '--hair:#E4E0D6; --hair2:#DFDBD0; --hair3:#D7D2C5; --accent:#C2613D; --accentSoft:#CC785C;' +
   '--btn:#1A1A1A; --btnHover:#38322D; --btnText:#ffffff; --card:#ECE8DD; --seg:#E0DBCF; --segActive:#FBFAF6;' +
-  '--codeBg:#EDE9DF; --rowHover:#EDE9DF; --headerBg:rgba(243,241,234,.82); --logoBg:#1A1A1A; --logoText:#ffffff;'
+  '--codeBg:#EDE9DF; --rowHover:#EDE9DF; --logoBg:#1A1A1A; --logoText:#ffffff;'
 
 // Every background/border neutral below had blue nudged 1-2 points above red
 // and green (a common "default dark UI" recipe) — individually invisible, but
@@ -34,7 +34,7 @@ const DARK_VARS =
   '--bg:#161616; --ink:#ECEAE6; --muted:#A8A6A2; --muted2:#827F7A; --faint:#6E6B66;' +
   '--hair:#2E2E2E; --hair2:#262626; --hair3:#2E2E2E; --accent:#C2613D; --accentSoft:#CC785C;' +
   '--btn:#C2613D; --btnHover:#D07A55; --btnText:#ffffff; --card:#1F1F1F; --seg:#252525; --segActive:#373737;' +
-  '--codeBg:#262626; --rowHover:#202020; --headerBg:rgba(22,22,22,.82); --logoBg:#E6A085; --logoText:#1A140F;'
+  '--codeBg:#262626; --rowHover:#202020; --logoBg:#E6A085; --logoText:#1A140F;'
 
 const fmt = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
 
@@ -245,7 +245,12 @@ export default function App() {
   return (
     <div style={rootStyle}>
       {/* ============================ HEADER ============================ */}
-      <header style={css('position:sticky; top:0; z-index:60; background:var(--headerBg); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); border-bottom:1px solid var(--hair); transition:background .4s ease, border-color .4s ease;')}>
+      {/* background:inherit, NOT a translucent film + backdrop blur: any
+          semi-transparent layer is blended by the GPU compositor in linear
+          space and re-quantized ±1 (#151515/#171717 specks against the
+          #161616 page — eyedropper-visible). inherit keeps the header opaque
+          AND tracking the root's JS-driven crossfade color every frame. */}
+      <header style={css('position:sticky; top:0; z-index:60; background:inherit; border-bottom:1px solid var(--hair); transition:border-color .4s ease;')}>
         <div style={css('max-width:1180px; margin:0 auto; padding:15px clamp(16px,4vw,28px); display:flex; align-items:center; justify-content:space-between; gap:24px;')}>
           <a href="#top" onClick={(e) => scrollToSection(e, 'top')} style={css('display:flex; align-items:center; text-decoration:none; color:inherit;')}>
             <span style={css('font-weight:600; font-size:18px; letter-spacing:-.015em;')}>AegisVPN</span>
