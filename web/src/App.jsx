@@ -81,6 +81,122 @@ const TG_ICON = (
   </svg>
 )
 
+// Fully custom dropdown for the plan term. The native <select>'s closed
+// state can be restyled (appearance:none), but the OPEN menu is drawn by the
+// browser and clashes with the site. The list is a handful of terms, so a
+// hand-rolled listbox with outside-click / Esc / arrow-key handling beats
+// pulling in a component library.
+function TermSelect({ plans, value, onChange, lang }) {
+  const [open, setOpen] = useState(false)
+  const [active, setActive] = useState(-1) // keyboard/hover-highlighted index
+  const rootRef = useRef(null)
+
+  const idx = plans.findIndex((p) => p.id === value)
+  const label = (p) => `${p.days} ${lang === 'en' ? 'days' : 'дн.'}`
+  const pick = (p) => {
+    onChange(p.id)
+    setOpen(false)
+  }
+
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false)
+    }
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  // The button keeps focus while the menu is open (listbox pattern): arrows
+  // move the highlight, Enter/Space picks. preventDefault on Enter/Space
+  // stops the button's synthetic click from immediately re-toggling.
+  const onButtonKey = (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (!open) {
+        setOpen(true)
+        setActive(idx)
+        return
+      }
+      const d = e.key === 'ArrowDown' ? 1 : -1
+      setActive((a) => ((a < 0 ? idx : a) + d + plans.length) % plans.length)
+    } else if ((e.key === 'Enter' || e.key === ' ') && open) {
+      e.preventDefault()
+      if (active >= 0) pick(plans[active])
+      else setOpen(false)
+    }
+  }
+
+  return (
+    <div ref={rootRef} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => {
+          setOpen(!open)
+          setActive(idx)
+        }}
+        onKeyDown={onButtonKey}
+        style={css(
+          'display:inline-flex; align-items:center; gap:10px; font-family:inherit; ' +
+          'font-size:14px; font-weight:600; color:var(--ink); background:var(--seg); ' +
+          'border:1px solid var(--hair2); border-radius:999px; padding:8px 16px; cursor:pointer;',
+        )}
+      >
+        {idx >= 0 ? label(plans[idx]) : ''}
+        <svg
+          width="10" height="6" viewBox="0 0 10 6" fill="none"
+          style={{ transition: 'transform .15s ease', transform: open ? 'rotate(180deg)' : 'none' }}
+        >
+          <path d="M1 1L5 5L9 1" stroke="var(--muted2)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          style={{
+            ...css(
+              'position:absolute; right:0; top:calc(100% + 6px); z-index:30; min-width:100%; ' +
+              'background:var(--card); border:1px solid var(--hair); border-radius:12px; ' +
+              'box-shadow:0 8px 28px rgba(0,0,0,.14); padding:6px; display:flex; flex-direction:column; gap:2px;',
+            ),
+            animation: 'vpnMenuIn .12s ease',
+          }}
+        >
+          {plans.map((p, i) => (
+            <button
+              key={p.id}
+              type="button"
+              role="option"
+              aria-selected={p.id === value}
+              onClick={() => pick(p)}
+              onMouseEnter={() => setActive(i)}
+              style={css(
+                'display:flex; align-items:center; justify-content:space-between; gap:14px; ' +
+                'padding:8px 12px; border:none; border-radius:8px; text-align:left; white-space:nowrap; ' +
+                'font-family:inherit; font-size:14px; font-weight:500; cursor:pointer; ' +
+                `background:${active === i ? 'var(--rowHover)' : 'transparent'}; ` +
+                `color:${p.id === value ? 'var(--accent)' : 'var(--ink)'};`,
+              )}
+            >
+              {label(p)}
+              <span style={{ visibility: p.id === value ? 'visible' : 'hidden', color: 'var(--accent)' }}>✓</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ---------------------------------------------------------------------- app  */
 
 export default function App() {
@@ -484,32 +600,12 @@ export default function App() {
               <div style={css('display:flex; flex-direction:column; padding:28px; border:1px solid var(--hair2); border-radius:20px; background:var(--card);')}>
                 <div style={css('display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:20px;')}>
                   <span style={css('font-size:13px; color:var(--muted2); font-weight:500;')}>{t.plan_term}</span>
-                  {/* appearance:none drops the native control chrome (inconsistent
-                      across browsers, and the built-in arrow ignores padding and
-                      sits jammed against the edge) so this can be a plain pill
-                      with its own arrow, positioned with real spacing. */}
-                  <div style={{ position: 'relative' }}>
-                    <select
-                      value={selectedPlan.id}
-                      onChange={(e) => setSelectedPlanId(Number(e.target.value))}
-                      style={css(
-                        'appearance:none; -webkit-appearance:none; -moz-appearance:none; ' +
-                        'font-family:inherit; font-size:14px; font-weight:600; color:var(--ink); ' +
-                        'background:var(--seg); border:1px solid var(--hair2); border-radius:999px; ' +
-                        'padding:8px 34px 8px 16px; cursor:pointer;',
-                      )}
-                    >
-                      {plans.map((p) => (
-                        <option key={p.id} value={p.id}>{p.days} {lang === 'en' ? 'days' : 'дн.'}</option>
-                      ))}
-                    </select>
-                    <svg
-                      width="10" height="6" viewBox="0 0 10 6" fill="none"
-                      style={css('position:absolute; right:14px; top:50%; margin-top:-2px; pointer-events:none;')}
-                    >
-                      <path d="M1 1L5 5L9 1" stroke="var(--muted2)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </div>
+                  <TermSelect
+                    plans={plans}
+                    value={selectedPlan.id}
+                    onChange={setSelectedPlanId}
+                    lang={lang}
+                  />
                 </div>
                 <div style={css('display:flex; align-items:baseline; gap:8px; margin-bottom:20px;')}>
                   <span style={css("font-family:'Newsreader','EB Garamond',serif; font-size:46px; font-weight:500; letter-spacing:-.02em; line-height:1; color:var(--ink);")}>{fmt(selectedPlan.rub_price)} ₽</span>
