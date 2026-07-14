@@ -43,6 +43,21 @@ const DARK_VARS =
 
 const fmt = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
 
+// The site's one glass surface: a translucent tint of the card colour plus a
+// blur, and no border — the tint alone separates it from the page. Used for
+// cards, panels and pills, so a plate of glass is a plate of glass everywhere.
+//
+// Two costs, knowingly paid: every backdrop-filter is a separate GPU layer
+// (cheap on a laptop, not free on a phone), and a translucent layer is blended
+// and re-quantized ±1, which is what an eyedropper sees at its edge. Modals do
+// NOT use it — glass over an already-blurred page turns to mud and the text
+// with it.
+const GLASS = {
+  background: 'color-mix(in srgb, var(--card) 72%, transparent)',
+  backdropFilter: 'blur(16px) saturate(170%)',
+  WebkitBackdropFilter: 'blur(16px) saturate(170%)',
+}
+
 /* ---------------------------------------------------------------- primitives */
 
 function HoverLink({ base, hover, children, ...rest }) {
@@ -259,7 +274,8 @@ function PlanCard({ children }) {
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
-        ...css('display:flex; flex-direction:column; width:100%; padding:28px; border-radius:20px; background:var(--card); text-align:left;'),
+        ...css('display:flex; flex-direction:column; width:100%; padding:28px; border-radius:20px; text-align:left;'),
+        ...GLASS,
         transform: hover ? 'translateY(-3px)' : 'none',
         transition: 'transform .18s ease',
       }}
@@ -583,12 +599,15 @@ export default function App() {
               <button
                 onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
                 aria-label="Theme"
-                style={css('display:flex; align-items:center; justify-content:center; width:34px; height:34px; border:1px solid var(--hair2); border-radius:999px; background:transparent; cursor:pointer; color:var(--ink); padding:0;')}
+                style={{
+                  ...css('display:flex; align-items:center; justify-content:center; width:34px; height:34px; border:none; border-radius:999px; cursor:pointer; color:var(--ink); padding:0;'),
+                  ...GLASS,
+                }}
               >
                 {theme === 'dark' ? '☾' : '☀'}
               </button>
 
-              <div style={css('display:flex; border:1px solid var(--hair2); border-radius:999px; overflow:hidden;')}>
+              <div style={{ ...css('display:flex; border:none; border-radius:999px; overflow:hidden;'), ...GLASS }}>
                 <button onClick={() => setLang('ru')} style={css(langBtn(lang === 'ru'))}>RU</button>
                 <button onClick={() => setLang('en')} style={css(langBtn(lang === 'en'))}>EN</button>
               </div>
@@ -745,24 +764,19 @@ export default function App() {
               <div style={css('pointer-events:auto; font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); font-weight:600; margin-bottom:16px;')}>{t.globe_kicker}</div>
               <h2 style={css("pointer-events:auto; font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(28px,3.6vw,40px); line-height:1.2; letter-spacing:-.01em; margin:0 0 24px; color:var(--ink);")}>{t.globe_title}</h2>
               {t.globe_sub ? <p style={css('font-size:17px; line-height:1.55; color:var(--muted); max-width:480px; margin:0 auto 24px;')}>{t.globe_sub}</p> : null}
-              {/* Frosted glass, like the header: the button floats over the map
-                  and lets it show through, instead of punching an opaque hole
-                  in it. No inset top highlight here — on a pill it lands right
-                  on top of the border and the two read as one double-thick top
-                  edge. The header can carry the highlight because its top edge
-                  is off-screen; a free-floating button cannot. */}
+              {/* Glass, and nothing else: no border, no arrow. The button floats
+                  over the map and lets it show through instead of punching an
+                  opaque hole in it. */}
               <a
                 href="#servers"
                 onClick={(e) => scrollToSection(e, 'servers')}
                 style={{
-                  ...css('pointer-events:auto; display:inline-flex; align-items:center; gap:7px; color:var(--ink); font-size:15px; font-weight:500; padding:12px 24px; border-radius:999px; text-decoration:none; border:1px solid var(--glassEdge);'),
-                  background: 'var(--glassBg)',
-                  backdropFilter: 'blur(14px) saturate(170%)',
-                  WebkitBackdropFilter: 'blur(14px) saturate(170%)',
+                  ...css('pointer-events:auto; display:inline-flex; align-items:center; color:var(--ink); font-size:15px; font-weight:500; padding:12px 26px; border-radius:999px; text-decoration:none; border:none;'),
+                  ...GLASS,
                   boxShadow: '0 10px 30px -12px rgba(0,0,0,.35)',
                 }}
               >
-                {t.globe_cta} <span style={css('color:var(--accent);')}>→</span>
+                {t.globe_cta}
               </a>
             </div>
           </div>
@@ -792,7 +806,7 @@ export default function App() {
             <>
             {/* Which unit prices are SHOWN in. The payment method itself is
                 still chosen at checkout — a plan can be bought either way. */}
-            <div style={css('display:inline-flex; padding:3px; margin-bottom:26px; border:1px solid var(--hair2); border-radius:999px; background:var(--seg);')}>
+            <div style={{ ...css('display:inline-flex; padding:3px; margin-bottom:26px; border:none; border-radius:999px;'), ...GLASS }}>
               {['rub', 'stars'].map((unit) => (
                 <button
                   key={unit}
@@ -900,7 +914,7 @@ export default function App() {
             {/* The list the stacked cards no longer each carry — see above. */}
             {isMobile && (
               <Reveal style={{ marginTop: '26px' }}>
-                <div style={css('background:var(--card); border-radius:16px; padding:20px 18px; text-align:left; display:flex; flex-direction:column; gap:10px; font-size:14px; line-height:1.4; color:var(--muted);')}>
+                <div style={{ ...css('border-radius:16px; padding:20px 18px; text-align:left; display:flex; flex-direction:column; gap:10px; font-size:14px; line-height:1.4; color:var(--muted);'), ...GLASS }}>
                   <div style={css('display:flex; gap:8px;')}>
                     <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>
                     {plans[0].conn_limit ? t.plan_conns(plans[0].conn_limit) : t.plan_conns_unlimited}
@@ -927,10 +941,9 @@ export default function App() {
           <p style={css('font-size:16px; line-height:1.6; color:var(--muted); margin:0 0 28px; max-width:620px;')}>{t.srv_sub}</p>
         </Reveal>
 
-        {/* No border, and the row separators are painted in the PAGE
-            background: on the card they read as gaps cut through the panel
-            rather than as drawn rules. */}
-        <div style={css('background:var(--card); border-radius:16px; overflow:hidden;')}>
+        {/* Glass panel; the row separators are painted in the PAGE background,
+            so they read as gaps cut through it rather than as drawn rules. */}
+        <div style={{ ...css('border-radius:16px; overflow:hidden;'), ...GLASS }}>
           {locations.length === 0 && (
             <div style={css('padding:28px; text-align:center; color:var(--faint); font-size:14.5px;')}>{t.loading}</div>
           )}
