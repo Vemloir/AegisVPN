@@ -48,16 +48,38 @@ function HoverButton({ base, hover, children, ...rest }) {
   return <button {...useHoverStyle(base, hover)} {...rest}>{children}</button>
 }
 
+const MODAL_EXIT_MS = 160
+
+// React unmounts a component the moment its flag flips, so a dialog cannot
+// animate itself away from the outside: the element is already gone. The Modal
+// therefore owns its own dismissal — it plays the exit, THEN tells the parent
+// to unmount it. Every route out (backdrop, Escape, the ×) goes through
+// requestClose, so none of them can skip the animation.
+//
+// onClose may be null, which means "not dismissible right now" (the checkout
+// modal while a payment is being opened): every route out becomes a no-op.
 function Modal({ onClose, children, maxWidth = 420 }) {
+  const [closing, setClosing] = useState(false)
+
+  const requestClose = useCallback(() => {
+    if (!onClose || closing) return
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      onClose()
+      return
+    }
+    setClosing(true)
+    setTimeout(onClose, MODAL_EXIT_MS)
+  }, [onClose, closing])
+
   useEffect(() => {
-    const esc = (e) => e.key === 'Escape' && onClose()
+    const esc = (e) => e.key === 'Escape' && requestClose()
     window.addEventListener('keydown', esc)
     return () => window.removeEventListener('keydown', esc)
-  }, [onClose])
+  }, [requestClose])
 
   return (
     <div
-      onClick={onClose}
+      onClick={requestClose}
       // The scrim is the PAGE's own background colour at 78%, not a dark film:
       // a black veil over a cream page turns it brown, which is what "the
       // background changes colour" was. This only fades the page toward its own
@@ -69,7 +91,9 @@ function Modal({ onClose, children, maxWidth = 420 }) {
         background: 'color-mix(in srgb, var(--bg) 78%, transparent)',
         backdropFilter: 'blur(6px)',
         WebkitBackdropFilter: 'blur(6px)',
-        animation: 'vpnScrimIn .18s ease',
+        animation: closing
+          ? `vpnScrimOut ${MODAL_EXIT_MS}ms ease forwards`
+          : 'vpnScrimIn .18s ease',
       }}
     >
       <div
@@ -78,14 +102,16 @@ function Modal({ onClose, children, maxWidth = 420 }) {
           ...css('position:relative; width:100%; background:var(--card); border:1px solid var(--hair2); border-radius:20px; padding:32px 28px;'),
           maxWidth,
           boxShadow: '0 24px 60px -12px rgba(0,0,0,.35), 0 0 0 1px rgba(0,0,0,.04)',
-          animation: 'vpnDialogIn .22s cubic-bezier(.22,.61,.36,1)',
+          animation: closing
+            ? `vpnDialogOut ${MODAL_EXIT_MS}ms ease forwards`
+            : 'vpnDialogIn .22s cubic-bezier(.22,.61,.36,1)',
         }}
       >
         {children}
         <button
-          onClick={onClose}
+          onClick={requestClose}
           aria-label="Close"
-          style={css('position:absolute; top:18px; right:18px; width:32px; height:32px; border:none; background:transparent; color:var(--muted2); font-size:22px; line-height:1; cursor:pointer; border-radius:8px;')}
+          style={css('position:absolute; top:18px; right:18px; width:32px; height:32px; border:none; background:transparent; color:var(--muted2); font-size:22px; line-height:1; cursor:pointer; border-radius:8px; transition:color .16s ease;')}
         >×</button>
       </div>
     </div>
@@ -898,9 +924,11 @@ export default function App() {
         </div>
       </footer>
 
-      {/* ============================ CHECKOUT ========================== */}
+      {/* ============================ CHECKOUT ==========================
+          onClose is null while the payment page is being opened: that tells the
+          Modal it is not dismissible, and it ignores backdrop, Escape and ×. */}
       {checkoutOpen && selectedPlan && user && (
-        <Modal onClose={() => (payBusy ? null : setCheckoutOpen(false))} maxWidth={440}>
+        <Modal onClose={payBusy ? null : () => setCheckoutOpen(false)} maxWidth={440}>
           <h3 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:26px; letter-spacing:-.01em; margin:4px 0 18px; color:var(--ink);")}>{t.pay_title}</h3>
 
           <div style={css('display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:14px 0; border-top:1px solid var(--hair); border-bottom:1px solid var(--hair); margin-bottom:20px;')}>
