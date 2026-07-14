@@ -652,7 +652,10 @@ export default function App() {
       )}
 
       {/* ============================= HERO ============================= */}
-      <section id="top" style={css('max-width:1180px; margin:0 auto; padding:clamp(48px,10vw,84px) clamp(16px,4.5vw,28px) clamp(32px,6vw,48px);')}>
+      {/* The clamp minimums are what a phone actually gets (10vw of 390px is
+          below every one of them), so they are the mobile spacing — they were
+          desktop-sized and left ~112px of dead air between sections. */}
+      <section id="top" style={css('max-width:1180px; margin:0 auto; padding:clamp(28px,8vw,84px) clamp(16px,4.5vw,28px) clamp(20px,5vw,48px);')}>
         <div style={{ display: 'grid', gap: isMobile ? '22px' : '48px', alignItems: 'start', gridTemplateColumns: isMobile ? '1fr' : '1.45fr 1fr' }}>
           <div style={css('min-width:0;')}>
             <div style={css('display:inline-flex; align-items:center; gap:8px; font-size:13px; letter-spacing:.04em; text-transform:uppercase; color:var(--accent); font-weight:600; margin-bottom:24px;')}>
@@ -719,13 +722,14 @@ export default function App() {
           shows — a horizon behind the copy — and the mask fades its lower half
           into the page. Putting this in a bordered box makes the globe read as
           "shifted up", because the sphere's centre is below the box. */}
+      {/* No globe on a phone AT ALL — the whole section is skipped, not just its
+          contents: a section that renders nothing but still carries its padding
+          is a band of dead air. (A canvas redrawing 177 country outlines at
+          60fps is also the most expensive thing on the page, and on a small
+          screen it earns none of that.) Phones go from the hero to the plans. */}
+      {!isMobile && (
       <section style={css('position:relative; padding:0 0 clamp(48px,10vw,92px);')}>
-        {/* No globe on a phone at all: a canvas that redraws 177 country
-            outlines at 60fps is the most expensive thing on the page, and on a
-            small screen it earns none of that — the crown of the sphere barely
-            fits, and the copy cannot sit on it. Phones go straight from the
-            hero to the plans. */}
-        {isMobile ? null : (
+        {(
           <div style={css('position:relative; width:100%; min-height:clamp(360px,72vw,600px);')}>
             <Globe
               locations={locations}
@@ -743,7 +747,10 @@ export default function App() {
               {t.globe_sub ? <p style={css('font-size:17px; line-height:1.55; color:var(--muted); max-width:480px; margin:0 auto 24px;')}>{t.globe_sub}</p> : null}
               {/* Frosted glass, like the header: the button floats over the map
                   and lets it show through, instead of punching an opaque hole
-                  in it. */}
+                  in it. No inset top highlight here — on a pill it lands right
+                  on top of the border and the two read as one double-thick top
+                  edge. The header can carry the highlight because its top edge
+                  is off-screen; a free-floating button cannot. */}
               <a
                 href="#servers"
                 onClick={(e) => scrollToSection(e, 'servers')}
@@ -752,7 +759,7 @@ export default function App() {
                   background: 'var(--glassBg)',
                   backdropFilter: 'blur(14px) saturate(170%)',
                   WebkitBackdropFilter: 'blur(14px) saturate(170%)',
-                  boxShadow: 'inset 0 1px 0 var(--glassHi), 0 10px 30px -12px rgba(0,0,0,.35)',
+                  boxShadow: '0 10px 30px -12px rgba(0,0,0,.35)',
                 }}
               >
                 {t.globe_cta} <span style={css('color:var(--accent);')}>→</span>
@@ -761,13 +768,14 @@ export default function App() {
           </div>
         )}
       </section>
+      )}
 
       {/* ============================ PRICING =========================== */}
       {/* No own background: the root already paints var(--bg), and a second
           layer painting the same color can rasterize one RGB step off on
           GPU-composited browsers, showing a faint seam at the section edge. */}
       <section id="pricing">
-        <div style={css('max-width:1180px; margin:0 auto; padding:clamp(56px,10vw,96px) clamp(16px,4.5vw,28px); text-align:center;')}>
+        <div style={css('max-width:1180px; margin:0 auto; padding:clamp(34px,8vw,96px) clamp(16px,4.5vw,28px); text-align:center;')}>
           <Reveal>
             <div style={css('font-size:12.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); margin-bottom:14px;')}>{t.price_kicker}</div>
             <h2 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(32px,4vw,48px); line-height:1.08; letter-spacing:-.02em; margin:0 auto 16px; max-width:640px; color:var(--ink);")}>{t.price_title}</h2>
@@ -912,7 +920,7 @@ export default function App() {
       </section>
 
       {/* =========================== LOCATIONS ========================= */}
-      <section id="servers" style={css('max-width:1180px; margin:0 auto; padding:clamp(56px,10vw,96px) clamp(16px,4.5vw,28px);')}>
+      <section id="servers" style={css('max-width:1180px; margin:0 auto; padding:clamp(34px,8vw,96px) clamp(16px,4.5vw,28px);')}>
         <Reveal>
           <div style={css('font-size:12.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); margin-bottom:14px;')}>{t.srv_kicker}</div>
           <h2 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(30px,3.6vw,44px); line-height:1.1; letter-spacing:-.02em; margin:0 0 14px; color:var(--ink);")}>{t.srv_title}</h2>
@@ -946,7 +954,7 @@ export default function App() {
 
       {/* ============================= FOOTER =========================== */}
       <footer style={css('border-top:1px solid var(--hair);')}>
-        <div style={css('max-width:1180px; margin:0 auto; padding:clamp(44px,7vw,72px) clamp(16px,4.5vw,28px) 40px; display:flex; flex-wrap:wrap; gap:48px; justify-content:space-between;')}>
+        <div style={css('max-width:1180px; margin:0 auto; padding:clamp(30px,6vw,72px) clamp(16px,4.5vw,28px) 32px; display:flex; flex-wrap:wrap; gap:clamp(24px,8vw,48px); justify-content:space-between;')}>
           <div style={css('max-width:320px;')}>
             <div style={css('display:flex; align-items:center; margin-bottom:16px;')}>
               <span style={css('font-weight:600; font-size:18px; letter-spacing:-.015em;')}>AegisVPN</span>
