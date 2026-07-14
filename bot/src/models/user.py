@@ -18,6 +18,9 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     tg_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     username: Mapped[str | None] = mapped_column(String(255))
+    # Telegram avatar, captured from the web Login Widget payload only — the bot
+    # never sees it, so this stays NULL for users who never signed in on the site.
+    photo_url: Mapped[str | None] = mapped_column(String(512))
     referrer_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
     is_banned: Mapped[bool] = mapped_column(Boolean, default=False)
     language: Mapped[str] = mapped_column(String(8), default="ru", server_default="ru")
