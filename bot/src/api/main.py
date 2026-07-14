@@ -108,11 +108,15 @@ async def _me_payload(session: AsyncSession, user: User) -> dict:
     payload: dict = {
         "display_name": user.username or f"id{user.tg_id}",
         "tg": f"@{user.username}" if user.username else None,
+        "photo_url": user.photo_url,
         "subscription": None,
     }
     if sub is not None:
         payload["subscription"] = {
             "is_active": sub.expires_at > now,
+            # A lifetime subscription is stored with a sentinel far-future date
+            # (2099-12-31); the site must say "forever", not print the sentinel.
+            "is_lifetime": SubscriptionService.is_lifetime_subscription(sub),
             "expires_at": sub.expires_at.isoformat(),
             "sub_url": SubscriptionService.build_subscription_url(sub.sub_token),
         }
@@ -142,19 +146,29 @@ async def auth_telegram(request: Request, response: Response) -> dict | None:
             await session.execute(select(User).where(User.tg_id == tg_id))
         ).scalar_one_or_none()
 
+        photo_url = payload.get("photo_url") or None
         if user is None:
             # A visitor who signs in on the site before ever opening the bot still
             # gets an account; the bot will find it by tg_id on /start.
-            user = User(tg_id=tg_id, username=payload.get("username"))
+            user = User(tg_id=tg_id, username=payload.get("username"), photo_url=photo_url)
             session.add(user)
             await session.commit()
             await session.refresh(user)
         elif user.is_banned:
             response.status_code = 403
             return None
-        elif payload.get("username") and user.username != payload["username"]:
-            user.username = payload["username"]
-            await session.commit()
+        else:
+            # Refresh both on every sign-in: the username can be re-taken and
+            # Telegram's avatar URL changes whenever the user swaps their photo.
+            changed = False
+            if payload.get("username") and user.username != payload["username"]:
+                user.username = payload["username"]
+                changed = True
+            if photo_url and user.photo_url != photo_url:
+                user.photo_url = photo_url
+                changed = True
+            if changed:
+                await session.commit()
 
         body = await _me_payload(session, user)
 

@@ -81,6 +81,37 @@ const TG_ICON = (
   </svg>
 )
 
+// The Telegram avatar, with the initial as a fallback: photo_url is absent for
+// users with no profile photo (or a privacy setting that hides it), and its
+// CDN link can rot, so a failed load falls back to the initial too.
+function Avatar({ user, size, fallbackLabel }) {
+  const [broken, setBroken] = useState(false)
+  const initial = (user.display_name || fallbackLabel || '?')[0].toUpperCase()
+  if (!user.photo_url || broken) {
+    return (
+      <span
+        style={{
+          ...css('display:flex; align-items:center; justify-content:center; border-radius:999px; background:var(--logoBg); color:var(--logoText); font-weight:600;'),
+          width: `${size}px`,
+          height: `${size}px`,
+          fontSize: `${Math.round(size * 0.42)}px`,
+        }}
+      >
+        {initial}
+      </span>
+    )
+  }
+  return (
+    <img
+      src={user.photo_url}
+      alt=""
+      onError={() => setBroken(true)}
+      referrerPolicy="no-referrer"
+      style={{ width: `${size}px`, height: `${size}px`, borderRadius: '999px', objectFit: 'cover', display: 'block' }}
+    />
+  )
+}
+
 // Fully custom dropdown for the plan term. The native <select>'s closed
 // state can be restyled (appearance:none), but the OPEN menu is drawn by the
 // browser and clashes with the site. The list is a handful of terms, so a
@@ -396,9 +427,9 @@ export default function App() {
                 <button
                   onClick={() => setAccountOpen(true)}
                   aria-label="Account"
-                  style={css('width:34px; height:34px; border-radius:999px; border:none; cursor:pointer; background:var(--logoBg); color:var(--logoText); font-weight:600; font-size:14px; font-family:inherit;')}
+                  style={css('width:34px; height:34px; padding:0; overflow:hidden; border-radius:999px; border:none; cursor:pointer; background:var(--logoBg); color:var(--logoText); font-weight:600; font-size:14px; font-family:inherit;')}
                 >
-                  {(user.display_name || t.acc_guest_label)[0].toUpperCase()}
+                  <Avatar user={user} size={34} fallbackLabel={t.acc_guest_label} />
                 </button>
               ) : (
                 <HoverButton
@@ -697,10 +728,15 @@ export default function App() {
       {/* ============================ ACCOUNT ========================== */}
       {accountOpen && user && (
         <Modal onClose={() => setAccountOpen(false)} maxWidth={460}>
-          <div style={css('font-size:13px; color:var(--muted2); margin-bottom:4px;')}>{t.acc_greeting}</div>
-          <h3 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:24px; letter-spacing:-.01em; margin:0 0 22px; color:var(--ink);")}>
-            {user.display_name || t.acc_guest_label}
-          </h3>
+          <div style={css('display:flex; align-items:center; gap:14px; margin-bottom:22px;')}>
+            <Avatar user={user} size={48} fallbackLabel={t.acc_guest_label} />
+            <div style={css('min-width:0;')}>
+              <div style={css('font-size:13px; color:var(--muted2); margin-bottom:2px;')}>{t.acc_greeting}</div>
+              <h3 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:24px; letter-spacing:-.01em; margin:0; color:var(--ink); overflow:hidden; text-overflow:ellipsis;")}>
+                {user.display_name || t.acc_guest_label}
+              </h3>
+            </div>
+          </div>
 
           <div style={css('display:flex; justify-content:space-between; padding:14px 0; border-top:1px solid var(--hair); font-size:14.5px;')}>
             <span style={css('color:var(--muted);')}>{t.acc_status}</span>
@@ -710,8 +746,16 @@ export default function App() {
           </div>
           {user.subscription?.expires_at && (
             <div style={css('display:flex; justify-content:space-between; padding:14px 0; border-top:1px solid var(--hair); font-size:14.5px;')}>
-              <span style={css('color:var(--muted);')}>{t.acc_expires}</span>
-              <span style={css('font-weight:500;')}>{new Date(user.subscription.expires_at).toLocaleDateString(lang === 'en' ? 'en-GB' : 'ru-RU')}</span>
+              {/* A lifetime subscription carries a sentinel date (2099-12-31);
+                  printing it as "valid until 31.12.2099" reads like a bug. */}
+              <span style={css('color:var(--muted);')}>
+                {user.subscription.is_lifetime ? t.acc_term : t.acc_expires}
+              </span>
+              <span style={css('font-weight:500;')}>
+                {user.subscription.is_lifetime
+                  ? t.acc_lifetime
+                  : new Date(user.subscription.expires_at).toLocaleDateString(lang === 'en' ? 'en-GB' : 'ru-RU')}
+              </span>
             </div>
           )}
 
