@@ -257,6 +257,127 @@ function Checkbox({ checked, onChange }) {
   )
 }
 
+// Fully custom dropdown for the plan term. The native <select>'s closed
+// state can be restyled (appearance:none), but the OPEN menu is drawn by the
+// browser and clashes with the site. The list is a handful of terms, so a
+// hand-rolled listbox with outside-click / Esc / arrow-key handling beats
+// pulling in a component library.
+function TermSelect({ plans, value, onChange, lang, t }) {
+  const [open, setOpen] = useState(false)
+  const [active, setActive] = useState(-1) // keyboard/hover-highlighted index
+  const rootRef = useRef(null)
+
+  const idx = plans.findIndex((p) => p.id === value)
+  const label = (p) => termLabel(p.days, t, lang)
+  const pick = (p) => {
+    onChange(p.id)
+    setOpen(false)
+  }
+
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false)
+    }
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  // The button keeps focus while the menu is open (listbox pattern): arrows
+  // move the highlight, Enter/Space picks. preventDefault on Enter/Space
+  // stops the button's synthetic click from immediately re-toggling.
+  const onButtonKey = (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (!open) {
+        setOpen(true)
+        setActive(idx)
+        return
+      }
+      const d = e.key === 'ArrowDown' ? 1 : -1
+      setActive((a) => ((a < 0 ? idx : a) + d + plans.length) % plans.length)
+    } else if ((e.key === 'Enter' || e.key === ' ') && open) {
+      e.preventDefault()
+      if (active >= 0) pick(plans[active])
+      else setOpen(false)
+    }
+  }
+
+  return (
+    <div ref={rootRef} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => {
+          setOpen(!open)
+          setActive(idx)
+        }}
+        onKeyDown={onButtonKey}
+        style={css(
+          'display:inline-flex; align-items:center; gap:10px; font-family:inherit; ' +
+          'font-size:14px; font-weight:600; color:var(--ink); background:var(--seg); ' +
+          'border:1px solid var(--hair2); border-radius:999px; padding:8px 16px; cursor:pointer;',
+        )}
+      >
+        {idx >= 0 ? label(plans[idx]) : ''}
+        <svg
+          width="10" height="6" viewBox="0 0 10 6" fill="none"
+          style={{ transition: 'transform .15s ease', transform: open ? 'rotate(180deg)' : 'none' }}
+        >
+          <path d="M1 1L5 5L9 1" stroke="var(--muted2)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {/* The menu DROPS DOWN below the button as the same pill, stretched:
+          the button's width and horizontal position, its background/border,
+          and its CORNER radius (18px = half the 36px button height —
+          quarter-circle corners, not a capsule's semicircular caps). The
+          selected row's check sits where the button's chevron sits. */}
+      {open && (
+        <div
+          role="listbox"
+          style={{
+            ...css(
+              'position:absolute; right:0; top:calc(100% + 6px); z-index:30; min-width:100%; ' +
+              'background:var(--seg); border:1px solid var(--hair2); border-radius:18px; ' +
+              'padding:4px; display:flex; flex-direction:column; gap:2px;',
+            ),
+            animation: 'vpnMenuIn .12s ease',
+          }}
+        >
+          {plans.map((p, i) => (
+            <button
+              key={p.id}
+              type="button"
+              role="option"
+              aria-selected={p.id === value}
+              onClick={() => pick(p)}
+              onMouseEnter={() => setActive(i)}
+              style={css(
+                'display:flex; align-items:center; justify-content:space-between; gap:10px; ' +
+                'padding:6px 12px; border:none; border-radius:999px; white-space:nowrap; ' +
+                'font-family:inherit; font-size:14px; font-weight:600; cursor:pointer; ' +
+                `background:${active === i ? 'var(--segActive)' : 'transparent'}; ` +
+                `color:${p.id === value ? 'var(--accent)' : 'var(--ink)'};`,
+              )}
+            >
+              {label(p)}
+              <span style={{ visibility: p.id === value ? 'visible' : 'hidden', color: 'var(--accent)' }}>✓</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // The card itself: fills the Reveal wrapper that carries the flex sizing, and
 // lifts a couple of pixels under the pointer so the row feels responsive
 // rather than printed.
@@ -782,11 +903,11 @@ export default function App() {
             <p style={css('font-size:16px; line-height:1.6; color:var(--muted); margin:0 auto 40px; max-width:600px;')}>{t.price_sub}</p>
           </Reveal>
 
-          {/* One card per plan. Cards carry only what actually DIFFERS between
-              plans — term and price; everything a subscription includes is the
-              same for all of them and is listed once below, instead of being
-              copy-pasted into every card. */}
-          {plans.length === 0 ? (
+          {/* ONE card, with the term picked from a dropdown — plans differ
+              only in term and price, so a row of near-identical cards spent its
+              width repeating itself. The card carries everything the plan
+              includes, on every screen size. */}
+          {plans.length === 0 || !selectedPlan ? (
             <div style={css('padding:28px; color:var(--faint); font-size:14.5px;')}>{t.loading}</div>
           ) : (
             <>
@@ -811,99 +932,49 @@ export default function App() {
                 </button>
               ))}
             </div>
-            {/* Flex, not grid: the plan count is whatever the admin panel says,
-                and grid cannot centre a partial last row. (auto-fit is no help
-                either — it counts columns by the track's MAX width, so a 4th
-                plan dropped to its own row and hung off the left edge.) Flex
-                wrap + justify-content:center lays out any count and centres
-                whatever is left over. */}
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: '18px',
-                justifyContent: 'center',
-              }}
-            >
-              {/* The Reveal wrapper is the flex item, so the flex sizing lives
-                  on it; each card trails the one before it by 70ms, which reads
-                  as the row dealing itself out rather than blinking in. */}
-              {plans.map((p, i) => (
-                <Reveal
-                  key={p.id}
-                  delay={i * 70}
-                  style={{
-                    display: 'flex',
-                    flex: isMobile ? '1 1 100%' : '0 1 262px',
-                    maxWidth: isMobile ? 'none' : '300px',
-                  }}
-                >
-                <PlanCard>
-                  <div style={css('font-size:13px; font-weight:600; letter-spacing:.03em; text-transform:uppercase; color:var(--muted2); margin-bottom:16px;')}>
-                    {termLabel(p.days, t, lang)}
-                  </div>
-                  <div style={css('display:flex; align-items:center; gap:7px; margin-bottom:6px;')}>
-                    <span style={css("font-family:'Newsreader','EB Garamond',serif; font-size:42px; font-weight:500; letter-spacing:-.02em; line-height:1; color:var(--ink);")}>
-                      {priceUnit === 'stars' ? fmt(p.stars_price) : `${fmt(p.rub_price)} ₽`}
-                    </span>
-                    {priceUnit === 'stars' && (
-                      <span style={css('color:var(--ink); display:inline-flex;')}><Star size={26} /></span>
-                    )}
-                  </div>
-                  {/* Shown for every term except the monthly one, where the
-                      per-month figure IS the price. Short terms cost more per
-                      month than long ones — that's the honest comparison. */}
-                  <div style={css('display:flex; align-items:center; gap:4px; font-size:13px; color:var(--faint); margin-bottom:22px; min-height:18px;')}>
-                    {(() => {
-                      const price = priceUnit === 'stars' ? p.stars_price : p.rub_price
-                      if (!price || p.days === 30 || p.days === 0) return null
-                      const per = Math.round(price / (p.days / 30))
-                      return (
-                        <>
-                          ≈ {fmt(per)}
-                          {priceUnit === 'stars' ? <Star size={12} /> : ' ₽'} {t.plan_per_month}
-                        </>
-                      )
-                    })()}
-                  </div>
-                  {/* Every plan includes the same things, and on a wide screen
-                      each card says so: cards sit side by side, and a buyer
-                      comparing them should not have to look elsewhere to see
-                      what either one gives. On a phone the cards stack, so the
-                      same six lines repeated four times is just a kilometre of
-                      scrolling — there they are stated once, below the cards. */}
-                  {!isMobile && (
-                    <div style={css('display:flex; flex-direction:column; gap:9px; margin-bottom:24px; font-size:13.5px; line-height:1.4; color:var(--muted);')}>
-                      <div style={css('display:flex; gap:8px;')}>
-                        <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>
-                        {p.conn_limit ? t.plan_conns(p.conn_limit) : t.plan_conns_unlimited}
-                      </div>
-                      {t.included.map((line) => (
-                        <div key={line} style={css('display:flex; gap:8px;')}>
-                          <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>{line}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <HoverButton
-                    onClick={() => startCheckout(p)}
-                    base={primaryBtn + 'margin-top:auto; width:100%;'}
-                    hover="background:var(--btnHover);"
-                  >
-                    {t.plan_cta}
-                  </HoverButton>
-                </PlanCard>
-                </Reveal>
-              ))}
-            </div>
 
-            {/* The list the stacked cards no longer each carry — see above. */}
-            {isMobile && (
-              <Reveal style={{ marginTop: '26px' }}>
-                <div style={css('border-radius:16px; padding:20px 18px; background:var(--card); text-align:left; display:flex; flex-direction:column; gap:10px; font-size:14px; line-height:1.4; color:var(--muted);')}>
+            <Reveal style={{ maxWidth: '420px', margin: '0 auto' }}>
+              <PlanCard>
+                <div style={css('display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:20px;')}>
+                  <span style={css('font-size:13px; color:var(--muted2); font-weight:500;')}>{t.plan_term}</span>
+                  <TermSelect
+                    plans={plans}
+                    value={selectedPlan.id}
+                    onChange={setSelectedPlanId}
+                    lang={lang}
+                    t={t}
+                  />
+                </div>
+
+                <div style={css('display:flex; align-items:center; gap:7px; margin-bottom:6px;')}>
+                  <span style={css("font-family:'Newsreader','EB Garamond',serif; font-size:46px; font-weight:500; letter-spacing:-.02em; line-height:1; color:var(--ink);")}>
+                    {priceUnit === 'stars' ? fmt(selectedPlan.stars_price) : `${fmt(selectedPlan.rub_price)} ₽`}
+                  </span>
+                  {priceUnit === 'stars' && (
+                    <span style={css('color:var(--ink); display:inline-flex;')}><Star size={28} /></span>
+                  )}
+                </div>
+
+                {/* Shown for every term except the monthly one, where the
+                    per-month figure IS the price. */}
+                <div style={css('display:flex; align-items:center; gap:4px; font-size:13px; color:var(--faint); margin-bottom:22px; min-height:18px;')}>
+                  {(() => {
+                    const price = priceUnit === 'stars' ? selectedPlan.stars_price : selectedPlan.rub_price
+                    if (!price || selectedPlan.days === 30 || selectedPlan.days === 0) return null
+                    const per = Math.round(price / (selectedPlan.days / 30))
+                    return (
+                      <>
+                        ≈ {fmt(per)}
+                        {priceUnit === 'stars' ? <Star size={12} /> : ' ₽'} {t.plan_per_month}
+                      </>
+                    )
+                  })()}
+                </div>
+
+                <div style={css('display:flex; flex-direction:column; gap:10px; margin-bottom:24px; font-size:14px; line-height:1.45; color:var(--muted);')}>
                   <div style={css('display:flex; gap:8px;')}>
                     <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>
-                    {plans[0].conn_limit ? t.plan_conns(plans[0].conn_limit) : t.plan_conns_unlimited}
+                    {selectedPlan.conn_limit ? t.plan_conns(selectedPlan.conn_limit) : t.plan_conns_unlimited}
                   </div>
                   {t.included.map((line) => (
                     <div key={line} style={css('display:flex; gap:8px;')}>
@@ -911,8 +982,16 @@ export default function App() {
                     </div>
                   ))}
                 </div>
-              </Reveal>
-            )}
+
+                <HoverButton
+                  onClick={() => startCheckout(selectedPlan)}
+                  base={primaryBtn + 'margin-top:auto; width:100%;'}
+                  hover="background:var(--btnHover);"
+                >
+                  {t.plan_cta}
+                </HoverButton>
+              </PlanCard>
+            </Reveal>
             </>
           )}
           <div style={css('margin-top:26px; font-size:13px; color:var(--faint);')}>{t.price_cancel}</div>
