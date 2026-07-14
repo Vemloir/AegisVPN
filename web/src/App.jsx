@@ -390,6 +390,12 @@ function TermSelect({ plans, value, onChange, lang, t, savingsPct }) {
 // The card itself: fills the Reveal wrapper that carries the flex sizing, and
 // lifts a couple of pixels under the pointer so the row feels responsive
 // rather than printed.
+//
+// The resting transform is translateY(0), NOT 'none': switching between 'none'
+// and a transform makes the browser add/remove a compositing layer, and text
+// re-rasterized on and off that layer lands on slightly different subpixels —
+// the "some rows jump 1px on hover" the design showed. Keeping a transform at
+// rest keeps the card on one layer the whole time, so only the offset animates.
 function PlanCard({ children }) {
   const [hover, setHover] = useState(false)
   return (
@@ -398,8 +404,9 @@ function PlanCard({ children }) {
       onMouseLeave={() => setHover(false)}
       style={{
         ...css('display:flex; flex-direction:column; width:100%; padding:28px; border-radius:20px; background:var(--card); text-align:left;'),
-        transform: hover ? 'translateY(-3px)' : 'none',
+        transform: hover ? 'translateY(-3px)' : 'translateY(0)',
         transition: 'transform .18s ease',
+        willChange: 'transform',
       }}
     >
       {children}
@@ -1018,6 +1025,12 @@ export default function App() {
                           >
                             {pct > 0 ? t.plan_cheaper(pct) : t.plan_dearer(-pct)}
                           </span>
+                        )}
+                        {/* The base plan has no per-month figure (it IS the
+                            month) and no saving (it's the yardstick), so this
+                            fills the same line rather than leaving it empty. */}
+                        {selectedPlan.is_base && (
+                          <span style={css('color:var(--muted2);')}>{t.plan_is_base}</span>
                         )}
                       </>
                     )
