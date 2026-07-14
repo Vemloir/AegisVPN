@@ -9,7 +9,7 @@ const ru = {
   hero_pay_site: 'Оплатить на сайте',
   hero_l1: 'Высокая скорость.', hero_l2: 'Стабильное соединение.',
   hero_sub: 'Xray VLESS + Reality — современный протокол поверх настоящего TLS. Подключение через Telegram за минуту.',
-  globe_kicker: 'Сеть', globe_title: 'Серверы в разных странах.', globe_sub: '', globe_cta: 'Все локации',
+  globe_kicker: 'Сеть', globe_title: 'Локации подсвечены на глобусе.', globe_sub: '', globe_cta: 'Все локации',
   feat_kicker: 'Возможности', feat_title: 'Что входит в подписку',
   features: [
     { num: '01', title: 'Стабильное соединение', desc: 'Reality работает поверх настоящего TLS-рукопожатия с реальным сайтом, поэтому связь держится ровно даже на загруженных сетях.' },
@@ -92,7 +92,7 @@ const en = {
   hero_pay_site: 'Pay on the site',
   hero_l1: 'High speed.', hero_l2: 'A steady connection.',
   hero_sub: 'Xray VLESS + Reality — a modern protocol running over a real TLS handshake. Set up through Telegram in a minute.',
-  globe_kicker: 'Network', globe_title: 'Servers in multiple countries.', globe_sub: '', globe_cta: 'All locations',
+  globe_kicker: 'Network', globe_title: 'Locations are highlighted on the globe.', globe_sub: '', globe_cta: 'All locations',
   feat_kicker: 'Features', feat_title: "What's included",
   features: [
     { num: '01', title: 'A steady connection', desc: 'Reality runs over a genuine TLS handshake with a real site, so the link holds up even on congested networks.' },
