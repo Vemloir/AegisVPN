@@ -22,9 +22,6 @@ const ru = {
     // объясняют лимит целиком — ставь куда хочешь, ограничен только онлайн.
     'Без лимита на количество устройств',
     'Все локации по одной подписке',
-    'Протокол VLESS + Reality',
-    'Безлимитный трафик и скорость',
-    'Поддержка на русском',
   ],
   price_note: 'Отмена в любой момент.',
   plan_kicker: 'Тарифы', plan_title: 'Простые тарифы. Одна сеть.', plan_sub: 'Чем дольше период, тем ниже цена за месяц. Отмена в любой момент.',
@@ -96,9 +93,6 @@ const en = {
   included: [
     'No limit on the number of devices',
     'Every location on one subscription',
-    'VLESS + Reality protocol',
-    'Unlimited bandwidth and speed',
-    'Support in Russian',
   ],
   price_note: 'Cancel anytime.',
   plan_kicker: 'Pricing', plan_title: 'Simple plans. One network.', plan_sub: 'The longer the term, the lower the monthly price. Cancel anytime.',
