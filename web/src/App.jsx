@@ -403,7 +403,7 @@ function PlanCard({ children }) {
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
-        ...css('display:flex; flex-direction:column; width:100%; padding:28px; border-radius:20px; background:var(--card); text-align:left;'),
+        ...css('display:flex; flex-direction:column; width:100%; padding:34px 30px; border-radius:22px; background:var(--card); text-align:left;'),
         transform: hover ? 'translateY(-3px)' : 'translateY(0)',
         transition: 'transform .18s ease',
         willChange: 'transform',
@@ -1000,7 +1000,12 @@ export default function App() {
                     terms. Cheaper is stated in the accent colour; dearer is
                     stated too, in plain grey: a short term that costs more per
                     month should say so rather than stay quiet about it. */}
-                <div style={css('display:flex; align-items:center; flex-wrap:wrap; gap:4px 10px; font-size:13px; color:var(--faint); margin-bottom:22px; min-height:18px;')}>
+                {/* FIXED height, and no wrap: the contents vary by term ("≈
+                    ₽/mo" + a savings badge for long terms, "Standard plan" for
+                    the base one), and on a narrow card a wrap to two lines is
+                    what made the whole card grow and shrink as you switched
+                    term. One reserved line, same height for every plan. */}
+                <div style={css('display:flex; align-items:center; flex-wrap:nowrap; white-space:nowrap; gap:10px; font-size:13px; color:var(--faint); height:26px; margin-bottom:26px;')}>
                   {(() => {
                     const price = priceUnit === 'stars' ? selectedPlan.stars_price : selectedPlan.rub_price
                     if (!price || selectedPlan.days === 0) return null
@@ -1037,13 +1042,13 @@ export default function App() {
                   })()}
                 </div>
 
-                <div style={css('display:flex; flex-direction:column; gap:10px; margin-bottom:24px; font-size:14px; line-height:1.45; color:var(--muted);')}>
-                  <div style={css('display:flex; gap:8px;')}>
+                <div style={css('display:flex; flex-direction:column; gap:14px; margin-bottom:30px; font-size:14.5px; line-height:1.45; color:var(--muted);')}>
+                  <div style={css('display:flex; gap:9px;')}>
                     <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>
                     {selectedPlan.conn_limit ? t.plan_conns(selectedPlan.conn_limit) : t.plan_conns_unlimited}
                   </div>
                   {t.included.map((line) => (
-                    <div key={line} style={css('display:flex; gap:8px;')}>
+                    <div key={line} style={css('display:flex; gap:9px;')}>
                       <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>{line}
                     </div>
                   ))}
