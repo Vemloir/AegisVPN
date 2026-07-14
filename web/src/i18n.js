@@ -24,8 +24,7 @@ const ru = {
   reg_eu_l: 'Европа', reg_am_l: 'Америка', reg_as_l: 'Азия',
   price_kicker: 'Тариф', price_title: 'Все тарифы включают доступ ко всем локациям',
   price_sub: 'Оплата: Telegram Stars или СБП.',
-  plan_per_month: (price) => `≈ ${price} в месяц`,
-  price_included_title: 'В любом тарифе',
+  plan_per_month: 'в месяц',
   price_cancel: 'Telegram Stars или СБП · отмена в любой момент',
   included: [
     // Стоит сразу после строки про одновременные подключения: вместе они
@@ -108,8 +107,7 @@ const en = {
   reg_eu_l: 'Europe', reg_am_l: 'Americas', reg_as_l: 'Asia',
   price_kicker: 'Pricing', price_title: 'Every plan includes access to every location',
   price_sub: 'Payment: Telegram Stars or SBP.',
-  plan_per_month: (price) => `≈ ${price} per month`,
-  price_included_title: 'In every plan',
+  plan_per_month: 'per month',
   price_cancel: 'Telegram Stars or SBP · cancel anytime',
   included: [
     'No limit on the number of devices',
