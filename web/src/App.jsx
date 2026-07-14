@@ -707,31 +707,62 @@ export default function App() {
           into the page. Putting this in a bordered box makes the globe read as
           "shifted up", because the sphere's centre is below the box. */}
       <section style={css('position:relative; padding:0 0 clamp(48px,10vw,92px);')}>
-        <div style={css('position:relative; width:100%; min-height:clamp(360px,72vw,600px);')}>
-          <Globe
-            locations={locations}
-            selected={selected}
-            onSelect={setSelected}
-            theme={theme}
-            style={css('position:absolute; inset:0; z-index:0;')}
-          />
-          <div style={css('position:relative; z-index:2; max-width:720px; margin:0 auto; padding:clamp(32px,9vw,48px) clamp(16px,4.5vw,28px) 0; text-align:center; pointer-events:none;')}>
-            {/* The wrapper is pointer-events:none so clicks fall through to
-                the canvas (country picking); the texts themselves re-enable
-                pointer events, otherwise they can't be selected or copied. */}
-            <div style={css('pointer-events:auto; font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); font-weight:600; margin-bottom:16px;')}>{t.globe_kicker}</div>
-            <h2 style={css("pointer-events:auto; font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(28px,3.6vw,40px); line-height:1.2; letter-spacing:-.01em; margin:0 0 24px; color:var(--ink);")}>{t.globe_title}</h2>
-            {t.globe_sub ? <p style={css('font-size:17px; line-height:1.55; color:var(--muted); max-width:480px; margin:0 auto 24px;')}>{t.globe_sub}</p> : null}
-            <HoverLink
-              href="#servers"
-              onClick={(e) => scrollToSection(e, 'servers')}
-              base={'pointer-events:auto; display:inline-flex; align-items:center; gap:7px; background:var(--card); color:var(--ink); border:1px solid var(--hair); font-size:15px; font-weight:500; padding:11px 22px; border-radius:999px; text-decoration:none;'}
-              hover="background:var(--bg);"
-            >
-              {t.globe_cta} <span style={css('color:var(--accent);')}>→</span>
-            </HoverLink>
+        {/* On a phone the copy CANNOT sit on the globe: the canvas is short, so
+            the sphere's crown rises straight into the heading and the text ends
+            up printed over the map. There the two are stacked — copy first,
+            globe below it. On a wide screen the sphere's crown is far below the
+            copy and the overlay is the whole point of the composition. */}
+        {isMobile ? (
+          <>
+            <div style={css('max-width:720px; margin:0 auto; padding:clamp(24px,7vw,40px) clamp(16px,4.5vw,28px) 0; text-align:center;')}>
+              <div style={css('font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); font-weight:600; margin-bottom:14px;')}>{t.globe_kicker}</div>
+              <h2 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(26px,7vw,34px); line-height:1.2; letter-spacing:-.01em; margin:0 0 20px; color:var(--ink);")}>{t.globe_title}</h2>
+              <HoverLink
+                href="#servers"
+                onClick={(e) => scrollToSection(e, 'servers')}
+                base={'display:inline-flex; align-items:center; gap:7px; background:var(--card); color:var(--ink); font-size:15px; font-weight:500; padding:12px 22px; border-radius:999px; text-decoration:none;'}
+                hover="background:var(--bg);"
+              >
+                {t.globe_cta} <span style={css('color:var(--accent);')}>→</span>
+              </HoverLink>
+            </div>
+            <div style={css('position:relative; width:100%; height:300px; margin-top:8px;')}>
+              <Globe
+                locations={locations}
+                selected={selected}
+                onSelect={setSelected}
+                theme={theme}
+                style={css('position:absolute; inset:0; z-index:0;')}
+              />
+            </div>
+          </>
+        ) : (
+          <div style={css('position:relative; width:100%; min-height:clamp(360px,72vw,600px);')}>
+            <Globe
+              locations={locations}
+              selected={selected}
+              onSelect={setSelected}
+              theme={theme}
+              style={css('position:absolute; inset:0; z-index:0;')}
+            />
+            <div style={css('position:relative; z-index:2; max-width:720px; margin:0 auto; padding:clamp(32px,9vw,48px) clamp(16px,4.5vw,28px) 0; text-align:center; pointer-events:none;')}>
+              {/* The wrapper is pointer-events:none so clicks fall through to
+                  the canvas (country picking); the texts themselves re-enable
+                  pointer events, otherwise they can't be selected or copied. */}
+              <div style={css('pointer-events:auto; font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); font-weight:600; margin-bottom:16px;')}>{t.globe_kicker}</div>
+              <h2 style={css("pointer-events:auto; font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(28px,3.6vw,40px); line-height:1.2; letter-spacing:-.01em; margin:0 0 24px; color:var(--ink);")}>{t.globe_title}</h2>
+              {t.globe_sub ? <p style={css('font-size:17px; line-height:1.55; color:var(--muted); max-width:480px; margin:0 auto 24px;')}>{t.globe_sub}</p> : null}
+              <HoverLink
+                href="#servers"
+                onClick={(e) => scrollToSection(e, 'servers')}
+                base={'pointer-events:auto; display:inline-flex; align-items:center; gap:7px; background:var(--card); color:var(--ink); border:1px solid var(--hair); font-size:15px; font-weight:500; padding:11px 22px; border-radius:999px; text-decoration:none;'}
+                hover="background:var(--bg);"
+              >
+                {t.globe_cta} <span style={css('color:var(--accent);')}>→</span>
+              </HoverLink>
+            </div>
           </div>
-        </div>
+        )}
       </section>
 
       {/* ============================ PRICING =========================== */}
@@ -830,21 +861,25 @@ export default function App() {
                       )
                     })()}
                   </div>
-                  {/* Every plan includes the same things, and each card says so:
-                      a card that only shows a price is an empty box, and a buyer
-                      comparing two cards should not have to look elsewhere to see
-                      what either one gives them. */}
-                  <div style={css('display:flex; flex-direction:column; gap:9px; margin-bottom:24px; font-size:13.5px; line-height:1.4; color:var(--muted);')}>
-                    <div style={css('display:flex; gap:8px;')}>
-                      <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>
-                      {p.conn_limit ? t.plan_conns(p.conn_limit) : t.plan_conns_unlimited}
-                    </div>
-                    {t.included.map((line) => (
-                      <div key={line} style={css('display:flex; gap:8px;')}>
-                        <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>{line}
+                  {/* Every plan includes the same things, and on a wide screen
+                      each card says so: cards sit side by side, and a buyer
+                      comparing them should not have to look elsewhere to see
+                      what either one gives. On a phone the cards stack, so the
+                      same six lines repeated four times is just a kilometre of
+                      scrolling — there they are stated once, below the cards. */}
+                  {!isMobile && (
+                    <div style={css('display:flex; flex-direction:column; gap:9px; margin-bottom:24px; font-size:13.5px; line-height:1.4; color:var(--muted);')}>
+                      <div style={css('display:flex; gap:8px;')}>
+                        <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>
+                        {p.conn_limit ? t.plan_conns(p.conn_limit) : t.plan_conns_unlimited}
                       </div>
-                    ))}
-                  </div>
+                      {t.included.map((line) => (
+                        <div key={line} style={css('display:flex; gap:8px;')}>
+                          <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>{line}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <HoverButton
                     onClick={() => startCheckout(p)}
                     base={primaryBtn + 'margin-top:auto; width:100%;'}
@@ -856,6 +891,23 @@ export default function App() {
                 </Reveal>
               ))}
             </div>
+
+            {/* The list the stacked cards no longer each carry — see above. */}
+            {isMobile && (
+              <Reveal style={{ marginTop: '26px' }}>
+                <div style={css('background:var(--card); border-radius:16px; padding:20px 18px; text-align:left; display:flex; flex-direction:column; gap:10px; font-size:14px; line-height:1.4; color:var(--muted);')}>
+                  <div style={css('display:flex; gap:8px;')}>
+                    <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>
+                    {plans[0].conn_limit ? t.plan_conns(plans[0].conn_limit) : t.plan_conns_unlimited}
+                  </div>
+                  {t.included.map((line) => (
+                    <div key={line} style={css('display:flex; gap:8px;')}>
+                      <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>{line}
+                    </div>
+                  ))}
+                </div>
+              </Reveal>
+            )}
             </>
           )}
           <div style={css('margin-top:26px; font-size:13px; color:var(--faint);')}>{t.price_cancel}</div>
