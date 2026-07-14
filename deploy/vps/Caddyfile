@@ -11,8 +11,16 @@ https://vpn.example.com:8443 {
     reverse_proxy 127.0.0.1:8080
 }
 
+# The Telegram Login Widget only works on the ONE domain registered for the bot
+# via BotFather /setdomain — on any other host it renders "Bot domain invalid".
+# Serving the site on both the apex and www therefore breaks sign-in for whoever
+# lands on www; www must redirect, not serve.
+www.site.example.com {
+    redir https://site.example.com{uri} permanent
+}
+
 # Public website: static SPA + its API.
-site.example.com, www.site.example.com {
+site.example.com {
     encode zstd gzip
 
     # Hashed bundles never change under the same name: cache forever.
