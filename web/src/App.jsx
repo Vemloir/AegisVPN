@@ -385,6 +385,14 @@ export default function App() {
     setTimeout(() => setCopied(false), 1600)
   }, [])
 
+  // Plans differ only in term (days) and price — one card, term picked via a
+  // dropdown, rather than a card per plan. Falls back to the first plan until
+  // the user picks one (or if the picked id no longer exists in a fresh fetch).
+  // Declared BEFORE the checkout callbacks: a useCallback dependency array is
+  // evaluated at definition time, so referencing it later would hit the TDZ
+  // and take the whole app down with a ReferenceError.
+  const selectedPlan = plans.find((p) => p.id === selectedPlanId) || plans[0]
+
   // "Buy" from anywhere: sign in first if needed, then open the payment modal.
   const startCheckout = useCallback(() => {
     setPayError(null)
@@ -454,11 +462,6 @@ export default function App() {
     }, 3000)
     return () => clearInterval(id)
   }, [awaitingPayment])
-
-  // Plans differ only in term (days) and price — one card, term picked via a
-  // dropdown, rather than a card per plan. Falls back to the first plan until
-  // the user picks one (or if the picked id no longer exists in a fresh fetch).
-  const selectedPlan = plans.find((p) => p.id === selectedPlanId) || plans[0]
 
   const rootStyle = {
     ...css(LIGHT_VARS),
