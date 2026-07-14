@@ -117,126 +117,6 @@ function Avatar({ user, size, fallbackLabel }) {
 const termLabel = (days, t, lang) =>
   days === 0 ? t.plan_lifetime : `${days} ${lang === 'en' ? 'days' : 'дн.'}`
 
-// Fully custom dropdown for the plan term. The native <select>'s closed
-// state can be restyled (appearance:none), but the OPEN menu is drawn by the
-// browser and clashes with the site. The list is a handful of terms, so a
-// hand-rolled listbox with outside-click / Esc / arrow-key handling beats
-// pulling in a component library.
-function TermSelect({ plans, value, onChange, lang, t }) {
-  const [open, setOpen] = useState(false)
-  const [active, setActive] = useState(-1) // keyboard/hover-highlighted index
-  const rootRef = useRef(null)
-
-  const idx = plans.findIndex((p) => p.id === value)
-  const label = (p) => termLabel(p.days, t, lang)
-  const pick = (p) => {
-    onChange(p.id)
-    setOpen(false)
-  }
-
-  useEffect(() => {
-    if (!open) return
-    const onDoc = (e) => {
-      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false)
-    }
-    const onKey = (e) => {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', onDoc)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDoc)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
-
-  // The button keeps focus while the menu is open (listbox pattern): arrows
-  // move the highlight, Enter/Space picks. preventDefault on Enter/Space
-  // stops the button's synthetic click from immediately re-toggling.
-  const onButtonKey = (e) => {
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault()
-      if (!open) {
-        setOpen(true)
-        setActive(idx)
-        return
-      }
-      const d = e.key === 'ArrowDown' ? 1 : -1
-      setActive((a) => ((a < 0 ? idx : a) + d + plans.length) % plans.length)
-    } else if ((e.key === 'Enter' || e.key === ' ') && open) {
-      e.preventDefault()
-      if (active >= 0) pick(plans[active])
-      else setOpen(false)
-    }
-  }
-
-  return (
-    <div ref={rootRef} style={{ position: 'relative' }}>
-      <button
-        type="button"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        onClick={() => {
-          setOpen(!open)
-          setActive(idx)
-        }}
-        onKeyDown={onButtonKey}
-        style={css(
-          'display:inline-flex; align-items:center; gap:10px; font-family:inherit; ' +
-          'font-size:14px; font-weight:600; color:var(--ink); background:var(--seg); ' +
-          'border:1px solid var(--hair2); border-radius:999px; padding:8px 16px; cursor:pointer;',
-        )}
-      >
-        {idx >= 0 ? label(plans[idx]) : ''}
-        <svg
-          width="10" height="6" viewBox="0 0 10 6" fill="none"
-          style={{ transition: 'transform .15s ease', transform: open ? 'rotate(180deg)' : 'none' }}
-        >
-          <path d="M1 1L5 5L9 1" stroke="var(--muted2)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
-      {/* The menu DROPS DOWN below the button as the same pill, stretched:
-          the button's width and horizontal position, its background/border,
-          and its CORNER radius (18px = half the 36px button height —
-          quarter-circle corners, not a capsule's semicircular caps). The
-          selected row's check sits where the button's chevron sits. */}
-      {open && (
-        <div
-          role="listbox"
-          style={{
-            ...css(
-              'position:absolute; right:0; top:calc(100% + 6px); z-index:30; min-width:100%; ' +
-              'background:var(--seg); border:1px solid var(--hair2); border-radius:18px; ' +
-              'padding:4px; display:flex; flex-direction:column; gap:2px;',
-            ),
-            animation: 'vpnMenuIn .12s ease',
-          }}
-        >
-          {plans.map((p, i) => (
-            <button
-              key={p.id}
-              type="button"
-              role="option"
-              aria-selected={p.id === value}
-              onClick={() => pick(p)}
-              onMouseEnter={() => setActive(i)}
-              style={css(
-                'display:flex; align-items:center; justify-content:space-between; gap:10px; ' +
-                'padding:6px 12px; border:none; border-radius:999px; white-space:nowrap; ' +
-                'font-family:inherit; font-size:14px; font-weight:600; cursor:pointer; ' +
-                `background:${active === i ? 'var(--segActive)' : 'transparent'}; ` +
-                `color:${p.id === value ? 'var(--accent)' : 'var(--ink)'};`,
-              )}
-            >
-              {label(p)}
-              <span style={{ visibility: p.id === value ? 'visible' : 'hidden', color: 'var(--accent)' }}>✓</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
 
 /* ---------------------------------------------------------------------- app  */
 
@@ -318,6 +198,10 @@ export default function App() {
   const [authError, setAuthError] = useState(false)
   const [copied, setCopied] = useState(false)
 
+  // Which unit prices are DISPLAYED in; the payment method is chosen at
+  // checkout, so this is presentation only.
+  const [priceUnit, setPriceUnit] = useState('rub')
+
   const [checkoutOpen, setCheckoutOpen] = useState(false)
   const [pendingCheckout, setPendingCheckout] = useState(false) // signing in to buy
   const [consent, setConsent] = useState(false)
@@ -398,10 +282,12 @@ export default function App() {
   // and take the whole app down with a ReferenceError.
   const selectedPlan = plans.find((p) => p.id === selectedPlanId) || plans[0]
 
-  // "Buy" from anywhere: sign in first if needed, then open the payment modal.
-  const startCheckout = useCallback(() => {
+  // "Buy" from a specific card: remember which plan, sign in first if needed,
+  // then open the payment modal (which pays for the remembered plan).
+  const startCheckout = useCallback((plan) => {
     setPayError(null)
     setConsent(false)
+    if (plan) setSelectedPlanId(plan.id)
     if (!user) {
       setPendingCheckout(true)
       setAuthOpen(true)
@@ -723,54 +609,107 @@ export default function App() {
           <h2 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(32px,4vw,48px); line-height:1.08; letter-spacing:-.02em; margin:0 auto 16px; max-width:640px; color:var(--ink);")}>{t.price_title}</h2>
           <p style={css('font-size:16px; line-height:1.6; color:var(--muted); margin:0 auto 40px; max-width:600px;')}>{t.price_sub}</p>
 
-          {/* Plans differ only in term and price, so it's one card with a term
-              dropdown rather than a row of near-identical cards. */}
-          <div style={{ maxWidth: 400, margin: '0 auto', textAlign: 'left' }}>
-            {plans.length === 0 && (
-              <div style={css('padding:28px; color:var(--faint); font-size:14.5px;')}>{t.loading}</div>
-            )}
-            {selectedPlan && (
-              <div style={css('display:flex; flex-direction:column; padding:28px; border:1px solid var(--hair2); border-radius:20px; background:var(--card);')}>
-                <div style={css('display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:20px;')}>
-                  <span style={css('font-size:13px; color:var(--muted2); font-weight:500;')}>{t.plan_term}</span>
-                  <TermSelect
-                    plans={plans}
-                    value={selectedPlan.id}
-                    onChange={setSelectedPlanId}
-                    lang={lang}
-                    t={t}
-                  />
-                </div>
-                <div style={css('display:flex; align-items:baseline; gap:8px; margin-bottom:20px;')}>
-                  <span style={css("font-family:'Newsreader','EB Garamond',serif; font-size:46px; font-weight:500; letter-spacing:-.02em; line-height:1; color:var(--ink);")}>{fmt(selectedPlan.rub_price)} ₽</span>
-                  <span style={css('font-size:14px; color:var(--muted2);')}>/ {termLabel(selectedPlan.days, t, lang)}</span>
-                </div>
-                <div style={css('display:flex; flex-direction:column; gap:10px; margin-bottom:24px; font-size:14.5px; color:var(--muted);')}>
-                  {/* The limit is on SIMULTANEOUS connections, not on how many
-                      devices the subscription may be installed on. 0 = no limit. */}
-                  <div style={css('display:flex; gap:9px;')}>
-                    <span style={css('color:var(--accent);')}>✓</span>
-                    {selectedPlan.conn_limit
-                      ? t.plan_conns(selectedPlan.conn_limit)
-                      : t.plan_conns_unlimited}
-                  </div>
-                  {t.included.map((line) => (
-                    <div key={line} style={css('display:flex; gap:9px;')}>
-                      <span style={css('color:var(--accent);')}>✓</span>{line}
-                    </div>
-                  ))}
-                </div>
-                <HoverButton
-                  onClick={startCheckout}
-                  base={primaryBtn + 'margin-top:auto; width:100%;'}
-                  hover="background:var(--btnHover);"
+          {/* One card per plan. Cards carry only what actually DIFFERS between
+              plans — term and price; everything a subscription includes is the
+              same for all of them and is listed once below, instead of being
+              copy-pasted into every card. */}
+          {plans.length === 0 ? (
+            <div style={css('padding:28px; color:var(--faint); font-size:14.5px;')}>{t.loading}</div>
+          ) : (
+            <>
+            {/* Which unit prices are SHOWN in. The payment method itself is
+                still chosen at checkout — a plan can be bought either way. */}
+            <div style={css('display:inline-flex; padding:3px; margin-bottom:26px; border:1px solid var(--hair2); border-radius:999px; background:var(--seg);')}>
+              {[['rub', '₽'], ['stars', '⭐']].map(([unit, sym]) => (
+                <button
+                  key={unit}
+                  onClick={() => setPriceUnit(unit)}
+                  style={css(
+                    'border:none; cursor:pointer; font-family:inherit; font-size:13.5px; font-weight:600; ' +
+                    'padding:7px 18px; border-radius:999px; ' +
+                    (priceUnit === unit
+                      ? 'background:var(--segActive); color:var(--ink);'
+                      : 'background:transparent; color:var(--muted2);'),
+                  )}
                 >
-                  {t.plan_cta}
-                </HoverButton>
+                  {sym}
+                </button>
+              ))}
+            </div>
+            {/* auto-fit, not a fixed column count: the number of plans is
+                whatever the admin panel says. A fixed 3 left the 4th plan an
+                orphan hanging off the left edge; auto-fit + centred tracks lay
+                any count out evenly and centre the last row. */}
+            <div
+              style={{
+                display: 'grid',
+                gap: '18px',
+                justifyContent: 'center',
+                gridTemplateColumns: isMobile
+                  ? '1fr'
+                  : 'repeat(auto-fit, minmax(210px, 250px))',
+              }}
+            >
+              {plans.map((p) => (
+                <div
+                  key={p.id}
+                  style={css('display:flex; flex-direction:column; padding:28px; border:1px solid var(--hair2); border-radius:20px; background:var(--card); text-align:left;')}
+                >
+                  <div style={css('font-size:13px; font-weight:600; letter-spacing:.03em; text-transform:uppercase; color:var(--muted2); margin-bottom:16px;')}>
+                    {termLabel(p.days, t, lang)}
+                  </div>
+                  <div style={css('display:flex; align-items:baseline; gap:8px; margin-bottom:6px;')}>
+                    <span style={css("font-family:'Newsreader','EB Garamond',serif; font-size:42px; font-weight:500; letter-spacing:-.02em; line-height:1; color:var(--ink);")}>
+                      {priceUnit === 'stars'
+                        ? `${fmt(p.stars_price)} ⭐`
+                        : `${fmt(p.rub_price)} ₽`}
+                    </span>
+                  </div>
+                  {/* Only worth showing when there is something to compare against
+                      a 30-day plan; for the monthly plan itself it is the price. */}
+                  <div style={css('font-size:13px; color:var(--faint); margin-bottom:24px; min-height:18px;')}>
+                    {(() => {
+                      const price = priceUnit === 'stars' ? p.stars_price : p.rub_price
+                      if (!(p.days > 30 && price)) return ''
+                      const per = Math.round(price / (p.days / 30))
+                      return t.plan_per_month(`${fmt(per)} ${priceUnit === 'stars' ? '⭐' : '₽'}`)
+                    })()}
+                  </div>
+                  <HoverButton
+                    onClick={() => startCheckout(p)}
+                    base={primaryBtn + 'margin-top:auto; width:100%;'}
+                    hover="background:var(--btnHover);"
+                  >
+                    {t.plan_cta}
+                  </HoverButton>
+                </div>
+              ))}
+            </div>
+            </>
+          )}
+
+          {/* Identical for every plan — stated once, not N times. */}
+          {plans.length > 0 && (
+            <div style={css('max-width:560px; margin:36px auto 0; text-align:left;')}>
+              <div style={css('font-size:12.5px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--muted2); margin-bottom:14px; text-align:center;')}>
+                {t.price_included_title}
               </div>
-            )}
-          </div>
-          <div style={css('margin-top:22px; font-size:13px; color:var(--faint);')}>{t.price_cancel}</div>
+              <div style={css('display:grid; gap:10px; font-size:14.5px; color:var(--muted); grid-template-columns:1fr;')}>
+                {/* The limit is on SIMULTANEOUS connections, not on how many
+                    devices the subscription may be installed on. 0 = no limit. */}
+                <div style={css('display:flex; gap:9px;')}>
+                  <span style={css('color:var(--accent);')}>✓</span>
+                  {plans[0].conn_limit ? t.plan_conns(plans[0].conn_limit) : t.plan_conns_unlimited}
+                </div>
+                {t.included.map((line) => (
+                  <div key={line} style={css('display:flex; gap:9px;')}>
+                    <span style={css('color:var(--accent);')}>✓</span>{line}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <div style={css('margin-top:26px; font-size:13px; color:var(--faint);')}>{t.price_cancel}</div>
         </div>
       </section>
 

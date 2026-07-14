@@ -28,4 +28,3 @@ body { margin: 0; }
    still visible for keyboard users, just not blue. */
 :focus-visible { outline-color: var(--accent); }
 @keyframes vpnSpin { to { transform: rotate(360deg); } }
-@keyframes vpnMenuIn { from { opacity: 0; transform: translateY(-4px); } }
