@@ -117,6 +117,22 @@ function Avatar({ user, size, fallbackLabel }) {
 const termLabel = (days, t, lang) =>
   days === 0 ? t.plan_lifetime : `${days} ${lang === 'en' ? 'days' : 'дн.'}`
 
+// Drawn, not the ⭐ emoji: the emoji is a bright yellow blob that belongs to no
+// palette here, and it renders as a tofu box wherever an emoji font is missing.
+// This inherits currentColor, so it takes the colour of whatever text it sits in.
+const Star = ({ size = 15 }) => (
+  <svg
+    viewBox="0 0 24 24"
+    width={size}
+    height={size}
+    fill="currentColor"
+    aria-hidden="true"
+    style={{ verticalAlign: '-0.08em', flexShrink: 0 }}
+  >
+    <path d="M12 2.6l2.72 5.86 6.28.8-4.63 4.35 1.2 6.29L12 16.8l-5.57 3.1 1.2-6.29L3 9.26l6.28-.8z" />
+  </svg>
+)
+
 
 /* ---------------------------------------------------------------------- app  */
 
@@ -620,60 +636,87 @@ export default function App() {
             {/* Which unit prices are SHOWN in. The payment method itself is
                 still chosen at checkout — a plan can be bought either way. */}
             <div style={css('display:inline-flex; padding:3px; margin-bottom:26px; border:1px solid var(--hair2); border-radius:999px; background:var(--seg);')}>
-              {[['rub', '₽'], ['stars', '⭐']].map(([unit, sym]) => (
+              {['rub', 'stars'].map((unit) => (
                 <button
                   key={unit}
                   onClick={() => setPriceUnit(unit)}
+                  aria-label={unit === 'stars' ? 'Telegram Stars' : 'RUB'}
                   style={css(
-                    'border:none; cursor:pointer; font-family:inherit; font-size:13.5px; font-weight:600; ' +
-                    'padding:7px 18px; border-radius:999px; ' +
+                    'display:inline-flex; align-items:center; justify-content:center; border:none; cursor:pointer; ' +
+                    'font-family:inherit; font-size:14px; font-weight:600; padding:7px 20px; border-radius:999px; ' +
                     (priceUnit === unit
                       ? 'background:var(--segActive); color:var(--ink);'
                       : 'background:transparent; color:var(--muted2);'),
                   )}
                 >
-                  {sym}
+                  {unit === 'stars' ? <Star size={15} /> : '₽'}
                 </button>
               ))}
             </div>
-            {/* auto-fit, not a fixed column count: the number of plans is
-                whatever the admin panel says. A fixed 3 left the 4th plan an
-                orphan hanging off the left edge; auto-fit + centred tracks lay
-                any count out evenly and centre the last row. */}
+            {/* Flex, not grid: the plan count is whatever the admin panel says,
+                and grid cannot centre a partial last row. (auto-fit is no help
+                either — it counts columns by the track's MAX width, so a 4th
+                plan dropped to its own row and hung off the left edge.) Flex
+                wrap + justify-content:center lays out any count and centres
+                whatever is left over. */}
             <div
               style={{
-                display: 'grid',
+                display: 'flex',
+                flexWrap: 'wrap',
                 gap: '18px',
                 justifyContent: 'center',
-                gridTemplateColumns: isMobile
-                  ? '1fr'
-                  : 'repeat(auto-fit, minmax(210px, 250px))',
               }}
             >
               {plans.map((p) => (
                 <div
                   key={p.id}
-                  style={css('display:flex; flex-direction:column; padding:28px; border:1px solid var(--hair2); border-radius:20px; background:var(--card); text-align:left;')}
+                  style={{
+                    ...css('display:flex; flex-direction:column; padding:28px; border:1px solid var(--hair2); border-radius:20px; background:var(--card); text-align:left;'),
+                    flex: isMobile ? '1 1 100%' : '0 1 262px',
+                    maxWidth: isMobile ? 'none' : '300px',
+                  }}
                 >
                   <div style={css('font-size:13px; font-weight:600; letter-spacing:.03em; text-transform:uppercase; color:var(--muted2); margin-bottom:16px;')}>
                     {termLabel(p.days, t, lang)}
                   </div>
-                  <div style={css('display:flex; align-items:baseline; gap:8px; margin-bottom:6px;')}>
+                  <div style={css('display:flex; align-items:center; gap:7px; margin-bottom:6px;')}>
                     <span style={css("font-family:'Newsreader','EB Garamond',serif; font-size:42px; font-weight:500; letter-spacing:-.02em; line-height:1; color:var(--ink);")}>
-                      {priceUnit === 'stars'
-                        ? `${fmt(p.stars_price)} ⭐`
-                        : `${fmt(p.rub_price)} ₽`}
+                      {priceUnit === 'stars' ? fmt(p.stars_price) : `${fmt(p.rub_price)} ₽`}
                     </span>
+                    {priceUnit === 'stars' && (
+                      <span style={css('color:var(--ink); display:inline-flex;')}><Star size={26} /></span>
+                    )}
                   </div>
-                  {/* Only worth showing when there is something to compare against
-                      a 30-day plan; for the monthly plan itself it is the price. */}
-                  <div style={css('font-size:13px; color:var(--faint); margin-bottom:24px; min-height:18px;')}>
+                  {/* Shown for every term except the monthly one, where the
+                      per-month figure IS the price. Short terms cost more per
+                      month than long ones — that's the honest comparison. */}
+                  <div style={css('display:flex; align-items:center; gap:4px; font-size:13px; color:var(--faint); margin-bottom:22px; min-height:18px;')}>
                     {(() => {
                       const price = priceUnit === 'stars' ? p.stars_price : p.rub_price
-                      if (!(p.days > 30 && price)) return ''
+                      if (!price || p.days === 30 || p.days === 0) return null
                       const per = Math.round(price / (p.days / 30))
-                      return t.plan_per_month(`${fmt(per)} ${priceUnit === 'stars' ? '⭐' : '₽'}`)
+                      return (
+                        <>
+                          ≈ {fmt(per)}
+                          {priceUnit === 'stars' ? <Star size={12} /> : ' ₽'} {t.plan_per_month}
+                        </>
+                      )
                     })()}
+                  </div>
+                  {/* Every plan includes the same things, and each card says so:
+                      a card that only shows a price is an empty box, and a buyer
+                      comparing two cards should not have to look elsewhere to see
+                      what either one gives them. */}
+                  <div style={css('display:flex; flex-direction:column; gap:9px; margin-bottom:24px; font-size:13.5px; line-height:1.4; color:var(--muted);')}>
+                    <div style={css('display:flex; gap:8px;')}>
+                      <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>
+                      {p.conn_limit ? t.plan_conns(p.conn_limit) : t.plan_conns_unlimited}
+                    </div>
+                    {t.included.map((line) => (
+                      <div key={line} style={css('display:flex; gap:8px;')}>
+                        <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>{line}
+                      </div>
+                    ))}
                   </div>
                   <HoverButton
                     onClick={() => startCheckout(p)}
@@ -686,28 +729,6 @@ export default function App() {
               ))}
             </div>
             </>
-          )}
-
-          {/* Identical for every plan — stated once, not N times. */}
-          {plans.length > 0 && (
-            <div style={css('max-width:560px; margin:36px auto 0; text-align:left;')}>
-              <div style={css('font-size:12.5px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--muted2); margin-bottom:14px; text-align:center;')}>
-                {t.price_included_title}
-              </div>
-              <div style={css('display:grid; gap:10px; font-size:14.5px; color:var(--muted); grid-template-columns:1fr;')}>
-                {/* The limit is on SIMULTANEOUS connections, not on how many
-                    devices the subscription may be installed on. 0 = no limit. */}
-                <div style={css('display:flex; gap:9px;')}>
-                  <span style={css('color:var(--accent);')}>✓</span>
-                  {plans[0].conn_limit ? t.plan_conns(plans[0].conn_limit) : t.plan_conns_unlimited}
-                </div>
-                {t.included.map((line) => (
-                  <div key={line} style={css('display:flex; gap:9px;')}>
-                    <span style={css('color:var(--accent);')}>✓</span>{line}
-                  </div>
-                ))}
-              </div>
-            </div>
           )}
           <div style={css('margin-top:26px; font-size:13px; color:var(--faint);')}>{t.price_cancel}</div>
         </div>
@@ -805,9 +826,14 @@ export default function App() {
                       'font-size:15px; font-weight:500; font-family:inherit; cursor:pointer;' + dim,
                     )}
                   >
-                    {payBusy === 'stars'
-                      ? t.pay_redirecting
-                      : `${t.pay_stars} — ${selectedPlan.stars_price} ⭐`}
+                    {payBusy === 'stars' ? (
+                      t.pay_redirecting
+                    ) : (
+                      <>
+                        {t.pay_stars} — {fmt(selectedPlan.stars_price)}
+                        <Star size={15} />
+                      </>
+                    )}
                   </button>
                 ) : null}
               </div>
