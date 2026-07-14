@@ -37,8 +37,11 @@ MIGRATIONS: dict[str, list[Column]] = {
         # grandfather migration already marked accepted in prod) to re-accept.
         Column("accepted_terms_at", "TIMESTAMP", "TIMESTAMP"),
         Column("accepted_terms_version", "VARCHAR(32)", "VARCHAR(32)"),
-        # Avatar URL from the Telegram Login Widget payload, refreshed on every
-        # web sign-in (Telegram's CDN links change when the user changes photo).
+        # Profile name and avatar from the Telegram Login Widget payload, all
+        # refreshed on every web sign-in (Telegram's CDN links change when the
+        # user changes photo, and names change freely).
+        Column("first_name", "VARCHAR(128)", "VARCHAR(128)"),
+        Column("last_name", "VARCHAR(128)", "VARCHAR(128)"),
         Column("photo_url", "VARCHAR(512)", "VARCHAR(512)"),
     ],
     "plans": [
