@@ -24,7 +24,8 @@ const ru = {
   reg_eu_l: 'Европа', reg_am_l: 'Америка', reg_as_l: 'Азия',
   price_kicker: 'Тариф', price_title: 'Все тарифы включают доступ ко всем локациям',
   price_sub: 'Оплата: Telegram Stars или СБП.',
-  bill_month: '30 дней', bill_year: 'На год', per_month: '₽/мес', per_year: '₽/год', save: 'экономия',
+  plan_per_month: (price) => `≈ ${price} в месяц`,
+  price_included_title: 'В любом тарифе',
   price_cancel: 'Telegram Stars или СБП · отмена в любой момент',
   included: [
     // Стоит сразу после строки про одновременные подключения: вместе они
@@ -37,7 +38,7 @@ const ru = {
   ],
   price_note: 'Отмена в любой момент.',
   plan_kicker: 'Тарифы', plan_title: 'Простые тарифы. Одна сеть.', plan_sub: 'Чем дольше период, тем ниже цена за месяц. Отмена в любой момент.',
-  plan_term: 'Срок', plan_locations: 'Локации', plan_locations_v: 'Все локации', plan_cta: 'Оформить', plan_badge: 'Выгодно',
+  plan_cta: 'Оформить',
   // Ограничение — на ОДНОВРЕМЕННЫЕ подключения, а не на число устройств:
   // подписку можно поставить на сколько угодно устройств, но подключены
   // одновременно могут быть только N (та же формулировка, что в боте).
@@ -107,7 +108,8 @@ const en = {
   reg_eu_l: 'Europe', reg_am_l: 'Americas', reg_as_l: 'Asia',
   price_kicker: 'Pricing', price_title: 'Every plan includes access to every location',
   price_sub: 'Payment: Telegram Stars or SBP.',
-  bill_month: '30 days', bill_year: 'Yearly', per_month: '₽/mo', per_year: '₽/yr', save: 'save',
+  plan_per_month: (price) => `≈ ${price} per month`,
+  price_included_title: 'In every plan',
   price_cancel: 'Telegram Stars or SBP · cancel anytime',
   included: [
     'No limit on the number of devices',
@@ -118,7 +120,7 @@ const en = {
   ],
   price_note: 'Cancel anytime.',
   plan_kicker: 'Pricing', plan_title: 'Simple plans. One network.', plan_sub: 'The longer the term, the lower the monthly price. Cancel anytime.',
-  plan_term: 'Term', plan_locations: 'Locations', plan_locations_v: 'All locations', plan_cta: 'Get this plan', plan_badge: 'Best value',
+  plan_cta: 'Get this plan',
   plan_conns: (n) => `Up to ${n} simultaneous connections`,
   plan_conns_unlimited: 'No connection limit',
   plan_lifetime: 'Lifetime',
