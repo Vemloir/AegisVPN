@@ -827,7 +827,9 @@ export default function App() {
           below every one of them), so they are the mobile spacing — they were
           desktop-sized and left ~112px of dead air between sections. */}
       <section id="top" style={css('max-width:1180px; margin:0 auto; padding:clamp(28px,8vw,84px) clamp(16px,4.5vw,28px) clamp(20px,5vw,48px);')}>
-        <div style={{ display: 'grid', gap: isMobile ? '22px' : '48px', alignItems: 'start', gridTemplateColumns: isMobile ? '1fr' : '1.45fr 1fr' }}>
+        {/* Centred on a phone (one column), left-aligned on the two-column
+            desktop layout where the copy pairs with the sub-text column. */}
+        <div style={{ display: 'grid', gap: isMobile ? '22px' : '48px', alignItems: 'start', gridTemplateColumns: isMobile ? '1fr' : '1.45fr 1fr', textAlign: isMobile ? 'center' : 'left' }}>
           <div style={css('min-width:0;')}>
             <div style={css('display:inline-flex; align-items:center; gap:8px; font-size:13px; letter-spacing:.04em; text-transform:uppercase; color:var(--accent); font-weight:600; margin-bottom:24px;')}>
               <span style={css('width:6px; height:6px; border-radius:50%; background:var(--accentSoft); display:inline-block;')} />
@@ -837,7 +839,7 @@ export default function App() {
               {t.hero_l1}<br />
               <span style={css('font-style:italic; color:var(--accent);')}>{t.hero_l2}</span>
             </h1>
-            <div style={css('display:flex; align-items:center; gap:20px; flex-wrap:wrap;')}>
+            <div style={css('display:flex; align-items:center; gap:20px; flex-wrap:wrap;' + (isMobile ? ' justify-content:center;' : ''))}>
               <HoverLink
                 href="#pricing"
                 onClick={(e) => scrollToSection(e, 'pricing')}
@@ -1089,10 +1091,11 @@ export default function App() {
 
       {/* =========================== LOCATIONS ========================= */}
       <section id="servers" style={css('max-width:1180px; margin:0 auto; padding:clamp(34px,8vw,96px) clamp(16px,4.5vw,28px);')}>
-        <Reveal>
+        {/* Heading centred; the location rows below keep their left alignment. */}
+        <Reveal style={{ textAlign: 'center' }}>
           <div style={css('font-size:12.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); margin-bottom:14px;')}>{t.srv_kicker}</div>
           <h2 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(30px,3.6vw,44px); line-height:1.1; letter-spacing:-.02em; margin:0 0 14px; color:var(--ink);")}>{t.srv_title}</h2>
-          <p style={css('font-size:16px; line-height:1.6; color:var(--muted); margin:0 0 28px; max-width:620px;')}>{t.srv_sub}</p>
+          <p style={css('font-size:16px; line-height:1.6; color:var(--muted); margin:0 auto 28px; max-width:620px;')}>{t.srv_sub}</p>
         </Reveal>
 
         {/* Glass panel; the row separators are painted in the PAGE background,
