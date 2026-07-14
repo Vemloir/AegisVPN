@@ -28,6 +28,7 @@ const ru = {
   plan_term: 'Срок', plan_cta: 'Оформить',
   plan_cheaper: (n) => `Выгоднее на ${n}%`,
   plan_dearer: (n) => `Дороже на ${n}%`,
+  plan_is_base: 'Стандартный тариф',
   // Ограничение — на ОДНОВРЕМЕННЫЕ подключения, а не на число устройств:
   // подписку можно поставить на сколько угодно устройств, но подключены
   // одновременно могут быть только N (та же формулировка, что в боте).
@@ -99,6 +100,7 @@ const en = {
   plan_term: 'Term', plan_cta: 'Get this plan',
   plan_cheaper: (n) => `${n}% cheaper`,
   plan_dearer: (n) => `${n}% dearer`,
+  plan_is_base: 'Standard plan',
   plan_conns: (n) => `Up to ${n} simultaneous connections`,
   plan_conns_unlimited: 'No connection limit',
   plan_lifetime: 'Lifetime',
