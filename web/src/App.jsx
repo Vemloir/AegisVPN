@@ -753,20 +753,17 @@ export default function App() {
               <div style={css('pointer-events:auto; font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); font-weight:600; margin-bottom:16px;')}>{t.globe_kicker}</div>
               <h2 style={css("pointer-events:auto; font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(28px,3.6vw,40px); line-height:1.2; letter-spacing:-.01em; margin:0 0 24px; color:var(--ink);")}>{t.globe_title}</h2>
               {t.globe_sub ? <p style={css('font-size:17px; line-height:1.55; color:var(--muted); max-width:480px; margin:0 auto 24px;')}>{t.globe_sub}</p> : null}
-              {/* No border, no arrow. Solid, like every other surface — glass
-                  would actually work here (the map is behind it, so there is
-                  something to blur), but the site keeps glass to the header
-                  alone. */}
-              <a
+              {/* No border, no arrow, and no shadow: the shadow was there to
+                  lift a pane of glass, and under a solid pill on a dark page it
+                  is just a murky blot. Nothing else on this page casts one. */}
+              <HoverLink
                 href="#servers"
                 onClick={(e) => scrollToSection(e, 'servers')}
-                style={{
-                  ...css('pointer-events:auto; display:inline-flex; align-items:center; background:var(--card); color:var(--ink); font-size:15px; font-weight:500; padding:12px 26px; border-radius:999px; text-decoration:none; border:none;'),
-                  boxShadow: '0 10px 30px -12px rgba(0,0,0,.35)',
-                }}
+                base={'pointer-events:auto; display:inline-flex; align-items:center; background:var(--card); color:var(--ink); font-size:15px; font-weight:500; padding:12px 26px; border-radius:999px; text-decoration:none; border:none; transition:background .18s ease;'}
+                hover="background:var(--seg);"
               >
                 {t.globe_cta}
-              </a>
+              </HoverLink>
             </div>
           </div>
         )}
