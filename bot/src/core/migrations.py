@@ -46,6 +46,20 @@ MIGRATIONS: dict[str, list[Column]] = {
     ],
     "plans": [
         Column("rub_price", "INTEGER", "INTEGER"),
+        # The reference plan. Existing installs get the 30-day plan marked, if
+        # they have exactly one — the conventional "a month" against which the
+        # other terms are compared. Where that is ambiguous, nothing is marked
+        # and the site simply falls back to the first plan until an admin picks.
+        Column(
+            "is_base",
+            "BOOLEAN DEFAULT 0",
+            "BOOLEAN DEFAULT FALSE",
+            post_sql=(
+                "UPDATE plans SET is_base = 1 WHERE id = ("
+                "SELECT id FROM plans WHERE days = 30 AND is_active = 1 "
+                "ORDER BY id LIMIT 1) AND NOT EXISTS (SELECT 1 FROM plans WHERE is_base = 1)"
+            ),
+        ),
     ],
     "payments": [
         Column("provider", "VARCHAR(16) DEFAULT 'stars'", "VARCHAR(16) DEFAULT 'stars'"),
