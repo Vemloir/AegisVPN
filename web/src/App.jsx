@@ -23,7 +23,11 @@ const LIGHT_VARS =
   '--bg:#F3F1EA; --ink:#1C1B19; --muted:#56524B; --muted2:#8A857B; --faint:#9A958B;' +
   '--hair:#E4E0D6; --hair2:#DFDBD0; --hair3:#D7D2C5; --accent:#C2613D; --accentSoft:#CC785C;' +
   '--btn:#1A1A1A; --btnHover:#38322D; --btnText:#ffffff; --card:#ECE8DD; --seg:#E0DBCF; --segActive:#FBFAF6;' +
-  '--codeBg:#EDE9DF; --rowHover:#EDE9DF; --logoBg:#1A1A1A; --logoText:#ffffff;'
+  '--codeBg:#EDE9DF; --rowHover:#EDE9DF; --logoBg:#1A1A1A; --logoText:#ffffff;' +
+  // Frosted-glass surfaces (header, the globe's CTA): a translucent tint of the
+  // page plus a blur, an edge line, and a light top highlight — the highlight is
+  // what makes it read as a pane of glass rather than a flat see-through box.
+  '--glassBg:rgba(243,241,234,.62); --glassEdge:rgba(28,27,25,.09); --glassHi:rgba(255,255,255,.75);'
 
 // Every background/border neutral below had blue nudged 1-2 points above red
 // and green (a common "default dark UI" recipe) — individually invisible, but
@@ -34,7 +38,8 @@ const DARK_VARS =
   '--bg:#161616; --ink:#ECEAE6; --muted:#A8A6A2; --muted2:#827F7A; --faint:#6E6B66;' +
   '--hair:#2E2E2E; --hair2:#262626; --hair3:#2E2E2E; --accent:#C2613D; --accentSoft:#CC785C;' +
   '--btn:#C2613D; --btnHover:#D07A55; --btnText:#ffffff; --card:#1F1F1F; --seg:#252525; --segActive:#373737;' +
-  '--codeBg:#262626; --rowHover:#202020; --logoBg:#E6A085; --logoText:#1A140F;'
+  '--codeBg:#262626; --rowHover:#202020; --logoBg:#E6A085; --logoText:#1A140F;' +
+  '--glassBg:rgba(22,22,22,.58); --glassEdge:rgba(255,255,255,.09); --glassHi:rgba(255,255,255,.07);'
 
 const fmt = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
 
@@ -548,14 +553,22 @@ export default function App() {
     // answerable in one glance at the DOM (it is what settled the long
     // 'nothing changed' hunt).
     <div style={rootStyle} data-build={__BUILD_STAMP__}>
-      {/* ============================ HEADER ============================ */}
-      {/* Solid var(--bg), NOT a translucent film + backdrop blur: any
-          semi-transparent layer is blended by the GPU compositor and
-          re-quantized ±1 (eyedropper-visible specks against the page). The
-          background transition matches the root's exactly (same property,
-          duration, curve), and two CSS transitions with identical parameters
-          interpolate in lockstep — no seam during the theme crossfade. */}
-      <header style={css('position:sticky; top:0; z-index:60; background:var(--bg); border-bottom:1px solid var(--hair); transition:background .4s ease, border-color .4s ease;')}>
+      {/* ============================ HEADER ============================
+          Frosted glass: a translucent tint of the page, a heavy blur, an edge
+          line and a top highlight. NOTE this is knowingly re-introducing a
+          semi-transparent layer, which the GPU compositor blends and re-
+          quantizes ±1 — the eyedropper may again read a one-step difference at
+          the header's edge. That was measured and judged acceptable for the
+          look; the flat page background elsewhere is unaffected. */}
+      <header
+        style={{
+          ...css('position:sticky; top:0; z-index:60; border-bottom:1px solid var(--glassEdge); transition:background .4s ease, border-color .4s ease;'),
+          background: 'var(--glassBg)',
+          backdropFilter: 'blur(20px) saturate(170%)',
+          WebkitBackdropFilter: 'blur(20px) saturate(170%)',
+          boxShadow: 'inset 0 1px 0 var(--glassHi)',
+        }}
+      >
         <div style={css('max-width:1180px; margin:0 auto; padding:15px clamp(16px,4vw,28px); display:flex; align-items:center; justify-content:space-between; gap:24px;')}>
           <a href="#top" onClick={(e) => scrollToSection(e, 'top')} style={css('display:flex; align-items:center; text-decoration:none; color:inherit;')}>
             <span style={css('font-weight:600; font-size:18px; letter-spacing:-.015em;')}>AegisVPN</span>
@@ -707,36 +720,12 @@ export default function App() {
           into the page. Putting this in a bordered box makes the globe read as
           "shifted up", because the sphere's centre is below the box. */}
       <section style={css('position:relative; padding:0 0 clamp(48px,10vw,92px);')}>
-        {/* On a phone the copy CANNOT sit on the globe: the canvas is short, so
-            the sphere's crown rises straight into the heading and the text ends
-            up printed over the map. There the two are stacked — copy first,
-            globe below it. On a wide screen the sphere's crown is far below the
-            copy and the overlay is the whole point of the composition. */}
-        {isMobile ? (
-          <>
-            <div style={css('max-width:720px; margin:0 auto; padding:clamp(24px,7vw,40px) clamp(16px,4.5vw,28px) 0; text-align:center;')}>
-              <div style={css('font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); font-weight:600; margin-bottom:14px;')}>{t.globe_kicker}</div>
-              <h2 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(26px,7vw,34px); line-height:1.2; letter-spacing:-.01em; margin:0 0 20px; color:var(--ink);")}>{t.globe_title}</h2>
-              <HoverLink
-                href="#servers"
-                onClick={(e) => scrollToSection(e, 'servers')}
-                base={'display:inline-flex; align-items:center; gap:7px; background:var(--card); color:var(--ink); font-size:15px; font-weight:500; padding:12px 22px; border-radius:999px; text-decoration:none;'}
-                hover="background:var(--bg);"
-              >
-                {t.globe_cta} <span style={css('color:var(--accent);')}>→</span>
-              </HoverLink>
-            </div>
-            <div style={css('position:relative; width:100%; height:300px; margin-top:8px;')}>
-              <Globe
-                locations={locations}
-                selected={selected}
-                onSelect={setSelected}
-                theme={theme}
-                style={css('position:absolute; inset:0; z-index:0;')}
-              />
-            </div>
-          </>
-        ) : (
+        {/* No globe on a phone at all: a canvas that redraws 177 country
+            outlines at 60fps is the most expensive thing on the page, and on a
+            small screen it earns none of that — the crown of the sphere barely
+            fits, and the copy cannot sit on it. Phones go straight from the
+            hero to the plans. */}
+        {isMobile ? null : (
           <div style={css('position:relative; width:100%; min-height:clamp(360px,72vw,600px);')}>
             <Globe
               locations={locations}
@@ -752,14 +741,22 @@ export default function App() {
               <div style={css('pointer-events:auto; font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); font-weight:600; margin-bottom:16px;')}>{t.globe_kicker}</div>
               <h2 style={css("pointer-events:auto; font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(28px,3.6vw,40px); line-height:1.2; letter-spacing:-.01em; margin:0 0 24px; color:var(--ink);")}>{t.globe_title}</h2>
               {t.globe_sub ? <p style={css('font-size:17px; line-height:1.55; color:var(--muted); max-width:480px; margin:0 auto 24px;')}>{t.globe_sub}</p> : null}
-              <HoverLink
+              {/* Frosted glass, like the header: the button floats over the map
+                  and lets it show through, instead of punching an opaque hole
+                  in it. */}
+              <a
                 href="#servers"
                 onClick={(e) => scrollToSection(e, 'servers')}
-                base={'pointer-events:auto; display:inline-flex; align-items:center; gap:7px; background:var(--card); color:var(--ink); border:1px solid var(--hair); font-size:15px; font-weight:500; padding:11px 22px; border-radius:999px; text-decoration:none;'}
-                hover="background:var(--bg);"
+                style={{
+                  ...css('pointer-events:auto; display:inline-flex; align-items:center; gap:7px; color:var(--ink); font-size:15px; font-weight:500; padding:12px 24px; border-radius:999px; text-decoration:none; border:1px solid var(--glassEdge);'),
+                  background: 'var(--glassBg)',
+                  backdropFilter: 'blur(14px) saturate(170%)',
+                  WebkitBackdropFilter: 'blur(14px) saturate(170%)',
+                  boxShadow: 'inset 0 1px 0 var(--glassHi), 0 10px 30px -12px rgba(0,0,0,.35)',
+                }}
               >
                 {t.globe_cta} <span style={css('color:var(--accent);')}>→</span>
-              </HoverLink>
+              </a>
             </div>
           </div>
         )}
