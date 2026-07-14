@@ -1011,7 +1011,12 @@ export default function App() {
                     the base one), and on a narrow card a wrap to two lines is
                     what made the whole card grow and shrink as you switched
                     term. One reserved line, same height for every plan. */}
-                <div style={css('display:flex; align-items:center; flex-wrap:nowrap; white-space:nowrap; gap:10px; font-size:13px; color:var(--faint); height:26px;')}>
+                {/* Bottom-aligned, not centred: the 26px reserved height (which
+                    keeps the card from resizing between terms) otherwise leaves
+                    ~6px of leading below this text, and space-evenly then reads
+                    that as extra air above the feature list — the top gap looked
+                    a letter taller than the gap down to the button. */}
+                <div style={css('display:flex; align-items:flex-end; flex-wrap:nowrap; white-space:nowrap; gap:10px; font-size:13px; color:var(--faint); height:26px; line-height:1;')}>
                   {(() => {
                     const price = priceUnit === 'stars' ? selectedPlan.stars_price : selectedPlan.rub_price
                     if (!price || selectedPlan.days === 0) return null
