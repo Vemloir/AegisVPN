@@ -27,6 +27,9 @@ const ru = {
   bill_month: '30 дней', bill_year: 'На год', per_month: '₽/мес', per_year: '₽/год', save: 'экономия',
   price_cancel: 'Telegram Stars или СБП · отмена в любой момент',
   included: [
+    // Стоит сразу после строки про одновременные подключения: вместе они
+    // объясняют лимит целиком — ставь куда хочешь, ограничен только онлайн.
+    'Без лимита на количество устройств',
     'Все локации по одной подписке',
     'Протокол VLESS + Reality',
     'Безлимитный трафик и скорость',
@@ -107,6 +110,7 @@ const en = {
   bill_month: '30 days', bill_year: 'Yearly', per_month: '₽/mo', per_year: '₽/yr', save: 'save',
   price_cancel: 'Telegram Stars or SBP · cancel anytime',
   included: [
+    'No limit on the number of devices',
     'Every location on one subscription',
     'VLESS + Reality protocol',
     'Unlimited bandwidth and speed',
