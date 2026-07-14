@@ -34,6 +34,21 @@ site.example.com {
     handle /api/* {
         reverse_proxy 127.0.0.1:8000
     }
+    # The subscription URL, on the standard port. It lived on :8443 only because
+    # the control host used to double as a VPN exit and Xray held 443. A
+    # non-standard port is the first thing censors, corporate networks and public
+    # Wi-Fi drop — which would strand a paying user whose client cannot refresh
+    # its config. Keep any old host:8443 block serving too: clients already have
+    # those URLs saved and will keep polling them.
+    handle /sub/* {
+        reverse_proxy 127.0.0.1:8080
+    }
+    handle /sub-safe/* {
+        reverse_proxy 127.0.0.1:8080
+    }
+    handle /sub-fast/* {
+        reverse_proxy 127.0.0.1:8080
+    }
     handle {
         root * /srv/web
         try_files {path} /index.html
