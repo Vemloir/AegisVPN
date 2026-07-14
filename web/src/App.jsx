@@ -403,7 +403,11 @@ function PlanCard({ children }) {
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
-        ...css('display:flex; flex-direction:column; width:100%; padding:44px 34px; border-radius:24px; background:var(--card); text-align:left;'),
+        // Air lives BETWEEN the three groups (header / features / button),
+        // not in the top-and-bottom edges: modest padding, a min-height to
+        // give the column room to breathe, and space-between to spread the
+        // groups into it.
+        ...css('display:flex; flex-direction:column; justify-content:space-between; width:100%; min-height:440px; padding:30px 34px; border-radius:24px; background:var(--card); text-align:left;'),
         transform: hover ? 'translateY(-3px)' : 'translateY(0)',
         transition: 'transform .18s ease',
         willChange: 'transform',
@@ -974,6 +978,9 @@ export default function App() {
 
             <Reveal style={{ maxWidth: isMobile ? 'none' : '360px', margin: '0 auto' }}>
               <PlanCard>
+                {/* One group so space-between sees three items (header,
+                    features, button), not five, and puts the air between them. */}
+                <div>
                 <div style={css('display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:20px;')}>
                   <span style={css('font-size:13px; color:var(--muted2); font-weight:500;')}>{t.plan_term}</span>
                   <TermSelect
@@ -1005,7 +1012,7 @@ export default function App() {
                     the base one), and on a narrow card a wrap to two lines is
                     what made the whole card grow and shrink as you switched
                     term. One reserved line, same height for every plan. */}
-                <div style={css('display:flex; align-items:center; flex-wrap:nowrap; white-space:nowrap; gap:10px; font-size:13px; color:var(--faint); height:26px; margin-bottom:26px;')}>
+                <div style={css('display:flex; align-items:center; flex-wrap:nowrap; white-space:nowrap; gap:10px; font-size:13px; color:var(--faint); height:26px;')}>
                   {(() => {
                     const price = priceUnit === 'stars' ? selectedPlan.stars_price : selectedPlan.rub_price
                     if (!price || selectedPlan.days === 0) return null
@@ -1041,8 +1048,9 @@ export default function App() {
                     )
                   })()}
                 </div>
+                </div>
 
-                <div style={css('display:flex; flex-direction:column; gap:18px; margin-bottom:38px; font-size:14.5px; line-height:1.45; color:var(--muted);')}>
+                <div style={css('display:flex; flex-direction:column; gap:14px; font-size:14.5px; line-height:1.45; color:var(--muted);')}>
                   <div style={css('display:flex; gap:9px;')}>
                     <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>
                     {selectedPlan.conn_limit ? t.plan_conns(selectedPlan.conn_limit) : t.plan_conns_unlimited}
@@ -1056,7 +1064,7 @@ export default function App() {
 
                 <HoverButton
                   onClick={() => startCheckout(selectedPlan)}
-                  base={primaryBtn + 'margin-top:auto; width:100%;'}
+                  base={primaryBtn + 'width:100%;'}
                   hover="background:var(--btnHover);"
                 >
                   {t.plan_cta}
