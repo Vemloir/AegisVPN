@@ -28,3 +28,22 @@ body { margin: 0; }
    still visible for keyboard users, just not blue. */
 :focus-visible { outline-color: var(--accent); }
 @keyframes vpnSpin { to { transform: rotate(360deg); } }
+
+/* Modals: the scrim fades in, the card rises and settles. Both are short —
+   a dialog that takes its time reads as lag, not as polish. */
+@keyframes vpnScrimIn { from { opacity: 0; } }
+@keyframes vpnDialogIn {
+  from { opacity: 0; transform: translateY(10px) scale(.97); }
+}
+/* The checkmark draws itself along its own path instead of popping in. */
+@keyframes vpnCheckDraw { from { stroke-dashoffset: 22; } to { stroke-dashoffset: 0; } }
+
+/* Anyone who asked their OS for less motion gets the end state at once —
+   every animation on this page is decoration, none of it carries meaning. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+}
