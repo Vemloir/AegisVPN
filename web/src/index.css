@@ -28,6 +28,8 @@ body { margin: 0; }
    still visible for keyboard users, just not blue. */
 :focus-visible { outline-color: var(--accent); }
 @keyframes vpnSpin { to { transform: rotate(360deg); } }
+/* The term dropdown opening. */
+@keyframes vpnMenuIn { from { opacity: 0; transform: translateY(-4px); } }
 
 /* Modals: the scrim fades in, the card rises and settles. Both are short —
    a dialog that takes its time reads as lag, not as polish. */

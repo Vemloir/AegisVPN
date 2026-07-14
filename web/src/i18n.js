@@ -28,7 +28,7 @@ const ru = {
   ],
   price_note: 'Отмена в любой момент.',
   plan_kicker: 'Тарифы', plan_title: 'Простые тарифы. Одна сеть.', plan_sub: 'Чем дольше период, тем ниже цена за месяц. Отмена в любой момент.',
-  plan_cta: 'Оформить',
+  plan_term: 'Срок', plan_cta: 'Оформить',
   // Ограничение — на ОДНОВРЕМЕННЫЕ подключения, а не на число устройств:
   // подписку можно поставить на сколько угодно устройств, но подключены
   // одновременно могут быть только N (та же формулировка, что в боте).
@@ -100,7 +100,7 @@ const en = {
   ],
   price_note: 'Cancel anytime.',
   plan_kicker: 'Pricing', plan_title: 'Simple plans. One network.', plan_sub: 'The longer the term, the lower the monthly price. Cancel anytime.',
-  plan_cta: 'Get this plan',
+  plan_term: 'Term', plan_cta: 'Get this plan',
   plan_conns: (n) => `Up to ${n} simultaneous connections`,
   plan_conns_unlimited: 'No connection limit',
   plan_lifetime: 'Lifetime',
