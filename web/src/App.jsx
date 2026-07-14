@@ -112,6 +112,71 @@ function Avatar({ user, size, fallbackLabel }) {
   )
 }
 
+// Fade-and-rise as a block scrolls into view. One IntersectionObserver per
+// block, disconnected after it fires — nothing keeps running once the page has
+// been seen. Anyone who asked their OS for less motion gets the content
+// immediately, with no transition at all.
+function Reveal({ children, delay = 0, style }) {
+  const ref = useRef(null)
+  const [shown, setShown] = useState(false)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      setShown(true)
+      return
+    }
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setShown(true)
+          io.disconnect()
+        }
+      },
+      // Fire a little before the block is fully in view, so the motion is
+      // finishing as the reader's eye arrives rather than starting then.
+      { threshold: 0.08, rootMargin: '0px 0px -8% 0px' },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [])
+
+  return (
+    <div
+      ref={ref}
+      style={{
+        ...style,
+        opacity: shown ? 1 : 0,
+        transform: shown ? 'none' : 'translateY(16px)',
+        transition: `opacity .55s ease ${delay}ms, transform .55s cubic-bezier(.22,.61,.36,1) ${delay}ms`,
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
+// The card itself: fills the Reveal wrapper that carries the flex sizing, and
+// lifts a couple of pixels under the pointer so the row feels responsive
+// rather than printed.
+function PlanCard({ children }) {
+  const [hover, setHover] = useState(false)
+  return (
+    <div
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        ...css('display:flex; flex-direction:column; width:100%; padding:28px; border-radius:20px; background:var(--card); text-align:left;'),
+        transform: hover ? 'translateY(-3px)' : 'none',
+        transition: 'transform .18s ease',
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
 // A plan of 0 days is the lifetime plan, not a zero-day one — every place that
 // prints a term must know that, or it renders "0 дн.".
 const termLabel = (days, t, lang) =>
@@ -405,8 +470,9 @@ export default function App() {
 
           {!isMobile && (
             <nav style={css('display:flex; align-items:center; gap:22px; font-size:14.5px; color:var(--muted); flex-shrink:0;')}>
-              <HoverLink href="#servers" onClick={(e) => scrollToSection(e, 'servers')} base={navLink} hover="color:var(--accent);">{t.nav_servers}</HoverLink>
+              {/* Nav follows the page order, which now puts pricing first. */}
               <HoverLink href="#pricing" onClick={(e) => scrollToSection(e, 'pricing')} base={navLink} hover="color:var(--accent);">{t.nav_pricing}</HoverLink>
+              <HoverLink href="#servers" onClick={(e) => scrollToSection(e, 'servers')} base={navLink} hover="color:var(--accent);">{t.nav_servers}</HoverLink>
 
               <button
                 onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
@@ -454,7 +520,7 @@ export default function App() {
       {menuOpen && (
         <Modal onClose={() => setMenuOpen(false)} maxWidth={480}>
           <nav style={css('display:flex; flex-direction:column; gap:4px; margin-bottom:28px; font-size:17px;')}>
-            {[['servers', t.nav_servers], ['pricing', t.nav_pricing]].map(([id, label]) => (
+            {[['pricing', t.nav_pricing], ['servers', t.nav_servers]].map(([id, label]) => (
               <a
                 key={id}
                 href={`#${id}`}
@@ -575,45 +641,17 @@ export default function App() {
         </div>
       </section>
 
-      {/* =========================== LOCATIONS ========================= */}
-      <section id="servers" style={css('max-width:1180px; margin:0 auto; padding:clamp(56px,10vw,96px) clamp(16px,4.5vw,28px);')}>
-        <div style={css('font-size:12.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); margin-bottom:14px;')}>{t.srv_kicker}</div>
-        <h2 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(30px,3.6vw,44px); line-height:1.1; letter-spacing:-.02em; margin:0 0 14px; color:var(--ink);")}>{t.srv_title}</h2>
-        <p style={css('font-size:16px; line-height:1.6; color:var(--muted); margin:0 0 28px; max-width:620px;')}>{t.srv_sub}</p>
-
-        {/* No border, and the row separators are painted in the PAGE
-            background: on the card they read as gaps cut through the panel
-            rather than as drawn rules. */}
-        <div style={css('background:var(--card); border-radius:16px; overflow:hidden;')}>
-          {locations.length === 0 && (
-            <div style={css('padding:28px; text-align:center; color:var(--faint); font-size:14.5px;')}>{t.loading}</div>
-          )}
-          {locations.map((s, i) => (
-            <div
-              key={s.id}
-              style={css(
-                'display:flex; align-items:center; gap:14px; padding:16px 18px; font-size:15px; color:var(--ink);' +
-                (i < locations.length - 1 ? ' border-bottom:1px solid var(--bg);' : ''),
-              )}
-            >
-              <span style={css('font-weight:500;')}>{s.name}</span>
-              <span style={css('margin-left:auto; font-size:13px; color:var(--faint);')}>
-                {t[`reg_${regionOf(s.code)}_l`]}
-              </span>
-            </div>
-          ))}
-        </div>
-      </section>
-
       {/* ============================ PRICING =========================== */}
       {/* No own background: the root already paints var(--bg), and a second
           layer painting the same color can rasterize one RGB step off on
           GPU-composited browsers, showing a faint seam at the section edge. */}
       <section id="pricing">
         <div style={css('max-width:1180px; margin:0 auto; padding:clamp(56px,10vw,96px) clamp(16px,4.5vw,28px); text-align:center;')}>
-          <div style={css('font-size:12.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); margin-bottom:14px;')}>{t.price_kicker}</div>
-          <h2 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(32px,4vw,48px); line-height:1.08; letter-spacing:-.02em; margin:0 auto 16px; max-width:640px; color:var(--ink);")}>{t.price_title}</h2>
-          <p style={css('font-size:16px; line-height:1.6; color:var(--muted); margin:0 auto 40px; max-width:600px;')}>{t.price_sub}</p>
+          <Reveal>
+            <div style={css('font-size:12.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); margin-bottom:14px;')}>{t.price_kicker}</div>
+            <h2 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(32px,4vw,48px); line-height:1.08; letter-spacing:-.02em; margin:0 auto 16px; max-width:640px; color:var(--ink);")}>{t.price_title}</h2>
+            <p style={css('font-size:16px; line-height:1.6; color:var(--muted); margin:0 auto 40px; max-width:600px;')}>{t.price_sub}</p>
+          </Reveal>
 
           {/* One card per plan. Cards carry only what actually DIFFERS between
               plans — term and price; everything a subscription includes is the
@@ -657,15 +695,20 @@ export default function App() {
                 justifyContent: 'center',
               }}
             >
-              {plans.map((p) => (
-                <div
+              {/* The Reveal wrapper is the flex item, so the flex sizing lives
+                  on it; each card trails the one before it by 70ms, which reads
+                  as the row dealing itself out rather than blinking in. */}
+              {plans.map((p, i) => (
+                <Reveal
                   key={p.id}
+                  delay={i * 70}
                   style={{
-                    ...css('display:flex; flex-direction:column; padding:28px; border-radius:20px; background:var(--card); text-align:left;'),
+                    display: 'flex',
                     flex: isMobile ? '1 1 100%' : '0 1 262px',
                     maxWidth: isMobile ? 'none' : '300px',
                   }}
                 >
+                <PlanCard>
                   <div style={css('font-size:13px; font-weight:600; letter-spacing:.03em; text-transform:uppercase; color:var(--muted2); margin-bottom:16px;')}>
                     {termLabel(p.days, t, lang)}
                   </div>
@@ -715,12 +758,46 @@ export default function App() {
                   >
                     {t.plan_cta}
                   </HoverButton>
-                </div>
+                </PlanCard>
+                </Reveal>
               ))}
             </div>
             </>
           )}
           <div style={css('margin-top:26px; font-size:13px; color:var(--faint);')}>{t.price_cancel}</div>
+        </div>
+      </section>
+
+      {/* =========================== LOCATIONS ========================= */}
+      <section id="servers" style={css('max-width:1180px; margin:0 auto; padding:clamp(56px,10vw,96px) clamp(16px,4.5vw,28px);')}>
+        <Reveal>
+          <div style={css('font-size:12.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); margin-bottom:14px;')}>{t.srv_kicker}</div>
+          <h2 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(30px,3.6vw,44px); line-height:1.1; letter-spacing:-.02em; margin:0 0 14px; color:var(--ink);")}>{t.srv_title}</h2>
+          <p style={css('font-size:16px; line-height:1.6; color:var(--muted); margin:0 0 28px; max-width:620px;')}>{t.srv_sub}</p>
+        </Reveal>
+
+        {/* No border, and the row separators are painted in the PAGE
+            background: on the card they read as gaps cut through the panel
+            rather than as drawn rules. */}
+        <div style={css('background:var(--card); border-radius:16px; overflow:hidden;')}>
+          {locations.length === 0 && (
+            <div style={css('padding:28px; text-align:center; color:var(--faint); font-size:14.5px;')}>{t.loading}</div>
+          )}
+          {locations.map((s, i) => (
+            <Reveal
+              key={s.id}
+              delay={i * 60}
+              style={css(
+                'display:flex; align-items:center; gap:14px; padding:16px 18px; font-size:15px; color:var(--ink);' +
+                (i < locations.length - 1 ? ' border-bottom:1px solid var(--bg);' : ''),
+              )}
+            >
+              <span style={css('font-weight:500;')}>{s.name}</span>
+              <span style={css('margin-left:auto; font-size:13px; color:var(--faint);')}>
+                {t[`reg_${regionOf(s.code)}_l`]}
+              </span>
+            </Reveal>
+          ))}
         </div>
       </section>
 
@@ -740,8 +817,8 @@ export default function App() {
             <div>
               <div style={css('font-size:13px; font-weight:600; color:var(--ink); margin-bottom:14px;')}>{t.foot_product}</div>
               <div style={css('display:flex; flex-direction:column; gap:11px; font-size:14.5px; color:var(--muted);')}>
-                <HoverLink href="#servers" onClick={(e) => scrollToSection(e, 'servers')} base={navLink} hover="color:var(--accent);">{t.nav_servers}</HoverLink>
                 <HoverLink href="#pricing" onClick={(e) => scrollToSection(e, 'pricing')} base={navLink} hover="color:var(--accent);">{t.nav_pricing}</HoverLink>
+                <HoverLink href="#servers" onClick={(e) => scrollToSection(e, 'servers')} base={navLink} hover="color:var(--accent);">{t.nav_servers}</HoverLink>
               </div>
             </div>
             <div>
