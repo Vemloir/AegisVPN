@@ -36,11 +36,13 @@ app.include_router(legal.router)
 
 
 def _plan_name(days: int, lang: str = "ru") -> str:
+    # days == 0 is the lifetime plan (SubscriptionService.LIFETIME_PLAN_DAYS),
+    # and it must be caught first: 0 % 365 == 0 would otherwise name it "0 года".
+    if days == 0:
+        return "Бессрочная"
     if days % 365 == 0:
         years = days // 365
         return f"{years} год" if years == 1 else f"{years} года"
-    if days % 30 == 0:
-        return f"{days} дней"
     return f"{days} дней"
 
 
@@ -83,9 +85,12 @@ async def plans() -> list[dict]:
             "name": _plan_name(p.days),
             "stars_price": p.stars_price,
             "rub_price": p.rub_price,
-            # Device (connection) limit is a global setting, not per-plan, but the
-            # site shows it on every plan card, so echo it on each row.
-            "devices": settings.default_conn_limit,
+            # NOT a device count: the limit is on SIMULTANEOUS connections
+            # (distinct source IPs at one time). A subscription can be installed
+            # on any number of devices; only this many may be connected at once.
+            # It is a global setting rather than a per-plan one, but the site
+            # shows it on the plan card, so echo it on each row. 0 = unlimited.
+            "conn_limit": settings.default_conn_limit,
         }
         for p in rows
     ]
