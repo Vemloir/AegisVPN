@@ -543,7 +543,11 @@ export default function App() {
   const primaryBtn = 'display:inline-flex; align-items:center; justify-content:center; gap:8px; background:var(--btn); color:var(--btnText); border:none; font-size:15px; font-weight:500; padding:13px 22px; border-radius:999px; cursor:pointer; font-family:inherit; text-decoration:none; transition:background .18s ease, transform .12s ease;'
 
   return (
-    <div style={rootStyle}>
+    // The build stamp lives on the root element, not in the footer: a reader
+    // has no use for it, but "which build am I actually looking at?" stays
+    // answerable in one glance at the DOM (it is what settled the long
+    // 'nothing changed' hunt).
+    <div style={rootStyle} data-build={__BUILD_STAMP__}>
       {/* ============================ HEADER ============================ */}
       {/* Solid var(--bg), NOT a translucent film + backdrop blur: any
           semi-transparent layer is blended by the GPU compositor and
@@ -920,7 +924,7 @@ export default function App() {
           </div>
         </div>
         <div style={css('max-width:1180px; margin:0 auto; padding:0 clamp(16px,4.5vw,28px) 40px; font-size:12.5px; color:var(--faint);')}>
-          © {new Date().getFullYear()} AegisVPN. {t.foot_rights} · build {__BUILD_STAMP__}
+          © {new Date().getFullYear()} AegisVPN. {t.foot_rights}
         </div>
       </footer>
 
