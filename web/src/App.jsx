@@ -972,7 +972,7 @@ export default function App() {
               ))}
             </div>
 
-            <Reveal style={{ maxWidth: isMobile ? 'none' : '300px', margin: '0 auto' }}>
+            <Reveal style={{ maxWidth: isMobile ? 'none' : '360px', margin: '0 auto' }}>
               <PlanCard>
                 <div style={css('display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:20px;')}>
                   <span style={css('font-size:13px; color:var(--muted2); font-weight:500;')}>{t.plan_term}</span>
@@ -987,11 +987,11 @@ export default function App() {
                 </div>
 
                 <div style={css('display:flex; align-items:center; gap:7px; margin-bottom:6px;')}>
-                  <span style={css("font-family:'Newsreader','EB Garamond',serif; font-size:42px; font-weight:500; letter-spacing:-.02em; line-height:1; color:var(--ink);")}>
+                  <span style={css("font-family:'Newsreader','EB Garamond',serif; font-size:46px; font-weight:500; letter-spacing:-.02em; line-height:1; color:var(--ink);")}>
                     {priceUnit === 'stars' ? fmt(selectedPlan.stars_price) : `${fmt(selectedPlan.rub_price)} ₽`}
                   </span>
                   {priceUnit === 'stars' && (
-                    <span style={css('color:var(--ink); display:inline-flex;')}><Star size={26} /></span>
+                    <span style={css('color:var(--ink); display:inline-flex;')}><Star size={28} /></span>
                   )}
                 </div>
 
