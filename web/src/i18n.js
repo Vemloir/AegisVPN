@@ -3,22 +3,13 @@
 // with what is actually for sale. What lives here is wording only.
 
 const ru = {
-  nav_features: 'Возможности', nav_servers: 'Локации', nav_pricing: 'Тариф',
+  nav_servers: 'Локации', nav_pricing: 'Тариф',
   cta_try: 'В Telegram', cta_full: 'Подключиться в Telegram', cta_how: 'Как это работает',
   hero_eyebrow: 'VPN на Xray VLESS + Reality',
   hero_pay_site: 'Оплатить на сайте',
   hero_l1: 'Высокая скорость.', hero_l2: 'Стабильное соединение.',
   hero_sub: 'Xray VLESS + Reality — современный протокол поверх настоящего TLS. Подключение через Telegram за минуту.',
   globe_kicker: 'Сеть', globe_title: 'Локации подсвечены на глобусе.', globe_sub: '', globe_cta: 'Все локации',
-  feat_kicker: 'Возможности', feat_title: 'Что входит в подписку',
-  features: [
-    { num: '01', title: 'Стабильное соединение', desc: 'Reality работает поверх настоящего TLS-рукопожатия с реальным сайтом, поэтому связь держится ровно даже на загруженных сетях.' },
-    { num: '02', title: 'Скорость без потерь', desc: 'Лёгкое ядро Xray почти не съедает скорость. Стриминг в 4K без буферизации и просадок.' },
-    { num: '03', title: 'Стриминг в 4K', desc: 'Видеосервисы работают на полной скорости — выбирайте любую локацию.' },
-    { num: '04', title: 'Ссылка-подписка', desc: 'Одна URL-подписка работает в любом Xray-клиенте: v2rayN, v2rayNG, Streisand, NekoBox. Мы не привязываем вас к своему приложению.' },
-    { num: '05', title: 'Одна подписка', desc: 'Доступ ко всем локациям сразу. Переключайтесь между странами мгновенно.' },
-    { num: '06', title: 'Оплата как удобно', desc: 'Telegram Stars или СБП. Продление в пару касаний.' },
-  ],
   srv_kicker: 'Сеть', srv_title: 'Локации',
   srv_sub: 'Все доступны по одной подписке — переключайтесь между ними в любой момент.',
   reg_eu_l: 'Европа', reg_am_l: 'Америка', reg_as_l: 'Азия',
@@ -86,22 +77,13 @@ const ru = {
 }
 
 const en = {
-  nav_features: 'Features', nav_servers: 'Locations', nav_pricing: 'Pricing',
+  nav_servers: 'Locations', nav_pricing: 'Pricing',
   cta_try: 'Open Telegram', cta_full: 'Open in Telegram', cta_how: 'How it works',
   hero_eyebrow: 'VPN on Xray VLESS + Reality',
   hero_pay_site: 'Pay on the site',
   hero_l1: 'High speed.', hero_l2: 'A steady connection.',
   hero_sub: 'Xray VLESS + Reality — a modern protocol running over a real TLS handshake. Set up through Telegram in a minute.',
   globe_kicker: 'Network', globe_title: 'Locations are highlighted on the globe.', globe_sub: '', globe_cta: 'All locations',
-  feat_kicker: 'Features', feat_title: "What's included",
-  features: [
-    { num: '01', title: 'A steady connection', desc: 'Reality runs over a genuine TLS handshake with a real site, so the link holds up even on congested networks.' },
-    { num: '02', title: 'No speed loss', desc: 'The lightweight Xray core barely touches your speed. Stream 4K with no buffering.' },
-    { num: '03', title: '4K streaming', desc: 'Video services run at full speed — pick any location.' },
-    { num: '04', title: 'Subscription link', desc: 'One subscription URL works in any Xray client: v2rayN, v2rayNG, Streisand, NekoBox. No lock-in to our own app.' },
-    { num: '05', title: 'One subscription', desc: 'Access every location at once. Switch between countries instantly.' },
-    { num: '06', title: 'Pay how you like', desc: 'Telegram Stars or SBP. Renew in a couple of taps.' },
-  ],
   srv_kicker: 'Network', srv_title: 'Locations',
   srv_sub: 'All included on one subscription — switch between them anytime.',
   reg_eu_l: 'Europe', reg_am_l: 'Americas', reg_as_l: 'Asia',

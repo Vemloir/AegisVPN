@@ -405,7 +405,6 @@ export default function App() {
 
           {!isMobile && (
             <nav style={css('display:flex; align-items:center; gap:22px; font-size:14.5px; color:var(--muted); flex-shrink:0;')}>
-              <HoverLink href="#features" onClick={(e) => scrollToSection(e, 'features')} base={navLink} hover="color:var(--accent);">{t.nav_features}</HoverLink>
               <HoverLink href="#servers" onClick={(e) => scrollToSection(e, 'servers')} base={navLink} hover="color:var(--accent);">{t.nav_servers}</HoverLink>
               <HoverLink href="#pricing" onClick={(e) => scrollToSection(e, 'pricing')} base={navLink} hover="color:var(--accent);">{t.nav_pricing}</HoverLink>
 
@@ -455,7 +454,7 @@ export default function App() {
       {menuOpen && (
         <Modal onClose={() => setMenuOpen(false)} maxWidth={480}>
           <nav style={css('display:flex; flex-direction:column; gap:4px; margin-bottom:28px; font-size:17px;')}>
-            {[['features', t.nav_features], ['servers', t.nav_servers], ['pricing', t.nav_pricing]].map(([id, label]) => (
+            {[['servers', t.nav_servers], ['pricing', t.nav_pricing]].map(([id, label]) => (
               <a
                 key={id}
                 href={`#${id}`}
@@ -576,35 +575,26 @@ export default function App() {
         </div>
       </section>
 
-      {/* =========================== FEATURES ========================== */}
-      <section id="features" style={css('max-width:1180px; margin:0 auto; padding:clamp(48px,9vw,84px) clamp(16px,4.5vw,28px) clamp(56px,10vw,96px);')}>
-        <div style={css('font-size:12.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); margin-bottom:14px;')}>{t.feat_kicker}</div>
-        <h2 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(30px,3.6vw,44px); line-height:1.1; letter-spacing:-.02em; margin:0 0 44px; color:var(--ink);")}>{t.feat_title}</h2>
-        <div style={{ display: 'grid', gap: '34px 40px', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)' }}>
-          {t.features.map((f) => (
-            <div key={f.num}>
-              <div style={css('font-size:12.5px; font-weight:600; color:var(--accent); margin-bottom:12px;')}>{f.num}</div>
-              <h3 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:21px; letter-spacing:-.01em; margin:0 0 9px; color:var(--ink);")}>{f.title}</h3>
-              <p style={css('font-size:14.8px; line-height:1.6; color:var(--muted); margin:0;')}>{f.desc}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
       {/* =========================== LOCATIONS ========================= */}
       <section id="servers" style={css('max-width:1180px; margin:0 auto; padding:clamp(56px,10vw,96px) clamp(16px,4.5vw,28px);')}>
         <div style={css('font-size:12.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); margin-bottom:14px;')}>{t.srv_kicker}</div>
         <h2 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(30px,3.6vw,44px); line-height:1.1; letter-spacing:-.02em; margin:0 0 14px; color:var(--ink);")}>{t.srv_title}</h2>
         <p style={css('font-size:16px; line-height:1.6; color:var(--muted); margin:0 0 28px; max-width:620px;')}>{t.srv_sub}</p>
 
-        <div style={css('background:var(--card); border:1px solid var(--hair2); border-radius:16px; overflow:hidden;')}>
+        {/* No border, and the row separators are painted in the PAGE
+            background: on the card they read as gaps cut through the panel
+            rather than as drawn rules. */}
+        <div style={css('background:var(--card); border-radius:16px; overflow:hidden;')}>
           {locations.length === 0 && (
             <div style={css('padding:28px; text-align:center; color:var(--faint); font-size:14.5px;')}>{t.loading}</div>
           )}
-          {locations.map((s) => (
+          {locations.map((s, i) => (
             <div
               key={s.id}
-              style={css('display:flex; align-items:center; gap:14px; padding:16px 18px; border-bottom:1px solid var(--hair); font-size:15px; color:var(--ink);')}
+              style={css(
+                'display:flex; align-items:center; gap:14px; padding:16px 18px; font-size:15px; color:var(--ink);' +
+                (i < locations.length - 1 ? ' border-bottom:1px solid var(--bg);' : ''),
+              )}
             >
               <span style={css('font-weight:500;')}>{s.name}</span>
               <span style={css('margin-left:auto; font-size:13px; color:var(--faint);')}>
@@ -671,7 +661,7 @@ export default function App() {
                 <div
                   key={p.id}
                   style={{
-                    ...css('display:flex; flex-direction:column; padding:28px; border:1px solid var(--hair2); border-radius:20px; background:var(--card); text-align:left;'),
+                    ...css('display:flex; flex-direction:column; padding:28px; border-radius:20px; background:var(--card); text-align:left;'),
                     flex: isMobile ? '1 1 100%' : '0 1 262px',
                     maxWidth: isMobile ? 'none' : '300px',
                   }}
@@ -750,7 +740,6 @@ export default function App() {
             <div>
               <div style={css('font-size:13px; font-weight:600; color:var(--ink); margin-bottom:14px;')}>{t.foot_product}</div>
               <div style={css('display:flex; flex-direction:column; gap:11px; font-size:14.5px; color:var(--muted);')}>
-                <HoverLink href="#features" onClick={(e) => scrollToSection(e, 'features')} base={navLink} hover="color:var(--accent);">{t.nav_features}</HoverLink>
                 <HoverLink href="#servers" onClick={(e) => scrollToSection(e, 'servers')} base={navLink} hover="color:var(--accent);">{t.nav_servers}</HoverLink>
                 <HoverLink href="#pricing" onClick={(e) => scrollToSection(e, 'pricing')} base={navLink} hover="color:var(--accent);">{t.nav_pricing}</HoverLink>
               </div>
