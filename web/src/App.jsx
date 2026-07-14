@@ -403,11 +403,10 @@ function PlanCard({ children }) {
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
-        // Air lives BETWEEN the three groups (header / features / button),
-        // not in the top-and-bottom edges: modest padding, a min-height to
-        // give the column room to breathe, and space-between to spread the
-        // groups into it.
-        ...css('display:flex; flex-direction:column; justify-content:space-between; width:100%; min-height:440px; padding:30px 34px; border-radius:24px; background:var(--card); text-align:left;'),
+        // Header pinned to the top, button to the bottom, and the feature list
+        // between them GROWS to fill the height (flex:1), spreading its rows
+        // evenly through the space rather than leaving a couple of big gaps.
+        ...css('display:flex; flex-direction:column; width:100%; min-height:440px; padding:30px 34px; border-radius:24px; background:var(--card); text-align:left;'),
         transform: hover ? 'translateY(-3px)' : 'translateY(0)',
         transition: 'transform .18s ease',
         willChange: 'transform',
@@ -1050,7 +1049,10 @@ export default function App() {
                 </div>
                 </div>
 
-                <div style={css('display:flex; flex-direction:column; gap:14px; font-size:14.5px; line-height:1.45; color:var(--muted);')}>
+                {/* flex:1 so the list eats the slack between header and button;
+                    space-evenly spreads the rows through it, and a small margin
+                    keeps them off the two neighbours. */}
+                <div style={css('flex:1; display:flex; flex-direction:column; justify-content:space-evenly; margin:22px 0; font-size:14.5px; line-height:1.45; color:var(--muted);')}>
                   <div style={css('display:flex; gap:9px;')}>
                     <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>
                     {selectedPlan.conn_limit ? t.plan_conns(selectedPlan.conn_limit) : t.plan_conns_unlimited}
