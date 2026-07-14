@@ -1049,10 +1049,13 @@ export default function App() {
                 </div>
                 </div>
 
-                {/* flex:1 so the list eats the slack between header and button;
-                    space-evenly spreads the rows through it, and a small margin
-                    keeps them off the two neighbours. */}
-                <div style={css('flex:1; display:flex; flex-direction:column; justify-content:space-evenly; margin:22px 0; font-size:14.5px; line-height:1.45; color:var(--muted);')}>
+                {/* flex:1 so the list eats the slack between header and button.
+                    NO outer margin: space-evenly already puts an equal gap
+                    above the first row and below the last, so the distance to
+                    the header and to the button matches. An extra margin here
+                    added to the top gap only, making the top look roomier than
+                    the bottom. */}
+                <div style={css('flex:1; display:flex; flex-direction:column; justify-content:space-evenly; font-size:14.5px; line-height:1.45; color:var(--muted);')}>
                   <div style={css('display:flex; gap:9px;')}>
                     <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>
                     {selectedPlan.conn_limit ? t.plan_conns(selectedPlan.conn_limit) : t.plan_conns_unlimited}
