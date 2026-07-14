@@ -13,6 +13,7 @@ from fastapi import Cookie, FastAPI, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api import checkout, legal
 from src.api.auth import (
     SESSION_COOKIE,
     SESSION_MAX_AGE_SECONDS,
@@ -20,6 +21,7 @@ from src.api.auth import (
     read_session,
     verify_telegram_login,
 )
+from src.api.checkout import terms_accepted
 from src.core.config import settings
 from src.core.database import async_session_maker
 from src.models.plan import Plan
@@ -29,6 +31,8 @@ from src.models.user import User
 from src.services.subscription_service import SubscriptionService
 
 app = FastAPI(title="AegisVPN site API", docs_url=None, redoc_url=None, openapi_url=None)
+app.include_router(checkout.router)
+app.include_router(legal.router)
 
 
 def _plan_name(days: int, lang: str = "ru") -> str:
@@ -123,6 +127,9 @@ async def _me_payload(session: AsyncSession, user: User) -> dict:
         "display_name": _display_name(user),
         "tg": f"@{user.username}" if user.username else None,
         "photo_url": user.photo_url,
+        # Drives the consent checkbox at checkout: a user who already accepted
+        # in the bot is never asked again.
+        "terms_accepted": terms_accepted(user),
         "subscription": None,
     }
     if sub is not None:

@@ -11,6 +11,10 @@ class Settings(BaseSettings):
 
     bot_domain: str | None = None
     public_base_url: str | None = None
+    # Where the public website lives — the apex domain only (the Telegram Login
+    # Widget works on the ONE domain registered via BotFather). Used as the
+    # return/failure URL a payment provider sends the payer back to.
+    site_public_url: str | None = None
     telegram_mode: str = "webhook"
 
     database_url: str | None = None

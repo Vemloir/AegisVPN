@@ -313,6 +313,18 @@ export default function App() {
   const [authError, setAuthError] = useState(false)
   const [copied, setCopied] = useState(false)
 
+  const [checkoutOpen, setCheckoutOpen] = useState(false)
+  const [pendingCheckout, setPendingCheckout] = useState(false) // signing in to buy
+  const [consent, setConsent] = useState(false)
+  const [payBusy, setPayBusy] = useState(null) // 'sbp' | 'stars' while redirecting
+  const [payError, setPayError] = useState(null)
+  const [legalDoc, setLegalDoc] = useState(null) // { title, text }
+  // Set when the payer comes back from the payment page; the subscription is
+  // granted asynchronously (Platega callback → bot), so the site polls for it.
+  const [awaitingPayment, setAwaitingPayment] = useState(
+    () => new URLSearchParams(window.location.search).get('paid') === '1',
+  )
+
   const t = dict(lang)
 
   useEffect(() => { localStorage.setItem('aegis_lang', lang) }, [lang])
@@ -341,6 +353,8 @@ export default function App() {
     api.getMe().then(setUser).catch(() => setUser(null))
   }, [])
 
+  // Signing in mid-purchase must not lose the purchase: the auth modal
+  // remembers it was opened from checkout and hands control back afterwards.
   const onTelegramAuth = useCallback(async (payload) => {
     setAuthError(false)
     try {
@@ -348,11 +362,16 @@ export default function App() {
       if (!me) throw new Error('rejected')
       setUser(me)
       setAuthOpen(false)
-      setAccountOpen(true)
+      if (pendingCheckout) {
+        setPendingCheckout(false)
+        setCheckoutOpen(true)
+      } else {
+        setAccountOpen(true)
+      }
     } catch {
       setAuthError(true)
     }
-  }, [])
+  }, [pendingCheckout])
 
   const doLogout = useCallback(async () => {
     await api.logout().catch(() => {})
@@ -365,6 +384,76 @@ export default function App() {
     setCopied(true)
     setTimeout(() => setCopied(false), 1600)
   }, [])
+
+  // "Buy" from anywhere: sign in first if needed, then open the payment modal.
+  const startCheckout = useCallback(() => {
+    setPayError(null)
+    setConsent(false)
+    if (!user) {
+      setPendingCheckout(true)
+      setAuthOpen(true)
+      return
+    }
+    setCheckoutOpen(true)
+  }, [user])
+
+  const pay = useCallback(
+    async (method) => {
+      if (!selectedPlan || payBusy) return
+      setPayError(null)
+      setPayBusy(method)
+      try {
+        // Consent is recorded BEFORE the payment is created — the backend
+        // refuses to sell to a user who hasn't accepted, and it must not be
+        // possible to pay and only then be asked.
+        if (user && !user.terms_accepted) {
+          await api.acceptTerms()
+          setUser({ ...user, terms_accepted: true })
+        }
+        const { url } = await api.checkout(selectedPlan.id, method)
+        window.location.href = url
+      } catch (e) {
+        setPayBusy(null)
+        setPayError(e.code === 'provider_error' ? t.pay_err_provider : t.pay_err_generic)
+      }
+    },
+    [selectedPlan, payBusy, user, t],
+  )
+
+  const openLegal = useCallback(
+    async (doc) => {
+      const title = doc === 'tos' ? t.legal_tos : t.legal_privacy
+      setLegalDoc({ title, text: null })
+      try {
+        const body = await api.getLegal(doc, lang)
+        setLegalDoc({ title, text: body?.text || '' })
+      } catch {
+        setLegalDoc({ title, text: '' })
+      }
+    },
+    [lang, t],
+  )
+
+  // Confirmation is asynchronous (provider → bot → DB), so a payer returning to
+  // the site usually arrives a beat BEFORE the subscription exists. Poll a
+  // while, then give up quietly rather than claiming failure — the money is not
+  // lost, the bot will message them.
+  useEffect(() => {
+    if (!awaitingPayment) return
+    let tries = 0
+    const id = setInterval(async () => {
+      tries += 1
+      const me = await api.getMe().catch(() => null)
+      if (me) setUser(me)
+      if (me?.subscription?.is_active || tries >= 20) {
+        clearInterval(id)
+        setAwaitingPayment(false)
+        if (me?.subscription?.is_active) setAccountOpen(true)
+        window.history.replaceState(null, '', window.location.pathname)
+      }
+    }, 3000)
+    return () => clearInterval(id)
+  }, [awaitingPayment])
 
   // Plans differ only in term (days) and price — one card, term picked via a
   // dropdown, rather than a card per plan. Falls back to the first plan until
@@ -660,15 +749,13 @@ export default function App() {
                     </div>
                   ))}
                 </div>
-                <HoverLink
-                  href={BOT_URL}
-                  target="_blank"
-                  rel="noopener"
+                <HoverButton
+                  onClick={startCheckout}
                   base={primaryBtn + 'margin-top:auto; width:100%;'}
                   hover="background:var(--btnHover);"
                 >
                   {t.plan_cta}
-                </HoverLink>
+                </HoverButton>
               </div>
             )}
           </div>
@@ -710,11 +797,108 @@ export default function App() {
         </div>
       </footer>
 
+      {/* ============================ CHECKOUT ========================== */}
+      {checkoutOpen && selectedPlan && user && (
+        <Modal onClose={() => (payBusy ? null : setCheckoutOpen(false))} maxWidth={440}>
+          <h3 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:26px; letter-spacing:-.01em; margin:4px 0 18px; color:var(--ink);")}>{t.pay_title}</h3>
+
+          <div style={css('display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:14px 0; border-top:1px solid var(--hair); border-bottom:1px solid var(--hair); margin-bottom:20px;')}>
+            <span style={css('font-size:14.5px; color:var(--muted);')}>
+              {selectedPlan.days} {lang === 'en' ? 'days' : 'дн.'}
+            </span>
+            <span style={css("font-family:'Newsreader','EB Garamond',serif; font-size:28px; font-weight:500; color:var(--ink);")}>
+              {fmt(selectedPlan.rub_price)} ₽
+            </span>
+          </div>
+
+          {/* The consent gate the bot also enforces. Shown only to users who
+              have not accepted yet — anyone who accepted in the bot is not
+              asked twice. */}
+          {!user.terms_accepted && (
+            <label style={css('display:flex; gap:10px; align-items:flex-start; margin-bottom:18px; font-size:13px; line-height:1.5; color:var(--muted); cursor:pointer;')}>
+              <input
+                type="checkbox"
+                checked={consent}
+                onChange={(e) => setConsent(e.target.checked)}
+                style={{ marginTop: '2px', accentColor: 'var(--accent)', width: '16px', height: '16px', flexShrink: 0 }}
+              />
+              <span>
+                {t.pay_consent_pre}{' '}
+                <button type="button" onClick={() => openLegal('tos')} style={css('background:none; border:none; padding:0; font:inherit; color:var(--accent); cursor:pointer; text-decoration:underline;')}>{t.legal_tos}</button>
+                {' '}{t.pay_consent_and}{' '}
+                <button type="button" onClick={() => openLegal('privacy')} style={css('background:none; border:none; padding:0; font:inherit; color:var(--accent); cursor:pointer; text-decoration:underline;')}>{t.legal_privacy}</button>
+              </span>
+            </label>
+          )}
+
+          {(() => {
+            const blocked = !user.terms_accepted && !consent
+            const dim = blocked ? 'opacity:.45; pointer-events:none;' : ''
+            return (
+              <div style={css('display:flex; flex-direction:column; gap:10px;')}>
+                {selectedPlan.rub_price ? (
+                  <button
+                    onClick={() => pay('sbp')}
+                    disabled={blocked || !!payBusy}
+                    style={css(primaryBtn + 'width:100%; padding:14px; cursor:pointer;' + dim)}
+                  >
+                    {payBusy === 'sbp' ? t.pay_redirecting : t.pay_sbp}
+                  </button>
+                ) : null}
+                {selectedPlan.stars_price ? (
+                  <button
+                    onClick={() => pay('stars')}
+                    disabled={blocked || !!payBusy}
+                    style={css(
+                      'display:inline-flex; align-items:center; justify-content:center; gap:8px; width:100%; padding:14px; ' +
+                      'background:var(--seg); color:var(--ink); border:1px solid var(--hair2); border-radius:999px; ' +
+                      'font-size:15px; font-weight:500; font-family:inherit; cursor:pointer;' + dim,
+                    )}
+                  >
+                    {payBusy === 'stars'
+                      ? t.pay_redirecting
+                      : `${t.pay_stars} — ${selectedPlan.stars_price} ⭐`}
+                  </button>
+                ) : null}
+              </div>
+            )
+          })()}
+
+          {payError && (
+            <p style={css('margin:14px 0 0; font-size:13.5px; color:var(--accent); text-align:center;')}>{payError}</p>
+          )}
+          <p style={css('margin:16px 0 0; font-size:12.5px; line-height:1.5; color:var(--faint); text-align:center;')}>{t.pay_stars_note}</p>
+        </Modal>
+      )}
+
+      {/* Waiting for the provider → bot → DB confirmation after coming back. */}
+      {awaitingPayment && (
+        <Modal onClose={() => setAwaitingPayment(false)} maxWidth={380}>
+          <div style={css('text-align:center; padding:8px 0;')}>
+            <div style={{ ...css('width:28px; height:28px; margin:0 auto 18px; border:2px solid var(--hair2); border-top-color:var(--accent); border-radius:50%;'), animation: 'vpnSpin .8s linear infinite' }} />
+            <h3 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:22px; margin:0 0 8px; color:var(--ink);")}>{t.pay_wait_title}</h3>
+            <p style={css('font-size:14px; line-height:1.55; color:var(--muted2); margin:0;')}>{t.pay_wait_sub}</p>
+          </div>
+        </Modal>
+      )}
+
+      {/* Terms of Service / Privacy Policy, from the same files the bot serves. */}
+      {legalDoc && (
+        <Modal onClose={() => setLegalDoc(null)} maxWidth={720}>
+          <h3 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:24px; margin:4px 0 16px; color:var(--ink);")}>{legalDoc.title}</h3>
+          <div style={css('max-height:60vh; overflow-y:auto; font-size:14px; line-height:1.65; color:var(--muted); white-space:pre-wrap;')}>
+            {legalDoc.text === null ? t.loading : legalDoc.text || t.legal_unavailable}
+          </div>
+        </Modal>
+      )}
+
       {/* ============================== AUTH ============================ */}
       {authOpen && (
-        <Modal onClose={() => setAuthOpen(false)}>
+        <Modal onClose={() => { setAuthOpen(false); setPendingCheckout(false) }}>
           <h3 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:26px; letter-spacing:-.01em; margin:4px 0 10px; color:var(--ink);")}>{t.auth_title}</h3>
-          <p style={css('font-size:14.5px; line-height:1.55; color:var(--muted2); margin:0 0 24px;')}>{t.auth_sub}</p>
+          <p style={css('font-size:14.5px; line-height:1.55; color:var(--muted2); margin:0 0 24px;')}>
+            {pendingCheckout ? t.auth_sub_pay : t.auth_sub}
+          </p>
 
           <TelegramLogin botName={BOT_NAME} onAuth={onTelegramAuth} lang={lang} />
 
