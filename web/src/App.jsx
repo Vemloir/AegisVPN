@@ -403,7 +403,7 @@ function PlanCard({ children }) {
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
-        ...css('display:flex; flex-direction:column; width:100%; padding:34px 30px; border-radius:22px; background:var(--card); text-align:left;'),
+        ...css('display:flex; flex-direction:column; width:100%; padding:44px 34px; border-radius:24px; background:var(--card); text-align:left;'),
         transform: hover ? 'translateY(-3px)' : 'translateY(0)',
         transition: 'transform .18s ease',
         willChange: 'transform',
@@ -1042,7 +1042,7 @@ export default function App() {
                   })()}
                 </div>
 
-                <div style={css('display:flex; flex-direction:column; gap:14px; margin-bottom:30px; font-size:14.5px; line-height:1.45; color:var(--muted);')}>
+                <div style={css('display:flex; flex-direction:column; gap:18px; margin-bottom:38px; font-size:14.5px; line-height:1.45; color:var(--muted);')}>
                   <div style={css('display:flex; gap:9px;')}>
                     <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>
                     {selectedPlan.conn_limit ? t.plan_conns(selectedPlan.conn_limit) : t.plan_conns_unlimited}
