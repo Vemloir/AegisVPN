@@ -58,11 +58,28 @@ function Modal({ onClose, children, maxWidth = 420 }) {
   return (
     <div
       onClick={onClose}
-      style={css('position:fixed; inset:0; z-index:120; background:rgba(18,16,12,.46); backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px); display:flex; align-items:center; justify-content:center; padding:clamp(12px,4vw,24px);')}
+      // The scrim is the PAGE's own background colour at 78%, not a dark film:
+      // a black veil over a cream page turns it brown, which is what "the
+      // background changes colour" was. This only fades the page toward its own
+      // background. It cannot be dropped entirely — the modal card (--card)
+      // sits a hair away from --bg in the light theme and would dissolve into a
+      // merely blurred page — so the card carries a real shadow to stay lifted.
+      style={{
+        ...css('position:fixed; inset:0; z-index:120; display:flex; align-items:center; justify-content:center; padding:clamp(12px,4vw,24px);'),
+        background: 'color-mix(in srgb, var(--bg) 78%, transparent)',
+        backdropFilter: 'blur(6px)',
+        WebkitBackdropFilter: 'blur(6px)',
+        animation: 'vpnScrimIn .18s ease',
+      }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{ ...css('position:relative; width:100%; background:var(--card); border:1px solid var(--hair2); border-radius:20px; padding:32px 28px;'), maxWidth }}
+        style={{
+          ...css('position:relative; width:100%; background:var(--card); border:1px solid var(--hair2); border-radius:20px; padding:32px 28px;'),
+          maxWidth,
+          boxShadow: '0 24px 60px -12px rgba(0,0,0,.35), 0 0 0 1px rgba(0,0,0,.04)',
+          animation: 'vpnDialogIn .22s cubic-bezier(.22,.61,.36,1)',
+        }}
       >
         {children}
         <button
@@ -154,6 +171,50 @@ function Reveal({ children, delay = 0, style }) {
     >
       {children}
     </div>
+  )
+}
+
+// The consent box. A native checkbox cannot be animated (the browser paints
+// the tick), so the input is kept for semantics and keyboard/screen-reader
+// behaviour but visually replaced: the box fills with the accent and the tick
+// draws itself along its own path.
+function Checkbox({ checked, onChange }) {
+  return (
+    <span style={{ position: 'relative', display: 'inline-flex', flexShrink: 0, marginTop: '1px' }}>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        style={{ position: 'absolute', inset: 0, width: '18px', height: '18px', margin: 0, opacity: 0, cursor: 'pointer' }}
+      />
+      <span
+        aria-hidden="true"
+        style={{
+          width: '18px',
+          height: '18px',
+          borderRadius: '6px',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: checked ? 'var(--accent)' : 'transparent',
+          border: `1px solid ${checked ? 'var(--accent)' : 'var(--hair3)'}`,
+          transition: 'background .16s ease, border-color .16s ease',
+        }}
+      >
+        {checked && (
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+            <path
+              d="M2 6.2L4.6 8.8L10 3.4"
+              stroke="#fff"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ strokeDasharray: 22, animation: 'vpnCheckDraw .22s ease forwards' }}
+            />
+          </svg>
+        )}
+      </span>
+    </span>
   )
 }
 
@@ -446,12 +507,14 @@ export default function App() {
     ...css("font-family:'Onest',-apple-system,sans-serif; color:var(--ink); background:var(--bg); overflow-x:clip; transition:background .4s ease, color .4s ease;"),
   }
 
+  // Segmented controls fade between states instead of snapping.
   const langBtn = (on) =>
     'border:none;padding:6px 13px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;' +
+    'transition:background .18s ease, color .18s ease;' +
     (on ? 'background:var(--ink);color:var(--bg);' : 'background:transparent;color:var(--muted2);')
 
-  const navLink = 'color:inherit; text-decoration:none;'
-  const primaryBtn = 'display:inline-flex; align-items:center; justify-content:center; gap:8px; background:var(--btn); color:var(--btnText); border:none; font-size:15px; font-weight:500; padding:13px 22px; border-radius:999px; cursor:pointer; font-family:inherit; text-decoration:none;'
+  const navLink = 'color:inherit; text-decoration:none; transition:color .16s ease;'
+  const primaryBtn = 'display:inline-flex; align-items:center; justify-content:center; gap:8px; background:var(--btn); color:var(--btnText); border:none; font-size:15px; font-weight:500; padding:13px 22px; border-radius:999px; cursor:pointer; font-family:inherit; text-decoration:none; transition:background .18s ease, transform .12s ease;'
 
   return (
     <div style={rootStyle}>
@@ -672,6 +735,7 @@ export default function App() {
                   style={css(
                     'display:inline-flex; align-items:center; justify-content:center; border:none; cursor:pointer; ' +
                     'font-family:inherit; font-size:14px; font-weight:600; padding:7px 20px; border-radius:999px; ' +
+                    'transition:background .18s ease, color .18s ease; ' +
                     (priceUnit === unit
                       ? 'background:var(--segActive); color:var(--ink);'
                       : 'background:transparent; color:var(--muted2);'),
@@ -853,12 +917,7 @@ export default function App() {
               asked twice. */}
           {!user.terms_accepted && (
             <label style={css('display:flex; gap:10px; align-items:flex-start; margin-bottom:18px; font-size:13px; line-height:1.5; color:var(--muted); cursor:pointer;')}>
-              <input
-                type="checkbox"
-                checked={consent}
-                onChange={(e) => setConsent(e.target.checked)}
-                style={{ marginTop: '2px', accentColor: 'var(--accent)', width: '16px', height: '16px', flexShrink: 0 }}
-              />
+              <Checkbox checked={consent} onChange={setConsent} />
               <span>
                 {t.pay_consent_pre}{' '}
                 <button type="button" onClick={() => openLegal('tos')} style={css('background:none; border:none; padding:0; font:inherit; color:var(--accent); cursor:pointer; text-decoration:underline;')}>{t.legal_tos}</button>
