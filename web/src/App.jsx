@@ -112,18 +112,23 @@ function Avatar({ user, size, fallbackLabel }) {
   )
 }
 
+// A plan of 0 days is the lifetime plan, not a zero-day one — every place that
+// prints a term must know that, or it renders "0 дн.".
+const termLabel = (days, t, lang) =>
+  days === 0 ? t.plan_lifetime : `${days} ${lang === 'en' ? 'days' : 'дн.'}`
+
 // Fully custom dropdown for the plan term. The native <select>'s closed
 // state can be restyled (appearance:none), but the OPEN menu is drawn by the
 // browser and clashes with the site. The list is a handful of terms, so a
 // hand-rolled listbox with outside-click / Esc / arrow-key handling beats
 // pulling in a component library.
-function TermSelect({ plans, value, onChange, lang }) {
+function TermSelect({ plans, value, onChange, lang, t }) {
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(-1) // keyboard/hover-highlighted index
   const rootRef = useRef(null)
 
   const idx = plans.findIndex((p) => p.id === value)
-  const label = (p) => `${p.days} ${lang === 'en' ? 'days' : 'дн.'}`
+  const label = (p) => termLabel(p.days, t, lang)
   const pick = (p) => {
     onChange(p.id)
     setOpen(false)
@@ -733,19 +738,22 @@ export default function App() {
                     value={selectedPlan.id}
                     onChange={setSelectedPlanId}
                     lang={lang}
+                    t={t}
                   />
                 </div>
                 <div style={css('display:flex; align-items:baseline; gap:8px; margin-bottom:20px;')}>
                   <span style={css("font-family:'Newsreader','EB Garamond',serif; font-size:46px; font-weight:500; letter-spacing:-.02em; line-height:1; color:var(--ink);")}>{fmt(selectedPlan.rub_price)} ₽</span>
-                  <span style={css('font-size:14px; color:var(--muted2);')}>/ {selectedPlan.days} {lang === 'en' ? 'days' : 'дн.'}</span>
+                  <span style={css('font-size:14px; color:var(--muted2);')}>/ {termLabel(selectedPlan.days, t, lang)}</span>
                 </div>
                 <div style={css('display:flex; flex-direction:column; gap:10px; margin-bottom:24px; font-size:14.5px; color:var(--muted);')}>
-                  {selectedPlan.devices ? (
-                    <div style={css('display:flex; gap:9px;')}>
-                      <span style={css('color:var(--accent);')}>✓</span>
-                      {lang === 'en' ? `Up to ${selectedPlan.devices} devices` : `До ${selectedPlan.devices} устройств`}
-                    </div>
-                  ) : null}
+                  {/* The limit is on SIMULTANEOUS connections, not on how many
+                      devices the subscription may be installed on. 0 = no limit. */}
+                  <div style={css('display:flex; gap:9px;')}>
+                    <span style={css('color:var(--accent);')}>✓</span>
+                    {selectedPlan.conn_limit
+                      ? t.plan_conns(selectedPlan.conn_limit)
+                      : t.plan_conns_unlimited}
+                  </div>
                   {t.included.map((line) => (
                     <div key={line} style={css('display:flex; gap:9px;')}>
                       <span style={css('color:var(--accent);')}>✓</span>{line}
@@ -807,7 +815,7 @@ export default function App() {
 
           <div style={css('display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:14px 0; border-top:1px solid var(--hair); border-bottom:1px solid var(--hair); margin-bottom:20px;')}>
             <span style={css('font-size:14.5px; color:var(--muted);')}>
-              {selectedPlan.days} {lang === 'en' ? 'days' : 'дн.'}
+              {termLabel(selectedPlan.days, t, lang)}
             </span>
             <span style={css("font-family:'Newsreader','EB Garamond',serif; font-size:28px; font-weight:500; color:var(--ink);")}>
               {fmt(selectedPlan.rub_price)} ₽
