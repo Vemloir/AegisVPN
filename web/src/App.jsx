@@ -262,7 +262,7 @@ function Checkbox({ checked, onChange }) {
 // browser and clashes with the site. The list is a handful of terms, so a
 // hand-rolled listbox with outside-click / Esc / arrow-key handling beats
 // pulling in a component library.
-function TermSelect({ plans, value, onChange, lang, t }) {
+function TermSelect({ plans, value, onChange, lang, t, savingsPct }) {
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(-1) // keyboard/hover-highlighted index
   const rootRef = useRef(null)
@@ -368,7 +368,16 @@ function TermSelect({ plans, value, onChange, lang, t }) {
                 `color:${p.id === value ? 'var(--accent)' : 'var(--ink)'};`,
               )}
             >
-              {label(p)}
+              <span style={css('display:inline-flex; align-items:center; gap:8px;')}>
+                {label(p)}
+                {/* The saving belongs HERE as much as on the card: the dropdown
+                    is where the terms are actually compared. */}
+                {savingsPct?.(p) > 0 && (
+                  <span style={css('font-size:11.5px; font-weight:600; color:var(--accent);')}>
+                    −{savingsPct(p)}%
+                  </span>
+                )}
+              </span>
               <span style={{ visibility: p.id === value ? 'visible' : 'hidden', color: 'var(--accent)' }}>✓</span>
             </button>
           ))}
@@ -582,7 +591,30 @@ export default function App() {
   // Declared BEFORE the checkout callbacks: a useCallback dependency array is
   // evaluated at definition time, so referencing it later would hit the TDZ
   // and take the whole app down with a ReferenceError.
-  const selectedPlan = plans.find((p) => p.id === selectedPlanId) || plans[0]
+  // The plan the page opens on is the one the admin marked as base — the term
+  // the business actually wants to sell. Falls back to the first plan only when
+  // no base is set.
+  const basePlan = plans.find((p) => p.is_base) || null
+  const selectedPlan =
+    plans.find((p) => p.id === selectedPlanId) || basePlan || plans[0]
+
+  // How much cheaper (positive) or dearer (negative) a plan is PER MONTH than
+  // the base one. Computed in whichever unit is on screen, so the toggle keeps
+  // the comparison honest. A lifetime plan (days 0) has no per-month price and
+  // is never compared.
+  const savingsPct = useCallback(
+    (plan) => {
+      if (!basePlan || !plan || plan.id === basePlan.id) return null
+      const priceOf = (p) => (priceUnit === 'stars' ? p.stars_price : p.rub_price)
+      const monthly = (p) => (priceOf(p) && p.days ? priceOf(p) / (p.days / 30) : null)
+      const a = monthly(plan)
+      const b = monthly(basePlan)
+      if (!a || !b) return null
+      const pct = Math.round(((b - a) / b) * 100)
+      return pct === 0 ? null : pct
+    },
+    [basePlan, priceUnit],
+  )
 
   // "Buy" from a specific card: remember which plan, sign in first if needed,
   // then open the payment modal (which pays for the remembered plan).
@@ -943,6 +975,7 @@ export default function App() {
                     onChange={setSelectedPlanId}
                     lang={lang}
                     t={t}
+                    savingsPct={savingsPct}
                   />
                 </div>
 
@@ -955,17 +988,37 @@ export default function App() {
                   )}
                 </div>
 
-                {/* Shown for every term except the monthly one, where the
-                    per-month figure IS the price. */}
-                <div style={css('display:flex; align-items:center; gap:4px; font-size:13px; color:var(--faint); margin-bottom:22px; min-height:18px;')}>
+                {/* The per-month figure, and how it compares with the base plan
+                    — the only comparison that means anything across different
+                    terms. Cheaper is stated in the accent colour; dearer is
+                    stated too, in plain grey: a short term that costs more per
+                    month should say so rather than stay quiet about it. */}
+                <div style={css('display:flex; align-items:center; flex-wrap:wrap; gap:4px 10px; font-size:13px; color:var(--faint); margin-bottom:22px; min-height:18px;')}>
                   {(() => {
                     const price = priceUnit === 'stars' ? selectedPlan.stars_price : selectedPlan.rub_price
-                    if (!price || selectedPlan.days === 30 || selectedPlan.days === 0) return null
+                    if (!price || selectedPlan.days === 0) return null
                     const per = Math.round(price / (selectedPlan.days / 30))
+                    const pct = savingsPct(selectedPlan)
                     return (
                       <>
-                        ≈ {fmt(per)}
-                        {priceUnit === 'stars' ? <Star size={12} /> : ' ₽'} {t.plan_per_month}
+                        {selectedPlan.days !== 30 && (
+                          <span style={css('display:inline-flex; align-items:center; gap:4px;')}>
+                            ≈ {fmt(per)}
+                            {priceUnit === 'stars' ? <Star size={12} /> : ' ₽'} {t.plan_per_month}
+                          </span>
+                        )}
+                        {pct !== null && (
+                          <span
+                            style={css(
+                              'display:inline-flex; align-items:center; padding:2px 8px; border-radius:999px; font-weight:600; font-size:12px; ' +
+                              (pct > 0
+                                ? 'background:color-mix(in srgb, var(--accent) 16%, transparent); color:var(--accent);'
+                                : 'background:var(--seg); color:var(--muted2);'),
+                            )}
+                          >
+                            {pct > 0 ? t.plan_cheaper(pct) : t.plan_dearer(-pct)}
+                          </span>
+                        )}
                       </>
                     )
                   })()}

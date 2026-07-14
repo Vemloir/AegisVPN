@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from src.core.database import async_session_maker
 from src.models import Plan
+from src.services.plan_service import savings_percent, set_base_plan
 
 from .common import is_admin
 from .keyboards import confirmation_keyboard, plan_detail_keyboard, plan_list_keyboard
@@ -31,9 +32,21 @@ def _rub_str(plan: Plan) -> str:
 
 def _plans_text(plans: list[Plan]) -> str:
     lines = [f"{html.bold('Тарифы')}", ""]
+    base = next((p for p in plans if p.is_base), None)
     for plan in plans:
         status = "ON" if plan.is_active else "OFF"
-        lines.append(f"ID: {plan.id} | {plan.days} дней | {_stars_str(plan)} | {_rub_str(plan)} | {status}")
+        # How this term compares with the base one, per month — the same figure
+        # the site shows a buyer.
+        pct = savings_percent(plan, base)
+        delta = ""
+        if pct is not None and pct != 0:
+            delta = f" | {'выгоднее' if pct > 0 else 'дороже'} на {abs(pct)}%"
+        mark = " | БАЗОВЫЙ" if plan.is_base else ""
+        lines.append(
+            f"ID: {plan.id} | {plan.days} дней | {_stars_str(plan)} | {_rub_str(plan)} | {status}{mark}{delta}"
+        )
+    if base is None:
+        lines += ["", "Базовый тариф не выбран — сайт покажет первый из списка."]
     return "\n".join(lines)
 
 
@@ -79,11 +92,32 @@ async def cq_admin_plan_show(call: CallbackQuery, state: FSMContext):
         f"Срок: {plan.days} дней\n"
         f"Звёзды: {_stars_str(plan)}\n"
         f"Рубли (СБП): {_rub_str(plan)}\n"
-        f"Статус: {status}",
+        f"Статус: {status}\n"
+        f"Базовый: {'да' if plan.is_base else 'нет'}",
         parse_mode="HTML",
-        reply_markup=plan_detail_keyboard(plan.id),
+        reply_markup=plan_detail_keyboard(plan.id, plan.is_base),
     )
     await call.answer()
+
+
+@router.callback_query(F.data.startswith("admin_plan_base:"))
+async def cq_admin_plan_base(call: CallbackQuery, state: FSMContext):
+    """Make a plan THE base one. Exactly one plan carries the flag; the service
+    clears it from the others in the same transaction."""
+    if not is_admin(call.from_user.id):
+        await call.answer("Доступ запрещён", show_alert=True)
+        return
+
+    await state.clear()
+    plan_id = int(call.data.split(":", 1)[1])  # type: ignore[arg-type]
+    async with async_session_maker() as session:
+        plan = await set_base_plan(session, plan_id)
+    if plan is None:
+        await call.answer("Тариф не найден", show_alert=True)
+        return
+
+    await call.answer(f"Базовый тариф: {plan.days} дней")
+    await _show_plans(call)
 
 
 # --------------------------------------------------------------------------

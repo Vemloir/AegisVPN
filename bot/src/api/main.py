@@ -91,6 +91,10 @@ async def plans() -> list[dict]:
             # It is a global setting rather than a per-plan one, but the site
             # shows it on the plan card, so echo it on each row. 0 = unlimited.
             "conn_limit": settings.default_conn_limit,
+            # The reference plan the site opens on, and the one every other
+            # plan's per-month price is compared against. The comparison itself
+            # is computed by the site, in whichever unit it is displaying.
+            "is_base": bool(p.is_base),
         }
         for p in rows
     ]

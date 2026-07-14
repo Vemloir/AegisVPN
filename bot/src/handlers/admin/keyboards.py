@@ -100,10 +100,11 @@ def plan_list_keyboard(plans: list[Plan]) -> InlineKeyboardMarkup:
             )
             if part
         )
+        base_mark = "⭐ " if plan.is_base else ""
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"ID {plan.id}: {plan.days} дн ({price})",
+                    text=f"{base_mark}ID {plan.id}: {plan.days} дн ({price})",
                     callback_data=f"admin_plan_show:{plan.id}",
                 )
             ]
@@ -113,14 +114,17 @@ def plan_list_keyboard(plans: list[Plan]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def plan_detail_keyboard(plan_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Изменить цены", callback_data=f"admin_plan_edit:{plan_id}")],
-            [InlineKeyboardButton(text="Удалить тариф", callback_data=f"admin_plan_delete:{plan_id}")],
-            [InlineKeyboardButton(text="Назад к тарифам", callback_data="admin_plans")],
-        ]
-    )
+def plan_detail_keyboard(plan_id: int, is_base: bool = False) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text="Изменить цены", callback_data=f"admin_plan_edit:{plan_id}")]]
+    # Nothing to press when it is already the base — there is no "unset", because
+    # a catalogue with no reference plan has nothing to compare against.
+    if not is_base:
+        rows.append(
+            [InlineKeyboardButton(text="Сделать базовым", callback_data=f"admin_plan_base:{plan_id}")]
+        )
+    rows.append([InlineKeyboardButton(text="Удалить тариф", callback_data=f"admin_plan_delete:{plan_id}")])
+    rows.append([InlineKeyboardButton(text="Назад к тарифам", callback_data="admin_plans")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def user_manage_keyboard(user: User, has_active_subscription: bool) -> InlineKeyboardMarkup:
