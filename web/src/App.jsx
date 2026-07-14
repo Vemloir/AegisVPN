@@ -735,6 +735,9 @@ export default function App() {
               <h3 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:24px; letter-spacing:-.01em; margin:0; color:var(--ink); overflow:hidden; text-overflow:ellipsis;")}>
                 {user.display_name || t.acc_guest_label}
               </h3>
+              {user.tg && (
+                <div style={css('font-size:13px; color:var(--faint); margin-top:2px;')}>{user.tg}</div>
+              )}
             </div>
           </div>
 

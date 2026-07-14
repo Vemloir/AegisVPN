@@ -87,6 +87,17 @@ async def plans() -> list[dict]:
     ]
 
 
+def _display_name(user: User) -> str:
+    """Profile name, falling back to the handle, then to the bare id.
+
+    first_name/last_name are only known for users who have signed in on the
+    site at least once (the widget carries them); bot-only accounts keep
+    falling back to the handle.
+    """
+    name = " ".join(p for p in (user.first_name, user.last_name) if p).strip()
+    return name or user.username or f"id{user.tg_id}"
+
+
 async def _current_user(session: AsyncSession, cookie: str | None) -> User | None:
     user_id = read_session(cookie)
     if user_id is None:
@@ -106,7 +117,10 @@ async def _me_payload(session: AsyncSession, user: User) -> dict:
     ).scalar_one_or_none()
 
     payload: dict = {
-        "display_name": user.username or f"id{user.tg_id}",
+        # The profile NAME, not the @username: that is what Telegram shows in
+        # chats and what a person recognises as themselves. The handle is a
+        # separate field; the site prints it as secondary detail.
+        "display_name": _display_name(user),
         "tg": f"@{user.username}" if user.username else None,
         "photo_url": user.photo_url,
         "subscription": None,
@@ -146,11 +160,17 @@ async def auth_telegram(request: Request, response: Response) -> dict | None:
             await session.execute(select(User).where(User.tg_id == tg_id))
         ).scalar_one_or_none()
 
-        photo_url = payload.get("photo_url") or None
+        # Profile fields the widget signed for us. Empty strings mean "not set"
+        # (Telegram omits absent fields, but be defensive) — store NULL, not "".
+        fresh = {
+            field: (payload.get(field) or None)
+            for field in ("username", "first_name", "last_name", "photo_url")
+        }
+
         if user is None:
             # A visitor who signs in on the site before ever opening the bot still
             # gets an account; the bot will find it by tg_id on /start.
-            user = User(tg_id=tg_id, username=payload.get("username"), photo_url=photo_url)
+            user = User(tg_id=tg_id, **fresh)
             session.add(user)
             await session.commit()
             await session.refresh(user)
@@ -158,15 +178,14 @@ async def auth_telegram(request: Request, response: Response) -> dict | None:
             response.status_code = 403
             return None
         else:
-            # Refresh both on every sign-in: the username can be re-taken and
-            # Telegram's avatar URL changes whenever the user swaps their photo.
+            # Refresh on every sign-in: handles get re-taken, people rename
+            # themselves, and Telegram's avatar URL changes with the photo. A
+            # field the payload doesn't carry is left alone rather than wiped.
             changed = False
-            if payload.get("username") and user.username != payload["username"]:
-                user.username = payload["username"]
-                changed = True
-            if photo_url and user.photo_url != photo_url:
-                user.photo_url = photo_url
-                changed = True
+            for field, value in fresh.items():
+                if value is not None and getattr(user, field) != value:
+                    setattr(user, field, value)
+                    changed = True
             if changed:
                 await session.commit()
 
