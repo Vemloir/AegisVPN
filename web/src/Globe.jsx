@@ -136,12 +136,12 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
   // Animation state lives in a ref, not React state: the draw loop runs at 60fps
   // and must never trigger a re-render.
   // The sphere's centre sits BELOW the canvas (see the projection), so what
-  // shows is the crown: points more than ~11° from the projection centre. The
-  // old tilt put the centre at 11°N, which left Hong Kong (22°N) barely 11°
-  // out — right on the bottom edge, inside the dissolve, so it read as a faint
-  // smudge. Centring on the equator lifts it a full 22° into the readable
-  // band; the European and US locations (47–60°N) are still far from the limb.
-  const anim = useRef({ rotation: [-14, 0], flyTarget: null })
+  // shows is the crown: points more than ~11° from the projection centre. At
+  // the original 11°N centre, Hong Kong (22°N) fell barely 11° out — right on
+  // the bottom edge, inside the dissolve, where it read as a faint smudge.
+  // 6°N is the middle ground: Hong Kong clears the edge by 16°, and the tilt
+  // stays close to the original (the equator felt like too much of a swing).
+  const anim = useRef({ rotation: [-14, -6], flyTarget: null })
 
   // Resolving a location to an atlas feature scans 177 geometries and runs
   // geoCentroid, so it happens once per location change — never inside the loop.
