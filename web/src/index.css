@@ -35,6 +35,12 @@ body { margin: 0; }
 @keyframes vpnDialogIn {
   from { opacity: 0; transform: translateY(10px) scale(.97); }
 }
+/* Closing is quicker than opening and drops rather than rises: dismissal
+   should feel like the dialog getting out of the way, not like a rewind. */
+@keyframes vpnScrimOut { to { opacity: 0; } }
+@keyframes vpnDialogOut {
+  to { opacity: 0; transform: translateY(6px) scale(.98); }
+}
 /* The checkmark draws itself along its own path instead of popping in. */
 @keyframes vpnCheckDraw { from { stroke-dashoffset: 22; } to { stroke-dashoffset: 0; } }
 
