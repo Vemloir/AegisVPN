@@ -185,6 +185,52 @@ function Avatar({ user, size, fallbackLabel }) {
   )
 }
 
+// Real SVG flags (flag-icons), NOT the emoji: the emoji renders as a glossy
+// sticker on some systems and as bare "DE" letters on others. Each flag is a
+// separate lazy chunk (Vite splits import.meta.glob), so only the handful of
+// active locations' flags are ever fetched. Bundled, not from a CDN — our
+// users are behind blocks, and an external flag host would be one more thing
+// that fails for exactly them. Falls back to the emoji if a code has no SVG.
+const flagUrls = import.meta.glob('../node_modules/flag-icons/flags/4x3/*.svg', {
+  query: '?url',
+  import: 'default',
+})
+// Map by the two-letter code pulled from each filename, so the lookup does not
+// depend on how Vite spells the glob key (the exact prefix has bitten this).
+const flagLoaderByCode = {}
+for (const key in flagUrls) {
+  const m = key.match(/\/([a-z]{2})\.svg$/)
+  if (m) flagLoaderByCode[m[1]] = flagUrls[key]
+}
+function Flag({ code, emoji, height = 34 }) {
+  const [url, setUrl] = useState(null)
+  useEffect(() => {
+    setUrl(null)
+    const loader = flagLoaderByCode[(code || '').toLowerCase()]
+    if (!loader) return
+    let alive = true
+    loader().then((u) => alive && setUrl(u))
+    return () => {
+      alive = false
+    }
+  }, [code])
+  if (!url) return <span style={{ fontSize: `${height}px`, lineHeight: 1 }}>{emoji}</span>
+  return (
+    <img
+      src={url}
+      alt=""
+      style={{
+        height: `${height}px`,
+        width: `${Math.round((height * 4) / 3)}px`,
+        objectFit: 'cover',
+        borderRadius: '5px',
+        display: 'block',
+        boxShadow: '0 0 0 1px rgba(0,0,0,.14)',
+      }}
+    />
+  )
+}
+
 // Fade-and-rise as a block scrolls into view. One IntersectionObserver per
 // block, disconnected after it fires — nothing keeps running once the page has
 // been seen. Anyone who asked their OS for less motion gets the content
@@ -983,23 +1029,27 @@ export default function App() {
               theme={theme}
               autoRotate={false}
               variant="full"
-              maxDpr={1.5}
+              maxDpr={2}
               style={css('position:absolute; inset:0; z-index:0;')}
             />
           </div>
           {/* Info card for the location the tour is on. min-height reserves the
               row so the slide doesn't jump as names of different lengths swap;
-              keyed on selected so each one fades in. */}
-          <div style={css('display:flex; flex-direction:column; align-items:center; gap:8px; min-height:96px; margin-top:8px;')}>
-            {tourLocation && (
-              <div key={tourLocation.id} style={{ ...css('display:flex; flex-direction:column; align-items:center; gap:8px;'), animation: 'vpnFadeIn .35s ease' }}>
-                <div style={css('font-size:34px; line-height:1;')}>{tourLocation.flag}</div>
-                <div style={css("font-family:'Newsreader','EB Garamond',serif; font-size:22px; font-weight:500; color:var(--ink);")}>{tourLocation.name}</div>
-                <div style={css('font-size:12.5px; letter-spacing:.04em; text-transform:uppercase; color:var(--muted2); font-weight:600;')}>
-                  {t[`reg_${regionOf(tourLocation.code)}_l`]}
+              keyed on selected so each one fades in. Country on the left with
+              its city under it in smaller grey; the flag to the right, centred. */}
+          <div style={css('display:flex; align-items:center; justify-content:center; min-height:96px; margin-top:8px;')}>
+            {tourLocation && (() => {
+              const [country, city] = tourLocation.name.split(' | ')
+              return (
+                <div key={tourLocation.id} style={{ ...css('display:flex; align-items:center; gap:16px;'), animation: 'vpnFadeIn .35s ease' }}>
+                  <div style={css('text-align:left;')}>
+                    <div style={css("font-family:'Newsreader','EB Garamond',serif; font-size:24px; font-weight:500; line-height:1.1; color:var(--ink);")}>{country}</div>
+                    {city && <div style={css('font-size:13.5px; color:var(--muted2); margin-top:3px;')}>{city}</div>}
+                  </div>
+                  <Flag code={tourLocation.code} emoji={tourLocation.flag} height={38} />
                 </div>
-              </div>
-            )}
+              )
+            })()}
           </div>
         </section>
       ) : (
