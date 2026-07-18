@@ -36,6 +36,11 @@ body { margin: 0; }
 /* The mobile globe tour's location card, as each new location lands. */
 @keyframes vpnFadeIn { from { opacity: 0; transform: translateY(6px); } }
 
+/* The header account control (avatar / sign-in) once auth is known: a gentle
+   pop, so the unavoidable wait for /api/me reads as a deliberate entrance
+   rather than a flash of the wrong state. */
+@keyframes vpnAccountIn { from { opacity: 0; transform: scale(.82); } }
+
 /* Modals: the scrim fades in, the card rises and settles. Both are short —
    a dialog that takes its time reads as lag, not as polish. */
 @keyframes vpnScrimIn { from { opacity: 0; } }
