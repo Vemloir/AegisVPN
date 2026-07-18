@@ -132,10 +132,18 @@ async def _fetch_avatar(url: str) -> tuple[bytes, str] | None:
                 mime = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
                 if not mime.startswith("image/"):
                     return None
-                data = await resp.content.read(_AVATAR_MAX_BYTES + 1)
-                if not data or len(data) > _AVATAR_MAX_BYTES:
-                    return None
-                return data, mime
+                # Read the WHOLE body, capped. content.read(N) returns only the
+                # first buffered chunk (a TLS segment), which truncated the image
+                # to whatever arrived first — iterate to EOF instead.
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in resp.content.iter_chunked(65536):
+                    total += len(chunk)
+                    if total > _AVATAR_MAX_BYTES:
+                        return None
+                    chunks.append(chunk)
+                data = b"".join(chunks)
+                return (data, mime) if data else None
     except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
         return None
 
