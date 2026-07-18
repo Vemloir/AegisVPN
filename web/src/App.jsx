@@ -960,13 +960,13 @@ export default function App() {
           boxShadow: 'inset 0 1px 0 var(--glassHi)',
         }}
       >
-        <div style={css('max-width:1180px; margin:0 auto; padding:15px clamp(16px,4vw,28px); display:flex; align-items:center; justify-content:space-between; gap:24px;')}>
+        <div className="site-header" style={css('max-width:1180px; margin:0 auto; padding:15px clamp(16px,4vw,28px); display:flex; align-items:center; justify-content:space-between; gap:24px;')}>
           <a href="#top" onClick={(e) => scrollToSection(e, 'top')} style={css('display:flex; align-items:center; text-decoration:none; color:inherit;')}>
             <span style={css('font-weight:600; font-size:18px; letter-spacing:-.015em;')}>AegisVPN</span>
           </a>
 
           {!isMobile && (
-            <nav style={css('display:flex; align-items:center; gap:22px; font-size:14.5px; color:var(--muted); flex-shrink:0;')}>
+            <nav className="hdr-actions" style={css('display:flex; align-items:center; gap:22px; font-size:14.5px; color:var(--muted); flex-shrink:0;')}>
               {/* Nav follows the page order, which now puts pricing first. */}
               <HoverLink href="#pricing" onClick={(e) => scrollToSection(e, 'pricing')} base={navLink} hover="color:var(--accent);">{t.nav_pricing}</HoverLink>
               <HoverLink href="#servers" onClick={(e) => scrollToSection(e, 'servers')} base={navLink} hover="color:var(--accent);">{t.nav_servers}</HoverLink>
@@ -1016,7 +1016,7 @@ export default function App() {
           )}
 
           {isMobile && (
-            <div style={css('display:flex; align-items:center; gap:10px;')}>
+            <div className="hdr-actions" style={css('display:flex; align-items:center; gap:10px;')}>
               {/* Theme toggle moved into the top bar (the settings menu is gone);
                   language now comes from the URL path (/ru/, /en/). */}
               <button
