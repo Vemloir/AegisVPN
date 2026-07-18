@@ -247,7 +247,7 @@ export default function Globe({
     if (!cv) return
     let raf = 0
     let projection = null
-    let w = 0, h = 0, dpr = 1
+    let w = 0, h = 0, dpr = 1, dprIdle = 1, dprMove = 1
     // The fit radius for the 'full' variant; the draw loop eases the live scale
     // around it for the tour's zoom (pull back to travel, push in on arrival).
     let baseR = 0
@@ -264,7 +264,13 @@ export default function Globe({
       if (!nw || !nh) return // not laid out yet; the observer will call again
       w = nw
       h = nh
-      dpr = Math.min(maxDpr, window.devicePixelRatio || 1)
+      dprIdle = Math.min(maxDpr, window.devicePixelRatio || 1)
+      // The full-globe tour redraws the whole map (land, borders, coast, grat,
+      // vignette) every frame; at DPR 3 that drops frames on a phone mid-flight
+      // and reads as jank. Render the MOVING frames at a lower DPR (smooth),
+      // then snap back to full DPR the moment the flight settles (crisp).
+      dprMove = variant === 'full' ? Math.min(2, dprIdle) : dprIdle
+      dpr = dprIdle
       cv.width = w * dpr
       cv.height = h * dpr
 
@@ -376,6 +382,15 @@ export default function Globe({
         if (p >= 1) st.palFrom = null
       }
       const C = (k) => `rgb(${st.pal[k][0]},${st.pal[k][1]},${st.pal[k][2]})`
+
+      // Adaptive resolution: drop to dprMove while a flight is in progress,
+      // restore dprIdle once it settles. Resizing the backing store clears the
+      // canvas, which is fine — the full frame is redrawn right below, and the
+      // switch happens at a soft-eased flight boundary where it's imperceptible.
+      if (variant === 'full') {
+        const want = st.flight ? dprMove : dprIdle
+        if (want !== dpr) { dpr = want; cv.width = w * dpr; cv.height = h * dpr }
+      }
 
       ctx.save()
       ctx.scale(dpr, dpr)
