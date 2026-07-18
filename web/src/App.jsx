@@ -924,7 +924,11 @@ export default function App() {
           // reads as a placeholder for a missing image. Anchor it in the upper
           // third instead: the slack falls BELOW the content, where empty space
           // just invites a scroll to the next screen.
-          ...(isMobile ? { ...MOBILE_SLIDE, justifyContent: 'flex-start', paddingTop: '3vh' } : null),
+          // Mobile only (desktop untouched): the merged hero+globe is tall
+          // enough on its own, so drop the forced 100svh — that full-height
+          // floated the content with empty air below. minHeight:auto hugs the
+          // content; small top and bottom padding is the only breathing room.
+          ...(isMobile ? { ...MOBILE_SLIDE, minHeight: 'auto', justifyContent: 'flex-start', paddingTop: '3vh', paddingBottom: '3vh' } : null),
         }}
       >
         {/* Centred on a phone (one column), left-aligned on the two-column
