@@ -33,6 +33,8 @@ body { margin: 0; }
 @keyframes vpnSpin { to { transform: rotate(360deg); } }
 /* The term dropdown opening. */
 @keyframes vpnMenuIn { from { opacity: 0; transform: translateY(-4px); } }
+/* The mobile globe tour's location card, as each new location lands. */
+@keyframes vpnFadeIn { from { opacity: 0; transform: translateY(6px); } }
 
 /* Modals: the scrim fades in, the card rises and settles. Both are short —
    a dialog that takes its time reads as lag, not as polish. */
