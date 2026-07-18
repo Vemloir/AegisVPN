@@ -584,6 +584,10 @@ export default function App() {
   const [plans, setPlans] = useState([])
   const [selectedPlanId, setSelectedPlanId] = useState(null)
   const [user, setUser] = useState(null)
+  // Whether the initial /api/me has resolved yet. Until it has, the account
+  // control shows nothing (a same-size spacer) rather than flashing "sign in"
+  // for a signed-in user while the request is still in flight.
+  const [authReady, setAuthReady] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
   const [authError, setAuthError] = useState(false)
@@ -630,7 +634,7 @@ export default function App() {
   useEffect(() => {
     api.getLocations().then(setLocations).catch(() => setLocations([]))
     api.getPlans().then(setPlans).catch(() => setPlans([]))
-    api.getMe().then(setUser).catch(() => setUser(null))
+    api.getMe().then(setUser).catch(() => setUser(null)).finally(() => setAuthReady(true))
   }, [])
 
   // Signing in mid-purchase must not lose the purchase: the auth modal
@@ -939,7 +943,9 @@ export default function App() {
                 <button onClick={() => setLang('en')} style={css(langBtn(lang === 'en'))}>EN</button>
               </div>
 
-              {user ? (
+              {!authReady ? (
+                <span style={css('width:34px; height:34px; flex-shrink:0;')} />
+              ) : user ? (
                 <button
                   onClick={() => setAccountOpen(true)}
                   aria-label="Account"
@@ -964,7 +970,9 @@ export default function App() {
               {/* A dedicated account control lives in the header now, not buried
                   in the menu: the avatar when signed in, a compact sign-in
                   button when not. */}
-              {user ? (
+              {!authReady ? (
+                <span style={css('width:40px; height:40px; flex-shrink:0;')} />
+              ) : user ? (
                 <button
                   onClick={() => setAccountOpen(true)}
                   aria-label="Account"
