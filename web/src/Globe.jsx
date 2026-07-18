@@ -305,13 +305,23 @@ export default function Globe({
             fl.toScale = fitScale(baseR, fl.angRad)
           }
           const p = Math.min(1, (now - fl.t0) / TOUR_FLIGHT_MS)
-          const e = easeInOut(p) // one gentle curve drives both, in lock-step
+          const e = easeInOut(p)
           st.rotation = [fl.from[0] + fl.d[0] * e, fl.from[1] + fl.d[1] * e]
           // Zoom is perceived logarithmically — equal RATIOS read as equal steps —
-          // so interpolate scale geometrically (from * (to/from)^e), not linearly.
-          // A linear lerp of a 6x->1.4x change crawls near the high zoom and races
-          // near the low one, which is the "exponential" feel; log-space is even.
-          st.scaleNow = fl.fromScale * Math.pow(fl.toScale / fl.fromScale, e)
+          // so interpolate scale geometrically (from * (to/from)^ze), not linearly.
+          //
+          // The zoom curve is biased toward the TIGHT (small-location) end so the
+          // fast mid-flight pan happens while WIDE, where a rotation step moves few
+          // screen pixels — at full zoom it would fling the surface past. Zoom-in
+          // (large->small) pushes in late; zoom-out (small->large) is the EXACT
+          // time-reverse, pulling out early. Same curve, reversed, so both
+          // directions feel identical. Bias keeps zero slope at both ends (soft
+          // start and stop) because easeInOut already does, and ^k preserves it.
+          const zoomingIn = fl.toScale > fl.fromScale
+          const ze = zoomingIn
+            ? Math.pow(e, 1.6)
+            : 1 - Math.pow(easeInOut(1 - p), 1.6)
+          st.scaleNow = fl.fromScale * Math.pow(fl.toScale / fl.fromScale, ze)
           if (p >= 1) {
             st.rotation = [fl.to[0], fl.to[1]]
             st.scaleNow = fl.toScale
