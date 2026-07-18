@@ -1104,7 +1104,11 @@ export default function App() {
         <div
           style={{
             ...css('max-width:1180px; margin:0 auto; padding:clamp(34px,8vw,96px) clamp(16px,4.5vw,28px); text-align:center;'),
-            ...(isMobile ? MOBILE_SLIDE : null),
+            // Mobile only (desktop untouched): top-anchor instead of centring in
+            // the full-height slide. Centred, its heading floated down in the
+            // slack right under the hugged hero+globe — the "air under the
+            // locations". flex-start pulls it up close under the hero.
+            ...(isMobile ? { ...MOBILE_SLIDE, justifyContent: 'flex-start' } : null),
           }}
         >
           <Reveal>
