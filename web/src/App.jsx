@@ -945,22 +945,31 @@ export default function App() {
 
               {!authReady ? (
                 <span style={css('width:34px; height:34px; flex-shrink:0;')} />
-              ) : user ? (
-                <button
-                  onClick={() => setAccountOpen(true)}
-                  aria-label="Account"
-                  style={css('width:34px; height:34px; padding:0; overflow:hidden; border-radius:999px; border:none; cursor:pointer; background:var(--logoBg); color:var(--logoText); font-weight:600; font-size:14px; font-family:inherit;')}
-                >
-                  <Avatar user={user} size={34} fallbackLabel={t.acc_guest_label} />
-                </button>
               ) : (
-                <HoverButton
-                  onClick={() => setAuthOpen(true)}
-                  base={primaryBtn + 'white-space:nowrap; flex-shrink:0; padding:10px 18px; font-size:14px;'}
-                  hover="background:var(--btnHover);"
+                // Keyed on which control shows, so the pop-in also replays when
+                // signing in swaps the button for the avatar.
+                <span
+                  key={user ? 'account' : 'login'}
+                  style={{ ...css('display:inline-flex; align-items:center; flex-shrink:0;'), animation: 'vpnAccountIn .32s cubic-bezier(.22,.61,.36,1)' }}
                 >
-                  {t.auth_login}
-                </HoverButton>
+                  {user ? (
+                    <button
+                      onClick={() => setAccountOpen(true)}
+                      aria-label="Account"
+                      style={css('width:34px; height:34px; padding:0; overflow:hidden; border-radius:999px; border:none; cursor:pointer; background:var(--logoBg); color:var(--logoText); font-weight:600; font-size:14px; font-family:inherit;')}
+                    >
+                      <Avatar user={user} size={34} fallbackLabel={t.acc_guest_label} />
+                    </button>
+                  ) : (
+                    <HoverButton
+                      onClick={() => setAuthOpen(true)}
+                      base={primaryBtn + 'white-space:nowrap; flex-shrink:0; padding:10px 18px; font-size:14px;'}
+                      hover="background:var(--btnHover);"
+                    >
+                      {t.auth_login}
+                    </HoverButton>
+                  )}
+                </span>
               )}
             </nav>
           )}
@@ -972,22 +981,29 @@ export default function App() {
                   button when not. */}
               {!authReady ? (
                 <span style={css('width:40px; height:40px; flex-shrink:0;')} />
-              ) : user ? (
-                <button
-                  onClick={() => setAccountOpen(true)}
-                  aria-label="Account"
-                  style={css('display:flex; align-items:center; justify-content:center; width:40px; height:40px; padding:0; overflow:hidden; border:none; border-radius:999px; background:var(--logoBg); cursor:pointer;')}
-                >
-                  <Avatar user={user} size={40} fallbackLabel={t.acc_guest_label} />
-                </button>
               ) : (
-                <HoverButton
-                  onClick={() => setAuthOpen(true)}
-                  base={primaryBtn + 'white-space:nowrap; flex-shrink:0; padding:9px 15px; font-size:14px;'}
-                  hover="background:var(--btnHover);"
+                <span
+                  key={user ? 'account' : 'login'}
+                  style={{ ...css('display:inline-flex; align-items:center; flex-shrink:0;'), animation: 'vpnAccountIn .32s cubic-bezier(.22,.61,.36,1)' }}
                 >
-                  {t.auth_login}
-                </HoverButton>
+                  {user ? (
+                    <button
+                      onClick={() => setAccountOpen(true)}
+                      aria-label="Account"
+                      style={css('display:flex; align-items:center; justify-content:center; width:40px; height:40px; padding:0; overflow:hidden; border:none; border-radius:999px; background:var(--logoBg); cursor:pointer;')}
+                    >
+                      <Avatar user={user} size={40} fallbackLabel={t.acc_guest_label} />
+                    </button>
+                  ) : (
+                    <HoverButton
+                      onClick={() => setAuthOpen(true)}
+                      base={primaryBtn + 'white-space:nowrap; flex-shrink:0; padding:9px 15px; font-size:14px;'}
+                      hover="background:var(--btnHover);"
+                    >
+                      {t.auth_login}
+                    </HoverButton>
+                  )}
+                </span>
               )}
               <button
                 onClick={() => setMenuOpen(true)}
