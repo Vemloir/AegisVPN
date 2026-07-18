@@ -56,7 +56,14 @@ const HIGHLIGHT_FADE_START = 0.85
 // location. Both figures are multiples of the fit radius: REST > 1 overflows
 // the circular frame (a close-up), TRAVEL < 1 sits inside it (the planet floats
 // in space). The frame itself is a hard circular clip — nothing renders past it.
-const TOUR_FLIGHT_MS = 1400 // time to travel between two locations
+const TOUR_FLIGHT_MS = 1700 // time to travel between two locations
+
+// Panning at high zoom flings the surface across the screen (a rotation step
+// moves scale× more pixels), which reads as a jerky flight even at 60fps. So
+// mid-flight the zoom dips toward a calm travel zoom — but only DOWNWARD: a
+// flight between two wide (large-country) views never zooms in just to travel.
+const TOUR_TRAVEL_ZOOM = 2.4 // × baseR: the widest the mid-flight pull-back targets
+const TOUR_DIP = 0.85 // how strongly the middle pulls toward the travel zoom (0..1)
 
 // The rest zoom is computed PER LOCATION so the country plus a margin fits the
 // frame: the country fills TOUR_FILL of the frame radius, the rest is breathing
@@ -247,7 +254,7 @@ export default function Globe({
     if (!cv) return
     let raf = 0
     let projection = null
-    let w = 0, h = 0, dpr = 1, dprIdle = 1, dprMove = 1
+    let w = 0, h = 0, dpr = 1
     // The fit radius for the 'full' variant; the draw loop eases the live scale
     // around it for the tour's zoom (pull back to travel, push in on arrival).
     let baseR = 0
@@ -264,13 +271,7 @@ export default function Globe({
       if (!nw || !nh) return // not laid out yet; the observer will call again
       w = nw
       h = nh
-      dprIdle = Math.min(maxDpr, window.devicePixelRatio || 1)
-      // The full-globe tour redraws the whole map (land, borders, coast, grat,
-      // vignette) every frame; at DPR 3 that drops frames on a phone mid-flight
-      // and reads as jank. Render the MOVING frames at a lower DPR (smooth),
-      // then snap back to full DPR the moment the flight settles (crisp).
-      dprMove = variant === 'full' ? Math.min(2, dprIdle) : dprIdle
-      dpr = dprIdle
+      dpr = Math.min(maxDpr, window.devicePixelRatio || 1)
       cv.width = w * dpr
       cv.height = h * dpr
 
@@ -336,7 +337,15 @@ export default function Globe({
           const ze = zoomingIn
             ? Math.pow(e, 1.6)
             : 1 - Math.pow(easeInOut(1 - p), 1.6)
-          st.scaleNow = fl.fromScale * Math.pow(fl.toScale / fl.fromScale, ze)
+          const baseScale = fl.fromScale * Math.pow(fl.toScale / fl.fromScale, ze)
+          // Pull the MIDDLE of the flight down toward the calm travel zoom, so a
+          // pan between two zoomed-in locations doesn't fling the surface across
+          // the screen. Only downward (Math.min): a flight that's already wide
+          // adds no zoom-out, keeping the "no overhead" feel. Sine dip is 0 at
+          // both ends, so the endpoints stay exactly at their fit scale.
+          const dip = Math.sin(Math.PI * p) * TOUR_DIP
+          const travelTarget = Math.min(baseR * TOUR_TRAVEL_ZOOM, baseScale)
+          st.scaleNow = baseScale * Math.pow(travelTarget / baseScale, dip)
           if (p >= 1) {
             st.rotation = [fl.to[0], fl.to[1]]
             st.scaleNow = fl.toScale
@@ -382,15 +391,6 @@ export default function Globe({
         if (p >= 1) st.palFrom = null
       }
       const C = (k) => `rgb(${st.pal[k][0]},${st.pal[k][1]},${st.pal[k][2]})`
-
-      // Adaptive resolution: drop to dprMove while a flight is in progress,
-      // restore dprIdle once it settles. Resizing the backing store clears the
-      // canvas, which is fine — the full frame is redrawn right below, and the
-      // switch happens at a soft-eased flight boundary where it's imperceptible.
-      if (variant === 'full') {
-        const want = st.flight ? dprMove : dprIdle
-        if (want !== dpr) { dpr = want; cv.width = w * dpr; cv.height = h * dpr }
-      }
 
       ctx.save()
       ctx.scale(dpr, dpr)

@@ -928,7 +928,7 @@ export default function App() {
           // enough on its own, so drop the forced 100svh — that full-height
           // floated the content with empty air below. minHeight:auto hugs the
           // content; small top and bottom padding is the only breathing room.
-          ...(isMobile ? { ...MOBILE_SLIDE, minHeight: 'auto', justifyContent: 'flex-start', paddingTop: '3vh', paddingBottom: '3vh' } : null),
+          ...(isMobile ? { ...MOBILE_SLIDE, minHeight: 'auto', justifyContent: 'flex-start', paddingTop: '3vh', paddingBottom: '0' } : null),
         }}
       >
         {/* Centred on a phone (one column), left-aligned on the two-column
@@ -1035,7 +1035,7 @@ export default function App() {
                 style={css('position:absolute; inset:0; z-index:0;')}
               />
             </div>
-            <div style={css('display:flex; align-items:center; justify-content:center; min-height:84px; margin-top:4px;')}>
+            <div style={css('display:flex; align-items:center; justify-content:center; min-height:56px; margin-top:2px;')}>
               {tourLocation && (() => {
                 const [country, city] = tourLocation.name.split(' | ')
                 return (
@@ -1105,10 +1105,10 @@ export default function App() {
           style={{
             ...css('max-width:1180px; margin:0 auto; padding:clamp(34px,8vw,96px) clamp(16px,4.5vw,28px); text-align:center;'),
             // Mobile only (desktop untouched): top-anchor instead of centring in
-            // the full-height slide. Centred, its heading floated down in the
-            // slack right under the hugged hero+globe — the "air under the
-            // locations". flex-start pulls it up close under the hero.
-            ...(isMobile ? { ...MOBILE_SLIDE, justifyContent: 'flex-start' } : null),
+            // the full-height slide, and trim the top padding, so the heading
+            // rises right under the hero's location card instead of floating in
+            // the full-height slack — the "air under the locations".
+            ...(isMobile ? { ...MOBILE_SLIDE, justifyContent: 'flex-start', paddingTop: '14px' } : null),
           }}
         >
           <Reveal>
