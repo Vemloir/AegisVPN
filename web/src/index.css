@@ -36,14 +36,10 @@ body { margin: 0; }
 /* The mobile globe tour's location card, as each new location lands. */
 @keyframes vpnFadeIn { from { opacity: 0; transform: translateY(6px); } }
 
-/* The header account control (avatar / sign-in) once auth is known: a gentle
-   pop, so the unavoidable wait for /api/me reads as a deliberate entrance
-   rather than a flash of the wrong state. */
-@keyframes vpnAccountIn { from { opacity: 0; transform: scale(.82); } }
-
 /* Header items drop in and cascade on load: the logo first, then the actions
-   (nav links / toggles / account) left to right. The account control keeps its
-   own vpnAccountIn (inline style wins) so it still pops when auth resolves. */
+   (nav links / toggles / account) left to right. The account control has no
+   animation of its own, so it inherits this same slide — it just plays when it
+   mounts (once /api/me resolves), which is exactly when it should appear. */
 @keyframes vpnHeaderIn { from { opacity: 0; transform: translateY(-8px); } }
 .site-header > a { animation: vpnHeaderIn .5s cubic-bezier(.22,.61,.36,1) both; }
 .hdr-actions > * { animation: vpnHeaderIn .5s cubic-bezier(.22,.61,.36,1) both; }
