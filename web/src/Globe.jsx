@@ -131,7 +131,23 @@ function buildHighlights(locations) {
     .filter(Boolean)
 }
 
-export default function Globe({ locations, selected, onSelect, theme, autoRotate = true, style }) {
+// variant: 'backdrop' (default) is the desktop hero horizon — the sphere sits
+// below the canvas and only its crown shows behind the copy. 'full' centres the
+// whole sphere in the canvas, so the location flown to face the viewer lands in
+// the middle where it can actually be seen — the mode the mobile auto-tour uses.
+// maxDpr caps the backing-store resolution (a 60fps canvas at dpr 3+ on a phone
+// is pure heat); 'full' also skips the dissolve, which only makes sense for a
+// horizon fading into the page.
+export default function Globe({
+  locations,
+  selected,
+  onSelect,
+  theme,
+  autoRotate = true,
+  variant = 'backdrop',
+  maxDpr = 2,
+  style,
+}) {
   const canvasRef = useRef(null)
   // Animation state lives in a ref, not React state: the draw loop runs at 60fps
   // and must never trigger a re-render.
@@ -176,9 +192,17 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
       if (!nw || !nh) return // not laid out yet; the observer will call again
       w = nw
       h = nh
-      dpr = Math.min(2, window.devicePixelRatio || 1)
+      dpr = Math.min(maxDpr, window.devicePixelRatio || 1)
       cv.width = w * dpr
       cv.height = h * dpr
+
+      if (variant === 'full') {
+        // Whole sphere centred in the box, sized to fit with a small margin so
+        // the flown-to location sits dead centre and fully visible.
+        const R = Math.min(w, h) * 0.46
+        projection = geoOrthographic().scale(R).translate([w * 0.5, h * 0.5]).clipAngle(90)
+        return
+      }
 
       // The sphere's centre sits at 1.18h, below the box, so only its crown and
       // upper arc show. Radius follows the design's max(0.42w, 0.95h) — but that
@@ -248,7 +272,9 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
       ctx.beginPath(); path(countriesFC); ctx.fillStyle = C('land'); ctx.fill()
       ctx.beginPath(); path(borders); ctx.strokeStyle = C('border'); ctx.lineWidth = 0.5; ctx.stroke()
       ctx.beginPath(); path(coast); ctx.strokeStyle = C('coast'); ctx.lineWidth = 0.7; ctx.stroke()
-      fadeOut(ctx, w, h, MAP_FADE_START)
+      // The dissolve only makes sense for the backdrop horizon fading into the
+      // page; a fully-shown sphere keeps its whole disc.
+      if (variant !== 'full') fadeOut(ctx, w, h, MAP_FADE_START)
 
       for (const hl of highlights) {
         ctx.beginPath(); path(hl.feat)
@@ -261,7 +287,7 @@ export default function Globe({ locations, selected, onSelect, theme, autoRotate
         ctx.lineWidth = hl.id === selected ? 1.2 : 0.8
         ctx.stroke()
       }
-      fadeOut(ctx, w, h, HIGHLIGHT_FADE_START)
+      if (variant !== 'full') fadeOut(ctx, w, h, HIGHLIGHT_FADE_START)
       ctx.restore()
 
       raf = requestAnimationFrame(draw)

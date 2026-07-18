@@ -715,6 +715,28 @@ export default function App() {
     return () => clearInterval(id)
   }, [awaitingPayment])
 
+  // Mobile globe auto-tour: step `selected` through the active locations on a
+  // timer so the globe flies from one to the next and the card names each. Only
+  // on mobile — desktop keeps click-to-select. Deps are [isMobile, locations],
+  // NOT selected, or every tick would restart the timer.
+  const tourIdx = useRef(0)
+  useEffect(() => {
+    if (!isMobile || locations.length === 0) return
+    // Land on one immediately so the card is never empty, then advance.
+    const start = Math.max(0, locations.findIndex((l) => l.id === selected))
+    tourIdx.current = start
+    setSelected(locations[start].id)
+    const id = setInterval(() => {
+      tourIdx.current = (tourIdx.current + 1) % locations.length
+      setSelected(locations[tourIdx.current].id)
+    }, 3000)
+    return () => clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMobile, locations])
+
+  // The location the tour (or a desktop click) currently sits on, for the card.
+  const tourLocation = locations.find((l) => l.id === selected) || null
+
   const rootStyle = {
     ...css(LIGHT_VARS),
     ...css(theme === 'dark' ? DARK_VARS : ''),
@@ -943,12 +965,44 @@ export default function App() {
           shows — a horizon behind the copy — and the mask fades its lower half
           into the page. Putting this in a bordered box makes the globe read as
           "shifted up", because the sphere's centre is below the box. */}
-      {/* No globe on a phone AT ALL — the whole section is skipped, not just its
-          contents: a section that renders nothing but still carries its padding
-          is a band of dead air. (A canvas redrawing 177 country outlines at
-          60fps is also the most expensive thing on the page, and on a small
-          screen it earns none of that.) Phones go from the hero to the plans. */}
-      {!isMobile && (
+      {/* Mobile: the globe returns as its own slide, running an auto-tour — it
+          flies to each active location in turn and the card names it (flag,
+          Country | City, region). variant="full" centres the sphere so the
+          flown-to location is actually visible; maxDpr caps the canvas cost. */}
+      {isMobile ? (
+        <section style={{ ...css('position:relative; padding:0 clamp(16px,4.5vw,28px);'), ...MOBILE_SLIDE }}>
+          <div style={css('text-align:center; margin-bottom:4px;')}>
+            <div style={css('font-size:12.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); font-weight:600; margin-bottom:12px;')}>{t.globe_kicker}</div>
+            <h2 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(26px,7vw,34px); line-height:1.2; letter-spacing:-.01em; margin:0; color:var(--ink);")}>{t.globe_title}</h2>
+          </div>
+          <div style={{ position: 'relative', width: '100%', height: '42svh' }}>
+            <Globe
+              locations={locations}
+              selected={selected}
+              onSelect={setSelected}
+              theme={theme}
+              autoRotate={false}
+              variant="full"
+              maxDpr={1.5}
+              style={css('position:absolute; inset:0; z-index:0;')}
+            />
+          </div>
+          {/* Info card for the location the tour is on. min-height reserves the
+              row so the slide doesn't jump as names of different lengths swap;
+              keyed on selected so each one fades in. */}
+          <div style={css('display:flex; flex-direction:column; align-items:center; gap:8px; min-height:96px; margin-top:8px;')}>
+            {tourLocation && (
+              <div key={tourLocation.id} style={{ ...css('display:flex; flex-direction:column; align-items:center; gap:8px;'), animation: 'vpnFadeIn .35s ease' }}>
+                <div style={css('font-size:34px; line-height:1;')}>{tourLocation.flag}</div>
+                <div style={css("font-family:'Newsreader','EB Garamond',serif; font-size:22px; font-weight:500; color:var(--ink);")}>{tourLocation.name}</div>
+                <div style={css('font-size:12.5px; letter-spacing:.04em; text-transform:uppercase; color:var(--muted2); font-weight:600;')}>
+                  {t[`reg_${regionOf(tourLocation.code)}_l`]}
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      ) : (
       <section style={css('position:relative; padding:0 0 clamp(48px,10vw,92px);')}>
         {(
           <div style={css('position:relative; width:100%; min-height:clamp(360px,72vw,600px);')}>
