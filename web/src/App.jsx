@@ -1104,11 +1104,10 @@ export default function App() {
         <div
           style={{
             ...css('max-width:1180px; margin:0 auto; padding:clamp(34px,8vw,96px) clamp(16px,4.5vw,28px); text-align:center;'),
-            // Mobile only (desktop untouched): top-anchor instead of centring in
-            // the full-height slide, and trim the top padding, so the heading
-            // rises right under the hero's location card instead of floating in
-            // the full-height slack — the "air under the locations".
-            ...(isMobile ? { ...MOBILE_SLIDE, minHeight: 'auto', justifyContent: 'flex-start', paddingTop: '14px' } : null),
+            // Mobile only (desktop untouched): top-anchor + hug content so the
+            // block doesn't float in a full-height slide (which left air above
+            // it), but keep the section's natural top padding for breathing room.
+            ...(isMobile ? { ...MOBILE_SLIDE, minHeight: 'auto', justifyContent: 'flex-start' } : null),
           }}
         >
           <Reveal>
