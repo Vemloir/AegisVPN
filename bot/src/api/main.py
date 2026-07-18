@@ -173,11 +173,13 @@ async def _me_payload(session: AsyncSession, user: User) -> dict:
         "display_name": _display_name(user),
         "tg": f"@{user.username}" if user.username else None,
         # Prefer our own copy (works where Telegram's CDN is blocked); the ?v
-        # token is a digest of photo_url, so the URL — and thus the browser
-        # cache — changes exactly when the avatar does. photo_url stays as a
-        # last-resort fallback for accounts whose image we couldn't fetch.
+        # token is a digest of the stored BYTES, so the URL — and thus the
+        # hard/immutable browser cache — changes exactly when the image changes.
+        # (Keying it on photo_url was the bug: a re-fetch that fixed a truncated
+        # image kept the same URL, so the browser served the stale copy.)
+        # photo_url stays as a last-resort fallback for images we couldn't fetch.
         "avatar_url": (
-            f"/api/avatar/{user.id}?v={hashlib.sha1((user.photo_url or '').encode()).hexdigest()[:12]}"
+            f"/api/avatar/{user.id}?v={hashlib.sha1(user.avatar_data).hexdigest()[:12]}"
             if user.avatar_data
             else None
         ),
