@@ -928,7 +928,7 @@ export default function App() {
           // enough on its own, so drop the forced 100svh — that full-height
           // floated the content with empty air below. minHeight:auto hugs the
           // content; small top and bottom padding is the only breathing room.
-          ...(isMobile ? { ...MOBILE_SLIDE, minHeight: 'auto', justifyContent: 'flex-start', paddingTop: '3vh', paddingBottom: '6vh' } : null),
+          ...(isMobile ? { ...MOBILE_SLIDE, minHeight: 'auto', justifyContent: 'flex-start', paddingTop: '3vh', paddingBottom: '8vh' } : null),
         }}
       >
         {/* Centred on a phone (one column), left-aligned on the two-column
