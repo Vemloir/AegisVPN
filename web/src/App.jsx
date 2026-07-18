@@ -827,10 +827,10 @@ export default function App() {
         </div>
 
         {/* One reserved line (fixed height, no wrap) so cards line up: a
-            per-month figure + a savings badge vs the base plan, or "Standard
-            plan" for the base one. Bottom-aligned so the leading doesn't read
-            as extra air above the feature list. */}
-        <div style={css('display:flex; align-items:flex-end; flex-wrap:nowrap; white-space:nowrap; gap:10px; font-size:13px; color:var(--faint); height:26px; line-height:1;')}>
+            per-month figure + a +/- badge vs the base plan, or "Standard plan"
+            for the base one. Centre-aligned so a horizontal line runs through
+            the middle of the pill and the text, not along their bottom. */}
+        <div style={css('display:flex; align-items:center; flex-wrap:nowrap; white-space:nowrap; gap:10px; font-size:13px; color:var(--faint); height:26px; line-height:1;')}>
           {(() => {
             const price = priceUnit === 'stars' ? plan.stars_price : plan.rub_price
             if (!price || plan.days === 0) {
@@ -855,7 +855,7 @@ export default function App() {
                         : 'background:var(--seg); color:var(--muted2);'),
                     )}
                   >
-                    {pct > 0 ? t.plan_cheaper(pct) : t.plan_dearer(-pct)}
+                    {pct > 0 ? `−${pct}%` : `+${-pct}%`}
                   </span>
                 )}
                 {plan.is_base && (
@@ -1255,7 +1255,7 @@ export default function App() {
               </Reveal>
             ) : (
               // Desktop: every plan at once, shortest term on the left to
-              // longest on the right; the base plan wears an accent ring.
+              // longest on the right.
               <Reveal style={{ width: '100%' }}>
                 <div style={css(`display:grid; grid-template-columns:repeat(${sortedPlans.length}, minmax(0, 1fr)); gap:20px; align-items:stretch;`)}>
                   {sortedPlans.map((p) => (
@@ -1267,7 +1267,6 @@ export default function App() {
                             {termLabel(p.days, t, lang)}
                           </div>
                         </div>,
-                        p.is_base,
                       )}
                     </div>
                   ))}
