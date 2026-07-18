@@ -459,7 +459,7 @@ function TermSelect({ plans, value, onChange, lang, t, savingsPct }) {
 // re-rasterized on and off that layer lands on slightly different subpixels —
 // the "some rows jump 1px on hover" the design showed. Keeping a transform at
 // rest keeps the card on one layer the whole time, so only the offset animates.
-function PlanCard({ children }) {
+function PlanCard({ children, highlight }) {
   const [hover, setHover] = useState(false)
   return (
     <div
@@ -469,7 +469,10 @@ function PlanCard({ children }) {
         // Header pinned to the top, button to the bottom, and the feature list
         // between them GROWS to fill the height (flex:1), spreading its rows
         // evenly through the space rather than leaving a couple of big gaps.
+        // The base ("standard") plan wears a thin accent ring so it stands out
+        // in the row; box-sizing:border-box keeps every card the same size.
         ...css('display:flex; flex-direction:column; width:100%; min-height:440px; padding:30px 34px; border-radius:24px; background:var(--card); text-align:left;'),
+        border: highlight ? '1px solid var(--accent)' : '1px solid transparent',
         transform: hover ? 'translateY(-3px)' : 'translateY(0)',
         transition: 'transform .18s ease',
         willChange: 'transform',
@@ -802,6 +805,89 @@ export default function App() {
 
   const navLink = 'color:inherit; text-decoration:none; transition:color .16s ease;'
   const primaryBtn = 'display:inline-flex; align-items:center; justify-content:center; gap:8px; background:var(--btn); color:var(--btnText); border:none; font-size:15px; font-weight:500; padding:13px 22px; border-radius:999px; cursor:pointer; font-family:inherit; text-decoration:none; transition:background .18s ease, transform .12s ease;'
+
+  // Shortest term on the left, longest on the right. A 0-day plan is the
+  // LIFETIME plan (the longest term of all), so it sorts to the far right.
+  const sortedPlans = [...plans].sort((a, b) => (a.days || Infinity) - (b.days || Infinity))
+
+  // One plan's card body, shared by the desktop grid (a card per plan) and the
+  // mobile single card (term picked from a dropdown). `header` is what sits
+  // above the price: a term label on desktop, the term dropdown on mobile.
+  const renderPlanCard = (plan, header, highlight = false) => (
+    <PlanCard highlight={highlight}>
+      <div>
+        {header}
+        <div style={css('display:flex; align-items:center; gap:7px; margin-bottom:6px;')}>
+          <span style={css("font-family:'Newsreader','EB Garamond',serif; font-size:46px; font-weight:500; letter-spacing:-.02em; line-height:1; color:var(--ink);")}>
+            {priceUnit === 'stars' ? fmt(plan.stars_price) : `${fmt(plan.rub_price)} ₽`}
+          </span>
+          {priceUnit === 'stars' && (
+            <span style={css('color:var(--ink); display:inline-flex;')}><Star size={28} /></span>
+          )}
+        </div>
+
+        {/* One reserved line (fixed height, no wrap) so cards line up: a
+            per-month figure + a savings badge vs the base plan, or "Standard
+            plan" for the base one. Bottom-aligned so the leading doesn't read
+            as extra air above the feature list. */}
+        <div style={css('display:flex; align-items:flex-end; flex-wrap:nowrap; white-space:nowrap; gap:10px; font-size:13px; color:var(--faint); height:26px; line-height:1;')}>
+          {(() => {
+            const price = priceUnit === 'stars' ? plan.stars_price : plan.rub_price
+            if (!price || plan.days === 0) {
+              return plan.is_base ? <span style={css('color:var(--muted2);')}>{t.plan_is_base}</span> : null
+            }
+            const per = Math.round(price / (plan.days / 30))
+            const pct = savingsPct(plan)
+            return (
+              <>
+                {!plan.is_base && (
+                  <span style={css('display:inline-flex; align-items:center; gap:4px;')}>
+                    ≈ {fmt(per)}
+                    {priceUnit === 'stars' ? <Star size={12} /> : ' ₽'} {t.plan_per_month}
+                  </span>
+                )}
+                {pct !== null && (
+                  <span
+                    style={css(
+                      'display:inline-flex; align-items:center; padding:2px 8px; border-radius:999px; font-weight:600; font-size:12px; ' +
+                      (pct > 0
+                        ? 'background:color-mix(in srgb, var(--accent) 16%, transparent); color:var(--accent);'
+                        : 'background:var(--seg); color:var(--muted2);'),
+                    )}
+                  >
+                    {pct > 0 ? t.plan_cheaper(pct) : t.plan_dearer(-pct)}
+                  </span>
+                )}
+                {plan.is_base && (
+                  <span style={css('color:var(--muted2);')}>{t.plan_is_base}</span>
+                )}
+              </>
+            )
+          })()}
+        </div>
+      </div>
+
+      <div style={css('flex:1; display:flex; flex-direction:column; justify-content:space-evenly; font-size:14.5px; line-height:1.45; color:var(--muted);')}>
+        <div style={css('display:flex; gap:9px;')}>
+          <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>
+          {plan.conn_limit ? t.plan_conns(plan.conn_limit) : t.plan_conns_unlimited}
+        </div>
+        {t.included.map((line) => (
+          <div key={line} style={css('display:flex; gap:9px;')}>
+            <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>{line}
+          </div>
+        ))}
+      </div>
+
+      <HoverButton
+        onClick={() => startCheckout(plan)}
+        base={primaryBtn + 'width:100%;'}
+        hover="background:var(--btnHover);"
+      >
+        {t.plan_cta}
+      </HoverButton>
+    </PlanCard>
+  )
 
   return (
     // The build stamp lives on the root element, not in the footer: a reader
@@ -1148,112 +1234,46 @@ export default function App() {
               ))}
             </div>
 
-            <Reveal style={{ maxWidth: '360px', width: '100%', margin: '0 auto' }}>
-              <PlanCard>
-                {/* One group so space-between sees three items (header,
-                    features, button), not five, and puts the air between them. */}
-                <div>
-                <div style={css('display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:20px;')}>
-                  <span style={css('font-size:13px; color:var(--muted2); font-weight:500;')}>{t.plan_term}</span>
-                  <TermSelect
-                    plans={plans}
-                    value={selectedPlan.id}
-                    onChange={setSelectedPlanId}
-                    lang={lang}
-                    t={t}
-                    savingsPct={savingsPct}
-                  />
-                </div>
-
-                <div style={css('display:flex; align-items:center; gap:7px; margin-bottom:6px;')}>
-                  <span style={css("font-family:'Newsreader','EB Garamond',serif; font-size:46px; font-weight:500; letter-spacing:-.02em; line-height:1; color:var(--ink);")}>
-                    {priceUnit === 'stars' ? fmt(selectedPlan.stars_price) : `${fmt(selectedPlan.rub_price)} ₽`}
-                  </span>
-                  {priceUnit === 'stars' && (
-                    <span style={css('color:var(--ink); display:inline-flex;')}><Star size={28} /></span>
-                  )}
-                </div>
-
-                {/* The per-month figure, and how it compares with the base plan
-                    — the only comparison that means anything across different
-                    terms. Cheaper is stated in the accent colour; dearer is
-                    stated too, in plain grey: a short term that costs more per
-                    month should say so rather than stay quiet about it. */}
-                {/* FIXED height, and no wrap: the contents vary by term ("≈
-                    ₽/mo" + a savings badge for long terms, "Standard plan" for
-                    the base one), and on a narrow card a wrap to two lines is
-                    what made the whole card grow and shrink as you switched
-                    term. One reserved line, same height for every plan. */}
-                {/* Bottom-aligned, not centred: the 26px reserved height (which
-                    keeps the card from resizing between terms) otherwise leaves
-                    ~6px of leading below this text, and space-evenly then reads
-                    that as extra air above the feature list — the top gap looked
-                    a letter taller than the gap down to the button. */}
-                <div style={css('display:flex; align-items:flex-end; flex-wrap:nowrap; white-space:nowrap; gap:10px; font-size:13px; color:var(--faint); height:26px; line-height:1;')}>
-                  {(() => {
-                    const price = priceUnit === 'stars' ? selectedPlan.stars_price : selectedPlan.rub_price
-                    if (!price || selectedPlan.days === 0) return null
-                    const per = Math.round(price / (selectedPlan.days / 30))
-                    const pct = savingsPct(selectedPlan)
-                    return (
-                      <>
-                        {selectedPlan.days !== 30 && (
-                          <span style={css('display:inline-flex; align-items:center; gap:4px;')}>
-                            ≈ {fmt(per)}
-                            {priceUnit === 'stars' ? <Star size={12} /> : ' ₽'} {t.plan_per_month}
-                          </span>
-                        )}
-                        {pct !== null && (
-                          <span
-                            style={css(
-                              'display:inline-flex; align-items:center; padding:2px 8px; border-radius:999px; font-weight:600; font-size:12px; ' +
-                              (pct > 0
-                                ? 'background:color-mix(in srgb, var(--accent) 16%, transparent); color:var(--accent);'
-                                : 'background:var(--seg); color:var(--muted2);'),
-                            )}
-                          >
-                            {pct > 0 ? t.plan_cheaper(pct) : t.plan_dearer(-pct)}
-                          </span>
-                        )}
-                        {/* The base plan has no per-month figure (it IS the
-                            month) and no saving (it's the yardstick), so this
-                            fills the same line rather than leaving it empty. */}
-                        {selectedPlan.is_base && (
-                          <span style={css('color:var(--muted2);')}>{t.plan_is_base}</span>
-                        )}
-                      </>
-                    )
-                  })()}
-                </div>
-                </div>
-
-                {/* flex:1 so the list eats the slack between header and button.
-                    NO outer margin: space-evenly already puts an equal gap
-                    above the first row and below the last, so the distance to
-                    the header and to the button matches. An extra margin here
-                    added to the top gap only, making the top look roomier than
-                    the bottom. */}
-                <div style={css('flex:1; display:flex; flex-direction:column; justify-content:space-evenly; font-size:14.5px; line-height:1.45; color:var(--muted);')}>
-                  <div style={css('display:flex; gap:9px;')}>
-                    <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>
-                    {selectedPlan.conn_limit ? t.plan_conns(selectedPlan.conn_limit) : t.plan_conns_unlimited}
-                  </div>
-                  {t.included.map((line) => (
-                    <div key={line} style={css('display:flex; gap:9px;')}>
-                      <span style={css('color:var(--accent); flex-shrink:0;')}>✓</span>{line}
+            {isMobile ? (
+              // Mobile: ONE card, term picked from a dropdown — a row of
+              // near-identical cards would just repeat itself across the width.
+              <Reveal style={{ maxWidth: '360px', width: '100%', margin: '0 auto' }}>
+                {renderPlanCard(
+                  selectedPlan,
+                  <div style={css('display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:20px;')}>
+                    <span style={css('font-size:13px; color:var(--muted2); font-weight:500;')}>{t.plan_term}</span>
+                    <TermSelect
+                      plans={plans}
+                      value={selectedPlan.id}
+                      onChange={setSelectedPlanId}
+                      lang={lang}
+                      t={t}
+                      savingsPct={savingsPct}
+                    />
+                  </div>,
+                )}
+              </Reveal>
+            ) : (
+              // Desktop: every plan at once, shortest term on the left to
+              // longest on the right; the base plan wears an accent ring.
+              <Reveal style={{ width: '100%' }}>
+                <div style={css(`display:grid; grid-template-columns:repeat(${sortedPlans.length}, minmax(0, 1fr)); gap:20px; align-items:stretch;`)}>
+                  {sortedPlans.map((p) => (
+                    <div key={p.id}>
+                      {renderPlanCard(
+                        p,
+                        <div style={css('margin-bottom:20px;')}>
+                          <div style={css("font-family:'Newsreader','EB Garamond',serif; font-size:22px; font-weight:500; letter-spacing:-.01em; line-height:1; color:var(--ink);")}>
+                            {termLabel(p.days, t, lang)}
+                          </div>
+                        </div>,
+                        p.is_base,
+                      )}
                     </div>
                   ))}
                 </div>
-
-                <HoverButton
-                  onClick={() => startCheckout(selectedPlan)}
-                  base={primaryBtn + 'width:100%;'}
-                  hover="background:var(--btnHover);"
-                >
-                  {t.plan_cta}
-                </HoverButton>
-              </PlanCard>
-            </Reveal>
+              </Reveal>
+            )}
             </>
           )}
           <div style={css('margin-top:26px; font-size:13px; color:var(--faint);')}>{t.price_cancel}</div>
