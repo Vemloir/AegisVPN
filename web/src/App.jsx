@@ -847,7 +847,12 @@ export default function App() {
         id="top"
         style={{
           ...css('max-width:1180px; margin:0 auto; padding:clamp(28px,8vw,84px) clamp(16px,4.5vw,28px) clamp(20px,5vw,48px);'),
-          ...(isMobile ? MOBILE_SLIDE : null),
+          // The hero holds the least content of the three slides, so centring
+          // it in a full screen left a big empty band ABOVE the text — which
+          // reads as a placeholder for a missing image. Anchor it in the upper
+          // third instead: the slack falls BELOW the content, where empty space
+          // just invites a scroll to the next screen.
+          ...(isMobile ? { ...MOBILE_SLIDE, justifyContent: 'flex-start', paddingTop: '14vh' } : null),
         }}
       >
         {/* Centred on a phone (one column), left-aligned on the two-column

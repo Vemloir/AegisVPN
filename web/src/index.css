@@ -21,7 +21,10 @@
 @import '@fontsource/onest/700.css';
 
 body { margin: 0; }
-* { -webkit-font-smoothing: antialiased; box-sizing: border-box; }
+/* Chrome on Android paints a translucent blue box over any tapped link/button
+   (the tap-highlight). It belongs to no palette here and looks like a bug;
+   kill it — our own :active/hover states give the touch feedback. */
+* { -webkit-font-smoothing: antialiased; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 ::selection { background: #CC785C; color: #fff; }
 /* Native focus rings (e.g. the plan-term <select>) default to browser blue,
    which doesn't exist anywhere else in this palette. Recolor, don't remove —
