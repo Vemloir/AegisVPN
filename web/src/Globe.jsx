@@ -58,13 +58,6 @@ const HIGHLIGHT_FADE_START = 0.85
 // in space). The frame itself is a hard circular clip — nothing renders past it.
 const TOUR_FLIGHT_MS = 1700 // time to travel between two locations
 
-// Panning at high zoom flings the surface across the screen (a rotation step
-// moves scale× more pixels), which reads as a jerky flight even at 60fps. So
-// mid-flight the zoom dips toward a calm travel zoom — but only DOWNWARD: a
-// flight between two wide (large-country) views never zooms in just to travel.
-const TOUR_TRAVEL_ZOOM = 2.4 // × baseR: the widest the mid-flight pull-back targets
-const TOUR_DIP = 0.85 // how strongly the middle pulls toward the travel zoom (0..1)
-
 // The rest zoom is computed PER LOCATION so the country plus a margin fits the
 // frame: the country fills TOUR_FILL of the frame radius, the rest is breathing
 // room ("a little more than the territory"). Clamped so a tiny country doesn't
@@ -326,26 +319,11 @@ export default function Globe({
           // Zoom is perceived logarithmically — equal RATIOS read as equal steps —
           // so interpolate scale geometrically (from * (to/from)^ze), not linearly.
           //
-          // The zoom curve is biased toward the TIGHT (small-location) end so the
-          // fast mid-flight pan happens while WIDE, where a rotation step moves few
-          // screen pixels — at full zoom it would fling the surface past. Zoom-in
-          // (large->small) pushes in late; zoom-out (small->large) is the EXACT
-          // time-reverse, pulling out early. Same curve, reversed, so both
-          // directions feel identical. Bias keeps zero slope at both ends (soft
-          // start and stop) because easeInOut already does, and ^k preserves it.
-          const zoomingIn = fl.toScale > fl.fromScale
-          const ze = zoomingIn
-            ? Math.pow(e, 1.6)
-            : 1 - Math.pow(easeInOut(1 - p), 1.6)
-          const baseScale = fl.fromScale * Math.pow(fl.toScale / fl.fromScale, ze)
-          // Pull the MIDDLE of the flight down toward the calm travel zoom, so a
-          // pan between two zoomed-in locations doesn't fling the surface across
-          // the screen. Only downward (Math.min): a flight that's already wide
-          // adds no zoom-out, keeping the "no overhead" feel. Sine dip is 0 at
-          // both ends, so the endpoints stay exactly at their fit scale.
-          const dip = Math.sin(Math.PI * p) * TOUR_DIP
-          const travelTarget = Math.min(baseR * TOUR_TRAVEL_ZOOM, baseScale)
-          st.scaleNow = baseScale * Math.pow(travelTarget / baseScale, dip)
+          // One symmetric easeInOut drives BOTH turn and zoom in lock-step, so
+          // they never fight (a biased zoom that punched in while the turn was
+          // settling read as a jerky flight). Symmetric = large->small and
+          // small->large are exact time-reverses of each other for free.
+          st.scaleNow = fl.fromScale * Math.pow(fl.toScale / fl.fromScale, e)
           if (p >= 1) {
             st.rotation = [fl.to[0], fl.to[1]]
             st.scaleNow = fl.toScale
