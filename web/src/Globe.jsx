@@ -62,9 +62,9 @@ const TOUR_FLIGHT_MS = 1400 // time to travel between two locations
 // frame: the country fills TOUR_FILL of the frame radius, the rest is breathing
 // room ("a little more than the territory"). Clamped so a tiny country doesn't
 // zoom into blocky 110m coastlines and a huge one still reads as a close-up.
-const TOUR_FILL = 0.62
-const TOUR_ZOOM_MIN = 1.5
-const TOUR_ZOOM_MAX = 3.1
+const TOUR_FILL = 0.55
+const TOUR_ZOOM_MIN = 1.15
+const TOUR_ZOOM_MAX = 6.0
 // A country of angular radius angRad, framed to TOUR_FILL of a baseR frame.
 const fitScale = (baseR, angRad) => {
   const r = (baseR * TOUR_FILL) / Math.sin(Math.min(angRad, 1.2))
@@ -262,7 +262,7 @@ export default function Globe({
       if (variant === 'full') {
         // Whole sphere centred in the box, sized to fit with a small margin so
         // the flown-to location sits dead centre and fully visible.
-        baseR = Math.min(w, h) * 0.46
+        baseR = Math.min(w, h) * 0.5
         projection = geoOrthographic().scale(baseR).translate([w * 0.5, h * 0.5]).clipAngle(90)
         return
       }
