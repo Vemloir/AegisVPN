@@ -43,6 +43,19 @@ const DARK_VARS =
 
 const fmt = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
 
+// Each section becomes a full-height slide on a phone: its content is centred
+// in one screenful so the part gets room instead of stacking tightly against
+// the next. 100dvh (dynamic) rather than 100vh, so the collapsing mobile
+// toolbar doesn't leave a strip of empty space; minHeight so a section taller
+// than the screen (long location list) still grows past it.
+const MOBILE_SLIDE = {
+  minHeight: '100dvh',
+  display: 'flex',
+  flexDirection: 'column',
+  justifyContent: 'center',
+  boxSizing: 'border-box',
+}
+
 // Glass is used ONLY by the sticky header, and that is not a style preference
 // but the one place it does anything: frosted glass shows its character by
 // blurring what is BEHIND it, and the header is the only surface that content
@@ -826,7 +839,17 @@ export default function App() {
       {/* The clamp minimums are what a phone actually gets (10vw of 390px is
           below every one of them), so they are the mobile spacing — they were
           desktop-sized and left ~112px of dead air between sections. */}
-      <section id="top" style={css('max-width:1180px; margin:0 auto; padding:clamp(28px,8vw,84px) clamp(16px,4.5vw,28px) clamp(20px,5vw,48px);')}>
+      {/* On a phone every section is its own full-height slide: the content
+          is vertically centred in 100dvh (dvh, not vh, so the mobile browser's
+          collapsing toolbar doesn't leave a gap), giving each part room to
+          breathe instead of stacking tightly. Desktop keeps the normal flow. */}
+      <section
+        id="top"
+        style={{
+          ...css('max-width:1180px; margin:0 auto; padding:clamp(28px,8vw,84px) clamp(16px,4.5vw,28px) clamp(20px,5vw,48px);'),
+          ...(isMobile ? MOBILE_SLIDE : null),
+        }}
+      >
         {/* Centred on a phone (one column), left-aligned on the two-column
             desktop layout where the copy pairs with the sub-text column. */}
         <div style={{ display: 'grid', gap: isMobile ? '22px' : '48px', alignItems: 'start', gridTemplateColumns: isMobile ? '1fr' : '1.45fr 1fr', textAlign: isMobile ? 'center' : 'left' }}>
@@ -839,11 +862,19 @@ export default function App() {
               {t.hero_l1}<br />
               <span style={css('font-style:italic; color:var(--accent);')}>{t.hero_l2}</span>
             </h1>
-            <div style={css('display:flex; align-items:center; gap:20px; flex-wrap:wrap;' + (isMobile ? ' justify-content:center;' : ''))}>
+            {/* On a phone the two CTAs stack full-width — a big primary pill
+                and a bordered secondary below it — instead of a big button
+                cramped next to a small text link. Desktop keeps them side by
+                side. */}
+            <div style={css(
+              isMobile
+                ? 'display:flex; flex-direction:column; gap:12px; margin-top:6px;'
+                : 'display:flex; align-items:center; gap:20px; flex-wrap:wrap;'
+            )}>
               <HoverLink
                 href="#pricing"
                 onClick={(e) => scrollToSection(e, 'pricing')}
-                base={'display:inline-flex; align-items:center; gap:9px; background:var(--btn); color:var(--btnText); font-size:16px; font-weight:500; padding:14px 26px; border-radius:999px; text-decoration:none;'}
+                base={'display:inline-flex; align-items:center; justify-content:center; gap:9px; background:var(--btn); color:var(--btnText); font-size:16px; font-weight:500; padding:14px 26px; border-radius:999px; text-decoration:none;' + (isMobile ? ' width:100%;' : '')}
                 hover="background:var(--btnHover);"
               >
                 {t.hero_pay_site}
@@ -852,8 +883,12 @@ export default function App() {
                 href={BOT_URL}
                 target="_blank"
                 rel="noopener"
-                base={'display:inline-flex; align-items:center; gap:7px; font-size:16px; font-weight:500; color:var(--ink); text-decoration:none; border-bottom:1px solid transparent; padding-bottom:2px;'}
-                hover="border-bottom-color:var(--ink);"
+                base={
+                  isMobile
+                    ? 'display:inline-flex; align-items:center; justify-content:center; gap:7px; width:100%; font-size:16px; font-weight:500; color:var(--ink); text-decoration:none; padding:13px 26px; border:1px solid var(--hair2); border-radius:999px;'
+                    : 'display:inline-flex; align-items:center; gap:7px; font-size:16px; font-weight:500; color:var(--ink); text-decoration:none; border-bottom:1px solid transparent; padding-bottom:2px;'
+                }
+                hover={isMobile ? 'background:var(--seg);' : 'border-bottom-color:var(--ink);'}
               >
                 {TG_ICON} {t.cta_try}
               </HoverLink>
@@ -874,10 +909,14 @@ export default function App() {
                 {t.hero_eyebrow}
               </div>
             )}
+            {/* The 1.85 line-height is the desktop value, tuned to fill the
+                H1's height in the two-column layout. On a phone there is no H1
+                beside it, so that airiness just reads as loose — tighten it. */}
             <p
               ref={heroSubRef}
               style={{
-                ...css("font-family:'Newsreader','EB Garamond',serif; font-size:clamp(20px,2.4vw,26px); line-height:1.85; color:var(--muted); margin:0;"),
+                ...css("font-family:'Newsreader','EB Garamond',serif; font-size:clamp(19px,4.8vw,26px); line-height:1.85; color:var(--muted); margin:0;"),
+                ...(isMobile ? { lineHeight: 1.5 } : null),
                 ...(!isMobile && heroSubFit
                   ? { lineHeight: `${heroSubFit.lh}px`, marginTop: `${heroSubFit.mt}px` }
                   : null),
@@ -940,7 +979,12 @@ export default function App() {
           layer painting the same color can rasterize one RGB step off on
           GPU-composited browsers, showing a faint seam at the section edge. */}
       <section id="pricing">
-        <div style={css('max-width:1180px; margin:0 auto; padding:clamp(34px,8vw,96px) clamp(16px,4.5vw,28px); text-align:center;')}>
+        <div
+          style={{
+            ...css('max-width:1180px; margin:0 auto; padding:clamp(34px,8vw,96px) clamp(16px,4.5vw,28px); text-align:center;'),
+            ...(isMobile ? MOBILE_SLIDE : null),
+          }}
+        >
           <Reveal>
             <div style={css('font-size:12.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); margin-bottom:14px;')}>{t.price_kicker}</div>
             <h2 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(32px,4vw,48px); line-height:1.08; letter-spacing:-.02em; margin:0 auto 16px; max-width:640px; color:var(--ink);")}>{t.price_title}</h2>
@@ -957,7 +1001,9 @@ export default function App() {
             <>
             {/* Which unit prices are SHOWN in. The payment method itself is
                 still chosen at checkout — a plan can be bought either way. */}
-            <div style={css('display:inline-flex; padding:3px; margin-bottom:26px; border:none; border-radius:999px; background:var(--seg);')}>
+            {/* align-self:center so it keeps its content width — inside the
+                mobile slide's flex column it would otherwise stretch full-width. */}
+            <div style={css('display:inline-flex; align-self:center; padding:3px; margin-bottom:26px; border:none; border-radius:999px; background:var(--seg);')}>
               {['rub', 'stars'].map((unit) => (
                 <button
                   key={unit}
@@ -977,7 +1023,7 @@ export default function App() {
               ))}
             </div>
 
-            <Reveal style={{ maxWidth: isMobile ? 'none' : '360px', margin: '0 auto' }}>
+            <Reveal style={{ maxWidth: '360px', width: '100%', margin: '0 auto' }}>
               <PlanCard>
                 {/* One group so space-between sees three items (header,
                     features, button), not five, and puts the air between them. */}
@@ -1090,7 +1136,13 @@ export default function App() {
       </section>
 
       {/* =========================== LOCATIONS ========================= */}
-      <section id="servers" style={css('max-width:1180px; margin:0 auto; padding:clamp(34px,8vw,96px) clamp(16px,4.5vw,28px);')}>
+      <section
+        id="servers"
+        style={{
+          ...css('max-width:1180px; margin:0 auto; padding:clamp(34px,8vw,96px) clamp(16px,4.5vw,28px);'),
+          ...(isMobile ? MOBILE_SLIDE : null),
+        }}
+      >
         {/* Heading centred; the location rows below keep their left alignment. */}
         <Reveal style={{ textAlign: 'center' }}>
           <div style={css('font-size:12.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); margin-bottom:14px;')}>{t.srv_kicker}</div>
