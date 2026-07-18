@@ -512,6 +512,31 @@ const Star = ({ size = 15 }) => (
   </svg>
 )
 
+// Theme toggle glyph, drawn (not the ☀/☾ unicode chars, whose art sits
+// off-centre inside its own box). Moon in dark, sun in light — the current
+// theme. display:block + a flex-centred button centres it exactly.
+const ThemeGlyph = ({ dark, size = 17 }) =>
+  dark ? (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden="true" style={{ display: 'block' }}>
+      <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z" />
+    </svg>
+  ) : (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      aria-hidden="true"
+      style={{ display: 'block' }}
+    >
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+    </svg>
+  )
+
 
 /* ---------------------------------------------------------------------- app  */
 
@@ -951,7 +976,7 @@ export default function App() {
                 aria-label="Theme"
                 style={css('display:flex; align-items:center; justify-content:center; width:34px; height:34px; border:none; border-radius:999px; background:var(--seg); cursor:pointer; color:var(--ink); padding:0;')}
               >
-                {theme === 'dark' ? '☾' : '☀'}
+                <ThemeGlyph dark={theme === 'dark'} size={16} />
               </button>
 
               <div style={css('display:flex; border:none; border-radius:999px; overflow:hidden; background:var(--seg);')}>
@@ -998,7 +1023,7 @@ export default function App() {
                 onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
                 aria-label="Theme"
                 style={css('display:flex; align-items:center; justify-content:center; width:40px; height:40px; border:none; border-radius:999px; background:var(--seg); cursor:pointer; color:var(--ink); padding:0; font-size:16px;')}
-              >{theme === 'dark' ? '☾' : '☀'}</button>
+              ><ThemeGlyph dark={theme === 'dark'} /></button>
               {/* Account control: the avatar when signed in, a compact sign-in
                   button when not. */}
               {!authReady ? (
