@@ -45,11 +45,15 @@ const fmt = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
 
 // Each section becomes a full-height slide on a phone: its content is centred
 // in one screenful so the part gets room instead of stacking tightly against
-// the next. 100dvh (dynamic) rather than 100vh, so the collapsing mobile
-// toolbar doesn't leave a strip of empty space; minHeight so a section taller
-// than the screen (long location list) still grows past it.
+// the next. Height is 100svh (the SMALL viewport — the height with the browser
+// toolbar shown), NOT 100dvh: dvh tracks the toolbar live, so as it collapses
+// and re-appears during a scroll the slides resize and the content jumps a few
+// px against the scroll — the "teleport". svh is fixed, so it never reflows
+// mid-scroll; the cost is a small strip of slack below a slide once the
+// toolbar hides, which is invisible next to a jump. minHeight so a section
+// taller than the screen (long location list) still grows past it.
 const MOBILE_SLIDE = {
-  minHeight: '100dvh',
+  minHeight: '100svh',
   display: 'flex',
   flexDirection: 'column',
   justifyContent: 'center',
