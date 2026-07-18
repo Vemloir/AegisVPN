@@ -50,6 +50,40 @@ function fadeOut(ctx, w, h, from) {
 const MAP_FADE_START = 0.58
 const HIGHLIGHT_FADE_START = 0.85
 
+// The tour flight, driven by one normalized progress p in [0,1]. The camera is
+// zoomed IN on a location (its surface fills the frame) and pulls back to the
+// whole planet mid-flight, so you see the globe travel then dive into the next
+// location. Both figures are multiples of the fit radius: REST > 1 overflows
+// the circular frame (a close-up), TRAVEL < 1 sits inside it (the planet floats
+// in space). The frame itself is a hard circular clip — nothing renders past it.
+const TOUR_FLIGHT_MS = 1400 // time to travel between two locations
+
+// The rest zoom is computed PER LOCATION so the country plus a margin fits the
+// frame: the country fills TOUR_FILL of the frame radius, the rest is breathing
+// room ("a little more than the territory"). Clamped so a tiny country doesn't
+// zoom into blocky 110m coastlines and a huge one still reads as a close-up.
+const TOUR_FILL = 0.62
+const TOUR_ZOOM_MIN = 1.5
+const TOUR_ZOOM_MAX = 3.1
+// A country of angular radius angRad, framed to TOUR_FILL of a baseR frame.
+const fitScale = (baseR, angRad) => {
+  const r = (baseR * TOUR_FILL) / Math.sin(Math.min(angRad, 1.2))
+  return Math.max(baseR * TOUR_ZOOM_MIN, Math.min(baseR * TOUR_ZOOM_MAX, r))
+}
+
+// One gentle S-curve — sine ease-in-out — drives BOTH the turn and the zoom, in
+// lock-step over the same flight time: soft start, soft end, a rounded (not
+// abrupt) middle. No arc, so the zoom just travels A→B once, no out-and-back.
+const easeInOut = (p) => (1 - Math.cos(Math.PI * p)) / 2
+
+// Blend two [r,g,b] arrays; used to cross-fade a location's highlight colour as
+// the selection moves, instead of snapping.
+const lerpRgb = (a, b, t) => [
+  Math.round(a[0] + (b[0] - a[0]) * t),
+  Math.round(a[1] + (b[1] - a[1]) * t),
+  Math.round(a[2] + (b[2] - a[2]) * t),
+]
+
 function hexToRgb(hex) {
   const h = hex.replace('#', '')
   return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
@@ -115,6 +149,23 @@ function scaleFeature(feat, factor) {
   }
 }
 
+// The angular radius of a feature about a point: the greatest great-circle
+// distance (radians) from that point to any of its vertices. It tells the tour
+// how far to zoom so the whole country — plus a margin — fits the frame.
+function featureAngularRadius(feat, about) {
+  let max = 0
+  const walk = (c) => {
+    if (typeof c[0] === 'number') {
+      const d = geoDistance(about, c)
+      if (d > max) max = d
+    } else {
+      for (const x of c) walk(x)
+    }
+  }
+  walk(feat.geometry.coordinates)
+  return max
+}
+
 function buildHighlights(locations) {
   return locations
     .map((loc) => {
@@ -126,7 +177,10 @@ function buildHighlights(locations) {
       }
       if (!feat) return null
       const centroid = CENTROID_OVERRIDE[loc.code] || geoCentroid(feat)
-      return { id: loc.id, feat, centroid }
+      // Radius about the CAMERA target (centroid override for the US, etc.), so
+      // the fit accounts for where the camera actually points.
+      const angRad = Math.max(0.03, featureAngularRadius(feat, centroid))
+      return { id: loc.id, feat, centroid, angRad }
     })
     .filter(Boolean)
 }
@@ -166,12 +220,18 @@ export default function Globe({
   const latest = useRef({ highlights, selected, theme, autoRotate })
   latest.current = { highlights, selected, theme, autoRotate }
 
-  // Fly to whichever location the surrounding UI selected.
+  // Fly to whichever location the surrounding UI selected. The 'full' tour
+  // flies on an explicit timed progress (so one curve drives both the turn
+  // speed and the zoom arc); the 'backdrop' desktop globe keeps its simple
+  // ease-to-target. `from`/`t0` are captured on the first frame of the flight.
   useEffect(() => {
     if (selected == null) return
     const hl = highlights.find((h) => h.id === selected)
-    if (hl) anim.current.flyTarget = [-hl.centroid[0], -hl.centroid[1]]
-  }, [selected, highlights])
+    if (!hl) return
+    const to = [-hl.centroid[0], -hl.centroid[1]]
+    if (variant === 'full') anim.current.flight = { to, from: null, t0: 0, angRad: hl.angRad }
+    else anim.current.flyTarget = to
+  }, [selected, highlights, variant])
 
   useEffect(() => {
     const cv = canvasRef.current
@@ -179,6 +239,9 @@ export default function Globe({
     let raf = 0
     let projection = null
     let w = 0, h = 0, dpr = 1
+    // The fit radius for the 'full' variant; the draw loop eases the live scale
+    // around it for the tour's zoom (pull back to travel, push in on arrival).
+    let baseR = 0
 
 
     // Measure the canvas itself, never the window. The sphere is deliberately
@@ -199,8 +262,8 @@ export default function Globe({
       if (variant === 'full') {
         // Whole sphere centred in the box, sized to fit with a small margin so
         // the flown-to location sits dead centre and fully visible.
-        const R = Math.min(w, h) * 0.46
-        projection = geoOrthographic().scale(R).translate([w * 0.5, h * 0.5]).clipAngle(90)
+        baseR = Math.min(w, h) * 0.46
+        projection = geoOrthographic().scale(baseR).translate([w * 0.5, h * 0.5]).clipAngle(90)
         return
       }
 
@@ -222,7 +285,37 @@ export default function Globe({
       const { highlights, selected, theme, autoRotate } = latest.current
       const st = anim.current
       if (!projection) { raf = requestAnimationFrame(draw); return }
-      if (st.flyTarget) {
+
+      if (variant === 'full') {
+        const fl = st.flight
+        if (st.scaleNow == null) st.scaleNow = baseR * TOUR_ZOOM_MIN
+        if (fl) {
+          const now = performance.now()
+          if (fl.from == null) {
+            // First frame: anchor turn and zoom to where they are now, and take
+            // the shortest way round in longitude. The zoom target is this
+            // location's own fit scale — big country, gentle zoom; small, close.
+            fl.from = [st.rotation[0], st.rotation[1]]
+            fl.t0 = now
+            let dl = fl.to[0] - fl.from[0]
+            while (dl > 180) dl -= 360
+            while (dl < -180) dl += 360
+            fl.d = [dl, fl.to[1] - fl.from[1]]
+            fl.fromScale = st.scaleNow
+            fl.toScale = fitScale(baseR, fl.angRad)
+          }
+          const p = Math.min(1, (now - fl.t0) / TOUR_FLIGHT_MS)
+          const e = easeInOut(p) // one gentle curve drives both, in lock-step
+          st.rotation = [fl.from[0] + fl.d[0] * e, fl.from[1] + fl.d[1] * e]
+          st.scaleNow = fl.fromScale + (fl.toScale - fl.fromScale) * e
+          if (p >= 1) {
+            st.rotation = [fl.to[0], fl.to[1]]
+            st.scaleNow = fl.toScale
+            st.flight = null
+          }
+        }
+        projection.scale(st.scaleNow)
+      } else if (st.flyTarget) {
         const [r0, r1] = st.rotation
         let d0 = st.flyTarget[0] - r0
         while (d0 > 180) d0 -= 360
@@ -264,6 +357,15 @@ export default function Globe({
       ctx.save()
       ctx.scale(dpr, dpr)
       ctx.clearRect(0, 0, w, h)
+      // The frame: nothing renders past a fixed circle the size of the fit
+      // radius. When zoomed in past it (a close-up) the surface is cropped to
+      // this porthole; when the planet floats inside it (travel) there is space
+      // around it. Full variant only — the backdrop horizon has no frame.
+      if (variant === 'full') {
+        ctx.beginPath()
+        ctx.arc(w / 2, h / 2, baseR, 0, 2 * Math.PI)
+        ctx.clip()
+      }
       const path = geoPath(proj, ctx)
 
       // Structural map first — graticule, land, borders — then its fade, so
@@ -276,18 +378,41 @@ export default function Globe({
       // page; a fully-shown sphere keeps its whole disc.
       if (variant !== 'full') fadeOut(ctx, w, h, MAP_FADE_START)
 
+      // Each location eases its own "selected amount" 0..1 toward whether it is
+      // the current one, so the highlight colour cross-fades as the tour moves
+      // instead of snapping between hi and hiSel.
+      if (!st.selAmt) st.selAmt = {}
+      const rgb = (k) => st.pal[k]
       for (const hl of highlights) {
+        const goal = hl.id === selected ? 1 : 0
+        const cur = st.selAmt[hl.id] ?? goal
+        const amt = cur + (goal - cur) * 0.09
+        st.selAmt[hl.id] = amt
+        const fill = lerpRgb(rgb('hi'), rgb('hiSel'), amt)
+        const line = lerpRgb(rgb('hiLine'), rgb('hiSelLine'), amt)
         ctx.beginPath(); path(hl.feat)
-        ctx.fillStyle = hl.id === selected ? C('hiSel') : C('hi')
+        ctx.fillStyle = `rgb(${fill[0]},${fill[1]},${fill[2]})`
         ctx.fill()
-        // All ~5 locations are highlighted at once (not just the selected one),
-        // so this color renders 5x every frame regardless of selection — it
-        // must vary with selection too, not just the line width.
-        ctx.strokeStyle = hl.id === selected ? C('hiSelLine') : C('hiLine')
-        ctx.lineWidth = hl.id === selected ? 1.2 : 0.8
+        ctx.strokeStyle = `rgb(${line[0]},${line[1]},${line[2]})`
+        ctx.lineWidth = 0.8 + 0.4 * amt
         ctx.stroke()
       }
       if (variant !== 'full') fadeOut(ctx, w, h, HIGHLIGHT_FADE_START)
+
+      // Edge vignette: a radial ERASE toward the rim (destination-out), so the
+      // globe dissolves into the page toward the frame's edge instead of
+      // ending on a hard circle. On the dark theme that reads as the darkening
+      // the design asked for; it works on either theme because it fades to the
+      // page's own background, not to a fixed colour. Full variant only.
+      if (variant === 'full') {
+        const g = ctx.createRadialGradient(w / 2, h / 2, baseR * 0.68, w / 2, h / 2, baseR)
+        g.addColorStop(0, 'rgba(0,0,0,0)')
+        g.addColorStop(1, 'rgba(0,0,0,1)')
+        ctx.globalCompositeOperation = 'destination-out'
+        ctx.fillStyle = g
+        ctx.beginPath(); ctx.arc(w / 2, h / 2, baseR, 0, 2 * Math.PI); ctx.fill()
+        ctx.globalCompositeOperation = 'source-over'
+      }
       ctx.restore()
 
       raf = requestAnimationFrame(draw)
