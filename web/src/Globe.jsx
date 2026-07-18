@@ -84,6 +84,12 @@ const lerpRgb = (a, b, t) => [
   Math.round(a[2] + (b[2] - a[2]) * t),
 ]
 
+// The backdrop horizon's resting tilt (latitude at the projection centre). The
+// crown shows points ~11° above it; -6°N clears Hong Kong's edge while staying
+// close to the original slight tilt. The desktop globe NEVER leaves this tilt —
+// it only spins in longitude — so a selected location can't cant the horizon.
+const BACKDROP_TILT = -6
+
 function hexToRgb(hex) {
   const h = hex.replace('#', '')
   return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
@@ -211,7 +217,7 @@ export default function Globe({
   // the bottom edge, inside the dissolve, where it read as a faint smudge.
   // 6°N is the middle ground: Hong Kong clears the edge by 16°, and the tilt
   // stays close to the original (the equator felt like too much of a swing).
-  const anim = useRef({ rotation: [-14, -6], flyTarget: null })
+  const anim = useRef({ rotation: [-14, BACKDROP_TILT], flyTarget: null })
 
   // Resolving a location to an atlas feature scans 177 geometries and runs
   // geoCentroid, so it happens once per location change — never inside the loop.
@@ -230,7 +236,10 @@ export default function Globe({
     if (!hl) return
     const to = [-hl.centroid[0], -hl.centroid[1]]
     if (variant === 'full') anim.current.flight = { to, from: null, t0: 0, angRad: hl.angRad }
-    else anim.current.flyTarget = to
+    // Backdrop: spin to the location's longitude but HOLD the resting tilt, so
+    // switching from the mobile tour (which may have left a high-latitude
+    // location selected) can't leave the desktop horizon canted at that lat.
+    else anim.current.flyTarget = [to[0], BACKDROP_TILT]
   }, [selected, highlights, variant])
 
   useEffect(() => {
