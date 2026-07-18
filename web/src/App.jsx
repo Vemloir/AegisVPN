@@ -9,6 +9,10 @@ import * as api from './api.js'
 const BOT_NAME = 'AegisEcoVPN_bot'
 const BOT_URL = `https://t.me/${BOT_NAME}`
 
+// Language lives in the URL path (/ru/ or /en/), so a shared link carries its
+// language. Anything that isn't /en falls back to Russian, the default.
+const langFromPath = () => (/^\/en(\/|$)/.test(window.location.pathname) ? 'en' : 'ru')
+
 // In-page nav scrolls to a section without ever touching the URL — no
 // #features/#pricing hash junk in the address bar or browser history.
 function scrollToSection(e, id) {
@@ -512,7 +516,7 @@ const Star = ({ size = 15 }) => (
 /* ---------------------------------------------------------------------- app  */
 
 export default function App() {
-  const [lang, setLang] = useState(() => localStorage.getItem('aegis_lang') || 'ru')
+  const [lang, setLang] = useState(langFromPath)
   const [theme, setTheme] = useState(
     () =>
       localStorage.getItem('aegis_theme') ||
@@ -520,7 +524,6 @@ export default function App() {
   )
   const [selected, setSelected] = useState(null)
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 900)
-  const [menuOpen, setMenuOpen] = useState(false)
 
   // The hero description must visually align with the H1 beside it: the cap
   // top of its first line level with the H1's cap top, the BASELINE of its
@@ -611,7 +614,20 @@ export default function App() {
 
   const t = dict(lang)
 
-  useEffect(() => { localStorage.setItem('aegis_lang', lang) }, [lang])
+  // Switch language by rewriting the path (/ru/ or /en/) — no reload needed, the
+  // whole UI just re-renders from the new dictionary, and the URL stays
+  // shareable. Back/forward re-derive the language from the path.
+  const switchLang = useCallback((l) => {
+    if (l === lang) return
+    window.history.pushState(null, '', `/${l}/`)
+    setLang(l)
+  }, [lang])
+  useEffect(() => { document.documentElement.lang = lang }, [lang])
+  useEffect(() => {
+    const onPop = () => setLang(langFromPath())
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
 
   useEffect(() => {
     localStorage.setItem('aegis_theme', theme)
@@ -939,8 +955,8 @@ export default function App() {
               </button>
 
               <div style={css('display:flex; border:none; border-radius:999px; overflow:hidden; background:var(--seg);')}>
-                <button onClick={() => setLang('ru')} style={css(langBtn(lang === 'ru'))}>RU</button>
-                <button onClick={() => setLang('en')} style={css(langBtn(lang === 'en'))}>EN</button>
+                <button onClick={() => switchLang('ru')} style={css(langBtn(lang === 'ru'))}>RU</button>
+                <button onClick={() => switchLang('en')} style={css(langBtn(lang === 'en'))}>EN</button>
               </div>
 
               {!authReady ? (
@@ -976,8 +992,14 @@ export default function App() {
 
           {isMobile && (
             <div style={css('display:flex; align-items:center; gap:10px;')}>
-              {/* A dedicated account control lives in the header now, not buried
-                  in the menu: the avatar when signed in, a compact sign-in
+              {/* Theme toggle moved into the top bar (the settings menu is gone);
+                  language now comes from the URL path (/ru/, /en/). */}
+              <button
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                aria-label="Theme"
+                style={css('display:flex; align-items:center; justify-content:center; width:40px; height:40px; border:none; border-radius:999px; background:var(--seg); cursor:pointer; color:var(--ink); padding:0; font-size:16px;')}
+              >{theme === 'dark' ? '☾' : '☀'}</button>
+              {/* Account control: the avatar when signed in, a compact sign-in
                   button when not. */}
               {!authReady ? (
                 <span style={css('width:40px; height:40px; flex-shrink:0;')} />
@@ -1005,37 +1027,10 @@ export default function App() {
                   )}
                 </span>
               )}
-              <button
-                onClick={() => setMenuOpen(true)}
-                aria-label="Menu"
-                style={css('display:flex; align-items:center; justify-content:center; width:40px; height:40px; border:1px solid var(--hair2); border-radius:12px; background:transparent; cursor:pointer; color:var(--ink); padding:0;')}
-              >☰</button>
             </div>
           )}
         </div>
       </header>
-
-      {menuOpen && (
-        <Modal onClose={() => setMenuOpen(false)} maxWidth={480}>
-          <nav style={css('display:flex; flex-direction:column; gap:4px; margin-bottom:28px; font-size:17px;')}>
-            {[['pricing', t.nav_pricing], ['servers', t.nav_servers]].map(([id, label]) => (
-              <a
-                key={id}
-                href={`#${id}`}
-                onClick={(e) => { scrollToSection(e, id); setMenuOpen(false) }}
-                style={css('color:inherit; text-decoration:none; padding:12px 0; border-bottom:1px solid var(--hair);')}
-              >{label}</a>
-            ))}
-          </nav>
-          <div style={css('display:flex; gap:10px; margin-bottom:14px;')}>
-            <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} style={css('width:40px; height:40px; border:1px solid var(--hair2); border-radius:12px; background:transparent; cursor:pointer; color:var(--ink);')}>{theme === 'dark' ? '☾' : '☀'}</button>
-            <div style={css('display:flex; flex:1; border:1px solid var(--hair2); border-radius:12px; overflow:hidden;')}>
-              <button onClick={() => setLang('ru')} style={css(langBtn(lang === 'ru') + 'flex:1; padding:10px 20px; font-size:14px;')}>RU</button>
-              <button onClick={() => setLang('en')} style={css(langBtn(lang === 'en') + 'flex:1; padding:10px 20px; font-size:14px;')}>EN</button>
-            </div>
-          </div>
-        </Modal>
-      )}
 
       {/* ============================= HERO ============================= */}
       {/* The clamp minimums are what a phone actually gets (10vw of 390px is
