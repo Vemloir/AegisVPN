@@ -43,6 +43,11 @@ MIGRATIONS: dict[str, list[Column]] = {
         Column("first_name", "VARCHAR(128)", "VARCHAR(128)"),
         Column("last_name", "VARCHAR(128)", "VARCHAR(128)"),
         Column("photo_url", "VARCHAR(512)", "VARCHAR(512)"),
+        # A server-side copy of the avatar image (see User.avatar_data): fetched
+        # once when photo_url changes and served from our own domain, because
+        # Telegram's avatar CDN is blocked for our audience.
+        Column("avatar_data", "BLOB", "BYTEA"),
+        Column("avatar_mime", "VARCHAR(64)", "VARCHAR(64)"),
     ],
     "plans": [
         Column("rub_price", "INTEGER", "INTEGER"),

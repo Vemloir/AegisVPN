@@ -7,8 +7,11 @@ read from the tables the admin panel writes. Nothing is duplicated here.
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 from datetime import UTC, datetime
 
+import aiohttp
 from fastapi import Cookie, FastAPI, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -111,6 +114,32 @@ def _display_name(user: User) -> str:
     return name or user.username or f"id{user.tg_id}"
 
 
+_AVATAR_TIMEOUT = aiohttp.ClientTimeout(total=8, connect=4)
+_AVATAR_MAX_BYTES = 512 * 1024  # a profile picture is a few dozen KiB; cap the rest
+
+
+async def _fetch_avatar(url: str) -> tuple[bytes, str] | None:
+    """Download a Telegram avatar so it can be served from our own domain.
+
+    Best-effort: any failure — blocked host, timeout, oversize, not an image —
+    returns None and the caller keeps whatever it already had.
+    """
+    try:
+        async with aiohttp.ClientSession(timeout=_AVATAR_TIMEOUT) as session:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    return None
+                mime = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+                if not mime.startswith("image/"):
+                    return None
+                data = await resp.content.read(_AVATAR_MAX_BYTES + 1)
+                if not data or len(data) > _AVATAR_MAX_BYTES:
+                    return None
+                return data, mime
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+        return None
+
+
 async def _current_user(session: AsyncSession, cookie: str | None) -> User | None:
     user_id = read_session(cookie)
     if user_id is None:
@@ -135,6 +164,15 @@ async def _me_payload(session: AsyncSession, user: User) -> dict:
         # separate field; the site prints it as secondary detail.
         "display_name": _display_name(user),
         "tg": f"@{user.username}" if user.username else None,
+        # Prefer our own copy (works where Telegram's CDN is blocked); the ?v
+        # token is a digest of photo_url, so the URL — and thus the browser
+        # cache — changes exactly when the avatar does. photo_url stays as a
+        # last-resort fallback for accounts whose image we couldn't fetch.
+        "avatar_url": (
+            f"/api/avatar/{user.id}?v={hashlib.sha1((user.photo_url or '').encode()).hexdigest()[:12]}"
+            if user.avatar_data
+            else None
+        ),
         "photo_url": user.photo_url,
         # Drives the consent checkbox at checkout: a user who already accepted
         # in the bot is never asked again.
@@ -187,6 +225,10 @@ async def auth_telegram(request: Request, response: Response) -> dict | None:
             # A visitor who signs in on the site before ever opening the bot still
             # gets an account; the bot will find it by tg_id on /start.
             user = User(tg_id=tg_id, **fresh)
+            if fresh["photo_url"]:
+                got = await _fetch_avatar(fresh["photo_url"])
+                if got:
+                    user.avatar_data, user.avatar_mime = got
             session.add(user)
             await session.commit()
             await session.refresh(user)
@@ -197,10 +239,18 @@ async def auth_telegram(request: Request, response: Response) -> dict | None:
             # Refresh on every sign-in: handles get re-taken, people rename
             # themselves, and Telegram's avatar URL changes with the photo. A
             # field the payload doesn't carry is left alone rather than wiped.
+            # Re-fetch the avatar bytes ONLY when the URL actually changed (or we
+            # never cached one) — an unchanged photo is left exactly as it is.
+            photo_changed = fresh["photo_url"] is not None and user.photo_url != fresh["photo_url"]
             changed = False
             for field, value in fresh.items():
                 if value is not None and getattr(user, field) != value:
                     setattr(user, field, value)
+                    changed = True
+            if fresh["photo_url"] and (photo_changed or not user.avatar_data):
+                got = await _fetch_avatar(fresh["photo_url"])
+                if got:
+                    user.avatar_data, user.avatar_mime = got
                     changed = True
             if changed:
                 await session.commit()
@@ -223,3 +273,18 @@ async def auth_telegram(request: Request, response: Response) -> dict | None:
 async def logout(response: Response) -> dict:
     response.delete_cookie(SESSION_COOKIE, path="/")
     return {"ok": True}
+
+
+@app.get("/api/avatar/{user_id}")
+async def avatar(user_id: int) -> Response:
+    """Serve a user's cached avatar from our own domain. Public (a profile
+    picture is not a secret) and immutable per ?v token, so it caches hard."""
+    async with async_session_maker() as session:
+        user = await session.get(User, user_id)
+    if user is None or not user.avatar_data:
+        return Response(status_code=404)
+    return Response(
+        content=user.avatar_data,
+        media_type=user.avatar_mime or "image/jpeg",
+        headers={"Cache-Control": "public, max-age=604800, immutable"},
+    )
