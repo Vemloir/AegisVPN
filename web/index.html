@@ -14,6 +14,14 @@
     <title>AegisVPN — быстрый и приватный интернет</title>
     <meta name="description" content="VPN на Xray VLESS + Reality. Пять локаций, безлимитная скорость, подключение через Telegram за минуту." />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+
+    <!-- Warm the Telegram login widget up front: its script and iframe come
+         from telegram.org / oauth.telegram.org, and fetching them only when the
+         auth modal opens left the login button blank for a beat. Preconnect +
+         preload so it renders as soon as the modal appears. -->
+    <link rel="preconnect" href="https://telegram.org" />
+    <link rel="preconnect" href="https://oauth.telegram.org" />
+    <link rel="preload" as="script" href="https://telegram.org/js/telegram-widget.js?22" />
   </head>
   <body>
     <div id="root"></div>

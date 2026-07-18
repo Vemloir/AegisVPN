@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Integer, String
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, LargeBinary, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -25,6 +25,12 @@ class User(Base):
     # Telegram avatar, captured from the web Login Widget payload only — the bot
     # never sees it, so this stays NULL for users who never signed in on the site.
     photo_url: Mapped[str | None] = mapped_column(String(512))
+    # A server-side copy of the avatar image. Telegram's avatar CDN is among the
+    # hosts blocked for exactly our audience, so hotlinking photo_url leaves them
+    # with a blank avatar; we fetch the bytes once (only when photo_url changes)
+    # and serve them from our own domain via /api/avatar/{id}.
+    avatar_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    avatar_mime: Mapped[str | None] = mapped_column(String(64), nullable=True)
     referrer_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
     is_banned: Mapped[bool] = mapped_column(Boolean, default=False)
     language: Mapped[str] = mapped_column(String(8), default="ru", server_default="ru")

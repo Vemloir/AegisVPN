@@ -160,7 +160,11 @@ const TG_ICON = (
 function Avatar({ user, size, fallbackLabel }) {
   const [broken, setBroken] = useState(false)
   const initial = (user.display_name || fallbackLabel || '?')[0].toUpperCase()
-  if (!user.photo_url || broken) {
+  // Prefer our own copy (avatar_url, served from this domain and reachable where
+  // Telegram's CDN is blocked); fall back to the Telegram hotlink, then to the
+  // initial if even that fails or there is no photo at all.
+  const src = user.avatar_url || user.photo_url
+  if (!src || broken) {
     return (
       <span
         style={{
@@ -176,7 +180,7 @@ function Avatar({ user, size, fallbackLabel }) {
   }
   return (
     <img
-      src={user.photo_url}
+      src={src}
       alt=""
       onError={() => setBroken(true)}
       referrerPolicy="no-referrer"
@@ -956,11 +960,33 @@ export default function App() {
           )}
 
           {isMobile && (
-            <button
-              onClick={() => setMenuOpen(true)}
-              aria-label="Menu"
-              style={css('display:flex; align-items:center; justify-content:center; width:40px; height:40px; border:1px solid var(--hair2); border-radius:12px; background:transparent; cursor:pointer; color:var(--ink); padding:0;')}
-            >☰</button>
+            <div style={css('display:flex; align-items:center; gap:10px;')}>
+              {/* A dedicated account control lives in the header now, not buried
+                  in the menu: the avatar when signed in, a compact sign-in
+                  button when not. */}
+              {user ? (
+                <button
+                  onClick={() => setAccountOpen(true)}
+                  aria-label="Account"
+                  style={css('display:flex; align-items:center; justify-content:center; width:40px; height:40px; padding:0; overflow:hidden; border:none; border-radius:999px; background:var(--logoBg); cursor:pointer;')}
+                >
+                  <Avatar user={user} size={40} fallbackLabel={t.acc_guest_label} />
+                </button>
+              ) : (
+                <HoverButton
+                  onClick={() => setAuthOpen(true)}
+                  base={primaryBtn + 'white-space:nowrap; flex-shrink:0; padding:9px 15px; font-size:14px;'}
+                  hover="background:var(--btnHover);"
+                >
+                  {t.auth_login}
+                </HoverButton>
+              )}
+              <button
+                onClick={() => setMenuOpen(true)}
+                aria-label="Menu"
+                style={css('display:flex; align-items:center; justify-content:center; width:40px; height:40px; border:1px solid var(--hair2); border-radius:12px; background:transparent; cursor:pointer; color:var(--ink); padding:0;')}
+              >☰</button>
+            </div>
           )}
         </div>
       </header>
@@ -984,12 +1010,6 @@ export default function App() {
               <button onClick={() => setLang('en')} style={css(langBtn(lang === 'en') + 'flex:1; padding:10px 20px; font-size:14px;')}>EN</button>
             </div>
           </div>
-          <button
-            onClick={() => { setMenuOpen(false); user ? setAccountOpen(true) : setAuthOpen(true) }}
-            style={css('width:100%; border:1px solid var(--hair2); background:transparent; color:var(--ink); font-size:15.5px; font-weight:500; padding:14px; border-radius:12px; cursor:pointer; font-family:inherit;')}
-          >
-            {user ? t.acc_greeting : t.auth_login}
-          </button>
         </Modal>
       )}
 
