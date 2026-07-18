@@ -991,7 +991,7 @@ export default function App() {
                 // signing in swaps the button for the avatar.
                 <span
                   key={user ? 'account' : 'login'}
-                  style={{ ...css('display:inline-flex; align-items:center; flex-shrink:0;'), animation: 'vpnAccountIn .32s cubic-bezier(.22,.61,.36,1)' }}
+                  style={css('display:inline-flex; align-items:center; flex-shrink:0;')}
                 >
                   {user ? (
                     <button
@@ -1031,7 +1031,7 @@ export default function App() {
               ) : (
                 <span
                   key={user ? 'account' : 'login'}
-                  style={{ ...css('display:inline-flex; align-items:center; flex-shrink:0;'), animation: 'vpnAccountIn .32s cubic-bezier(.22,.61,.36,1)' }}
+                  style={css('display:inline-flex; align-items:center; flex-shrink:0;')}
                 >
                   {user ? (
                     <button
