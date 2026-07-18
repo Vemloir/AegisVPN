@@ -1108,7 +1108,7 @@ export default function App() {
             // the full-height slide, and trim the top padding, so the heading
             // rises right under the hero's location card instead of floating in
             // the full-height slack — the "air under the locations".
-            ...(isMobile ? { ...MOBILE_SLIDE, justifyContent: 'flex-start', paddingTop: '14px' } : null),
+            ...(isMobile ? { ...MOBILE_SLIDE, minHeight: 'auto', justifyContent: 'flex-start', paddingTop: '14px' } : null),
           }}
         >
           <Reveal>
@@ -1266,7 +1266,9 @@ export default function App() {
         id="servers"
         style={{
           ...css('max-width:1180px; margin:0 auto; padding:clamp(34px,8vw,96px) clamp(16px,4.5vw,28px);'),
-          ...(isMobile ? MOBILE_SLIDE : null),
+          // Mobile: hug the content instead of a forced 100svh centred slide —
+          // the sparse locations panel left a huge void above and below it.
+          ...(isMobile ? { ...MOBILE_SLIDE, minHeight: 'auto', justifyContent: 'flex-start' } : null),
         }}
       >
         {/* Heading centred; the location rows below keep their left alignment. */}
