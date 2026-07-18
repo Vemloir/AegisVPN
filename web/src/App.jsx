@@ -924,17 +924,22 @@ export default function App() {
           // reads as a placeholder for a missing image. Anchor it in the upper
           // third instead: the slack falls BELOW the content, where empty space
           // just invites a scroll to the next screen.
-          ...(isMobile ? { ...MOBILE_SLIDE, justifyContent: 'flex-start', paddingTop: '14vh' } : null),
+          ...(isMobile ? { ...MOBILE_SLIDE, justifyContent: 'flex-start', paddingTop: '7vh' } : null),
         }}
       >
         {/* Centred on a phone (one column), left-aligned on the two-column
             desktop layout where the copy pairs with the sub-text column. */}
         <div style={{ display: 'grid', gap: isMobile ? '22px' : '48px', alignItems: 'start', gridTemplateColumns: isMobile ? '1fr' : '1.45fr 1fr', textAlign: isMobile ? 'center' : 'left' }}>
           <div style={css('min-width:0;')}>
-            <div style={css('display:inline-flex; align-items:center; gap:8px; font-size:13px; letter-spacing:.04em; text-transform:uppercase; color:var(--accent); font-weight:600; margin-bottom:24px;')}>
-              <span style={css('width:6px; height:6px; border-radius:50%; background:var(--accentSoft); display:inline-block;')} />
-              {t.hero_eyebrow}
-            </div>
+            {/* The Xray/VLESS eyebrow is desktop-only now: on a phone the hero
+                merges with the globe into the first screen, and this protocol
+                line was cut to make room. */}
+            {!isMobile && (
+              <div style={css('display:inline-flex; align-items:center; gap:8px; font-size:13px; letter-spacing:.04em; text-transform:uppercase; color:var(--accent); font-weight:600; margin-bottom:24px;')}>
+                <span style={css('width:6px; height:6px; border-radius:50%; background:var(--accentSoft); display:inline-block;')} />
+                {t.hero_eyebrow}
+              </div>
+            )}
             <h1 ref={heroH1Ref} style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(40px,5.2vw,66px); line-height:1.03; letter-spacing:-.02em; margin:0 0 28px; color:var(--ink);")}>
               {t.hero_l1}<br />
               <span style={css('font-style:italic; color:var(--accent);')}>{t.hero_l2}</span>
@@ -971,6 +976,10 @@ export default function App() {
               </HoverLink>
             </div>
           </div>
+          {/* Sub-paragraph is desktop-only: on mobile the globe takes the space
+              below the title, and this copy (which also led with Xray/VLESS)
+              was cut with the eyebrow. */}
+          {!isMobile && (
           <div style={css('min-width:0;')}>
             {!isMobile && (
               // Invisible clone of the eyebrow badge — not measured, just the
@@ -1002,7 +1011,42 @@ export default function App() {
               {t.hero_sub}
             </p>
           </div>
+          )}
         </div>
+
+        {/* Mobile: the globe joins the hero as the first screen — no separate
+            slide, no heading. It runs the auto-tour and the card names each
+            location. Reveal fades it up on load, a beat after the title. */}
+        {isMobile && (
+          <Reveal delay={140} style={{ marginTop: '18px' }}>
+            <div style={{ position: 'relative', width: '100%', height: '40svh' }}>
+              <Globe
+                locations={locations}
+                selected={selected}
+                onSelect={setSelected}
+                theme={theme}
+                autoRotate={false}
+                variant="full"
+                maxDpr={3}
+                style={css('position:absolute; inset:0; z-index:0;')}
+              />
+            </div>
+            <div style={css('display:flex; align-items:center; justify-content:center; min-height:84px; margin-top:4px;')}>
+              {tourLocation && (() => {
+                const [country, city] = tourLocation.name.split(' | ')
+                return (
+                  <div key={tourLocation.id} style={{ ...css('display:flex; align-items:center; gap:16px;'), animation: 'vpnFadeIn .35s ease' }}>
+                    <div style={css('text-align:left;')}>
+                      <div style={css("font-family:'Newsreader','EB Garamond',serif; font-size:24px; font-weight:500; line-height:1.1; color:var(--ink);")}>{country}</div>
+                      {city && <div style={css('font-size:13.5px; color:var(--muted2); margin-top:3px;')}>{city}</div>}
+                    </div>
+                    <Flag code={tourLocation.code} emoji={tourLocation.flag} height={38} />
+                  </div>
+                )
+              })()}
+            </div>
+          </Reveal>
+        )}
       </section>
 
       {/* ============================= GLOBE ============================
@@ -1011,48 +1055,9 @@ export default function App() {
           shows — a horizon behind the copy — and the mask fades its lower half
           into the page. Putting this in a bordered box makes the globe read as
           "shifted up", because the sphere's centre is below the box. */}
-      {/* Mobile: the globe returns as its own slide, running an auto-tour — it
-          flies to each active location in turn and the card names it (flag,
-          Country | City, region). variant="full" centres the sphere so the
-          flown-to location is actually visible; maxDpr caps the canvas cost. */}
-      {isMobile ? (
-        <section style={{ ...css('position:relative; padding:0 clamp(16px,4.5vw,28px);'), ...MOBILE_SLIDE }}>
-          <div style={css('text-align:center; margin-bottom:4px;')}>
-            <div style={css('font-size:12.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); font-weight:600; margin-bottom:12px;')}>{t.globe_kicker}</div>
-            <h2 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(26px,7vw,34px); line-height:1.2; letter-spacing:-.01em; margin:0; color:var(--ink);")}>{t.globe_title}</h2>
-          </div>
-          <div style={{ position: 'relative', width: '100%', height: '48svh' }}>
-            <Globe
-              locations={locations}
-              selected={selected}
-              onSelect={setSelected}
-              theme={theme}
-              autoRotate={false}
-              variant="full"
-              maxDpr={3}
-              style={css('position:absolute; inset:0; z-index:0;')}
-            />
-          </div>
-          {/* Info card for the location the tour is on. min-height reserves the
-              row so the slide doesn't jump as names of different lengths swap;
-              keyed on selected so each one fades in. Country on the left with
-              its city under it in smaller grey; the flag to the right, centred. */}
-          <div style={css('display:flex; align-items:center; justify-content:center; min-height:96px; margin-top:8px;')}>
-            {tourLocation && (() => {
-              const [country, city] = tourLocation.name.split(' | ')
-              return (
-                <div key={tourLocation.id} style={{ ...css('display:flex; align-items:center; gap:16px;'), animation: 'vpnFadeIn .35s ease' }}>
-                  <div style={css('text-align:left;')}>
-                    <div style={css("font-family:'Newsreader','EB Garamond',serif; font-size:24px; font-weight:500; line-height:1.1; color:var(--ink);")}>{country}</div>
-                    {city && <div style={css('font-size:13.5px; color:var(--muted2); margin-top:3px;')}>{city}</div>}
-                  </div>
-                  <Flag code={tourLocation.code} emoji={tourLocation.flag} height={38} />
-                </div>
-              )
-            })()}
-          </div>
-        </section>
-      ) : (
+      {/* Mobile shows the globe up in the hero instead (a merged first screen),
+          so this backdrop-horizon version is desktop only. */}
+      {!isMobile && (
       <section style={css('position:relative; padding:0 0 clamp(48px,10vw,92px);')}>
         {(
           <div style={css('position:relative; width:100%; min-height:clamp(360px,72vw,600px);')}>
