@@ -1021,7 +1021,7 @@ export default function App() {
             <div style={css('font-size:12.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); font-weight:600; margin-bottom:12px;')}>{t.globe_kicker}</div>
             <h2 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:clamp(26px,7vw,34px); line-height:1.2; letter-spacing:-.01em; margin:0; color:var(--ink);")}>{t.globe_title}</h2>
           </div>
-          <div style={{ position: 'relative', width: '100%', height: '42svh' }}>
+          <div style={{ position: 'relative', width: '100%', height: '48svh' }}>
             <Globe
               locations={locations}
               selected={selected}
@@ -1029,7 +1029,7 @@ export default function App() {
               theme={theme}
               autoRotate={false}
               variant="full"
-              maxDpr={2}
+              maxDpr={3}
               style={css('position:absolute; inset:0; z-index:0;')}
             />
           </div>
