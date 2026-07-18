@@ -307,7 +307,11 @@ export default function Globe({
           const p = Math.min(1, (now - fl.t0) / TOUR_FLIGHT_MS)
           const e = easeInOut(p) // one gentle curve drives both, in lock-step
           st.rotation = [fl.from[0] + fl.d[0] * e, fl.from[1] + fl.d[1] * e]
-          st.scaleNow = fl.fromScale + (fl.toScale - fl.fromScale) * e
+          // Zoom is perceived logarithmically — equal RATIOS read as equal steps —
+          // so interpolate scale geometrically (from * (to/from)^e), not linearly.
+          // A linear lerp of a 6x->1.4x change crawls near the high zoom and races
+          // near the low one, which is the "exponential" feel; log-space is even.
+          st.scaleNow = fl.fromScale * Math.pow(fl.toScale / fl.fromScale, e)
           if (p >= 1) {
             st.rotation = [fl.to[0], fl.to[1]]
             st.scaleNow = fl.toScale
