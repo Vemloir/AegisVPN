@@ -9,7 +9,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import time
+from urllib.parse import parse_qsl
 
 from src.core.config import settings
 
@@ -65,6 +67,43 @@ def verify_telegram_login(payload: dict) -> int | None:
         return None
 
     return tg_id
+
+
+def verify_telegram_webapp(init_data: str) -> dict | None:
+    """Return the Telegram user dict if a Mini App ``initData`` is authentic and fresh.
+
+    A Mini App signs initData with HMAC-SHA256(data_check_string, secret) where
+    the secret is itself HMAC-SHA256("WebAppData", bot_token) — a DIFFERENT
+    scheme from the Login Widget (which keys on sha256(token) directly). As with
+    the widget, this signature is the ONLY thing authenticating the user, since
+    the client can POST any initData it likes.
+    """
+    if not init_data:
+        return None
+    # keep_blank_values: Telegram signs EVERY received field, so a present-but-
+    # empty one must stay in the check string or the hash won't match.
+    pairs = dict(parse_qsl(init_data, keep_blank_values=True))
+    received = pairs.pop("hash", None)
+    if not received or "auth_date" not in pairs or "user" not in pairs:
+        return None
+
+    data_check_string = "\n".join(f"{k}={pairs[k]}" for k in sorted(pairs))
+    secret_key = hmac.new(
+        b"WebAppData", settings.bot_token.get_secret_value().encode(), hashlib.sha256
+    ).digest()
+    expected = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, received):
+        return None
+
+    try:
+        if time.time() - int(pairs["auth_date"]) > AUTH_MAX_AGE_SECONDS:
+            return None
+        user = json.loads(pairs["user"])
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(user, dict) or not isinstance(user.get("id"), int):
+        return None
+    return user
 
 
 def issue_session(user_id: int) -> str:

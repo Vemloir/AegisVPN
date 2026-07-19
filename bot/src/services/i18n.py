@@ -38,6 +38,7 @@ TEXTS: dict[str, dict[str, str]] = {
             "получение ключей и поддержка собраны в одном месте."
         ),
         "info_github_label": "Исходный код на GitHub",
+        "info_site_button": "Открыть сайт",
         "info_news_button": "Новости",
         "info_support_button": "Поддержка",
         "back": "Назад",
@@ -225,6 +226,7 @@ TEXTS: dict[str, dict[str, str]] = {
             "key delivery, and support are all in one place."
         ),
         "info_github_label": "Source code on GitHub",
+        "info_site_button": "Open website",
         "info_news_button": "News",
         "info_support_button": "Support",
         "back": "Back",

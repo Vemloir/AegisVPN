@@ -23,6 +23,7 @@ from src.api.auth import (
     issue_session,
     read_session,
     verify_telegram_login,
+    verify_telegram_webapp,
 )
 from src.api.checkout import terms_accepted
 from src.core.config import settings
@@ -201,39 +202,24 @@ async def _me_payload(session: AsyncSession, user: User) -> dict:
     return payload
 
 
-@app.get("/api/me")
-async def me(response: Response, aegis_session: str | None = Cookie(default=None)) -> dict | None:
-    async with async_session_maker() as session:
-        user = await _current_user(session, aegis_session)
-        if user is None or user.is_banned:
-            response.status_code = 401
-            return None
-        return await _me_payload(session, user)
+def _profile_fields(src: dict) -> dict:
+    """The profile fields Telegram signs for us, normalised. Empty strings mean
+    "not set" (Telegram omits absent fields, but be defensive) — store NULL."""
+    return {field: (src.get(field) or None) for field in ("username", "first_name", "last_name", "photo_url")}
 
 
-@app.post("/api/auth/telegram")
-async def auth_telegram(request: Request, response: Response) -> dict | None:
-    payload = await request.json()
-    tg_id = verify_telegram_login(payload)
-    if tg_id is None:
-        response.status_code = 401
-        return None
-
+async def _login(tg_id: int, fresh: dict, response: Response) -> dict | None:
+    """Upsert the Telegram user, refresh their profile + cached avatar, and set
+    the session cookie. Shared by the Login Widget and the Mini App — they differ
+    only in HOW tg_id/fresh were verified, not in what a sign-in does."""
     async with async_session_maker() as session:
         user = (
             await session.execute(select(User).where(User.tg_id == tg_id))
         ).scalar_one_or_none()
 
-        # Profile fields the widget signed for us. Empty strings mean "not set"
-        # (Telegram omits absent fields, but be defensive) — store NULL, not "".
-        fresh = {
-            field: (payload.get(field) or None)
-            for field in ("username", "first_name", "last_name", "photo_url")
-        }
-
         if user is None:
-            # A visitor who signs in on the site before ever opening the bot still
-            # gets an account; the bot will find it by tg_id on /start.
+            # A visitor who signs in before ever opening the bot still gets an
+            # account; the bot finds it by tg_id on /start.
             user = User(tg_id=tg_id, **fresh)
             if fresh["photo_url"]:
                 got = await _fetch_avatar(fresh["photo_url"])
@@ -247,10 +233,9 @@ async def auth_telegram(request: Request, response: Response) -> dict | None:
             return None
         else:
             # Refresh on every sign-in: handles get re-taken, people rename
-            # themselves, and Telegram's avatar URL changes with the photo. A
-            # field the payload doesn't carry is left alone rather than wiped.
-            # Re-fetch the avatar bytes ONLY when the URL actually changed (or we
-            # never cached one) — an unchanged photo is left exactly as it is.
+            # themselves, avatars change. A field the payload doesn't carry is
+            # left alone rather than wiped. Re-fetch the avatar bytes ONLY when the
+            # URL changed (or none is cached) — an unchanged photo is left as-is.
             photo_changed = fresh["photo_url"] is not None and user.photo_url != fresh["photo_url"]
             changed = False
             for field, value in fresh.items():
@@ -277,6 +262,41 @@ async def auth_telegram(request: Request, response: Response) -> dict | None:
         path="/",
     )
     return body
+
+
+@app.get("/api/me")
+async def me(response: Response, aegis_session: str | None = Cookie(default=None)) -> dict | None:
+    async with async_session_maker() as session:
+        user = await _current_user(session, aegis_session)
+        if user is None or user.is_banned:
+            response.status_code = 401
+            return None
+        return await _me_payload(session, user)
+
+
+@app.post("/api/auth/telegram")
+async def auth_telegram(request: Request, response: Response) -> dict | None:
+    """Sign in from the Telegram Login Widget (a browser, outside Telegram)."""
+    payload = await request.json()
+    tg_id = verify_telegram_login(payload)
+    if tg_id is None:
+        response.status_code = 401
+        return None
+    return await _login(tg_id, _profile_fields(payload), response)
+
+
+@app.post("/api/auth/tma")
+async def auth_tma(request: Request, response: Response) -> dict | None:
+    """Auto sign-in when the site runs as a Telegram Mini App: the client posts
+    Telegram's signed initData, we verify it and issue the same session — no
+    Login Widget click, because Telegram already knows who the user is."""
+    payload = await request.json()
+    init_data = payload.get("init_data") if isinstance(payload, dict) else None
+    user = verify_telegram_webapp(init_data or "")
+    if user is None:
+        response.status_code = 401
+        return None
+    return await _login(int(user["id"]), _profile_fields(user), response)
 
 
 @app.post("/api/auth/logout")

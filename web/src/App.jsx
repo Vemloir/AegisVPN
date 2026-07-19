@@ -675,7 +675,32 @@ export default function App() {
   useEffect(() => {
     api.getLocations().then(setLocations).catch(() => setLocations([]))
     api.getPlans().then(setPlans).catch(() => setPlans([]))
-    api.getMe().then(setUser).catch(() => setUser(null)).finally(() => setAuthReady(true))
+
+    // Resolve the signed-in user. First an existing session; if none AND the
+    // site is running as a Telegram Mini App, sign in silently with the
+    // initData Telegram signed — no widget click. Regular browsers finish at
+    // getMe with no delay (so the header still cascades in promptly).
+    let settled = false
+    const finish = (me) => { if (settled) return; settled = true; setUser(me || null); setAuthReady(true) }
+    const inTelegram = () =>
+      !!window.Telegram?.WebApp?.initData || /tgWebApp/i.test(window.location.hash) || 'TelegramWebviewProxy' in window
+    api.getMe().then((me) => {
+      if (me) return finish(me)
+      if (!inTelegram()) return finish(null)
+      // The Mini App SDK loads async; wait briefly for initData, then auth.
+      let tries = 0
+      const attempt = () => {
+        if (settled) return
+        const wa = window.Telegram?.WebApp
+        if (wa?.initData) {
+          wa.ready?.(); wa.expand?.()
+          return api.loginWithTma(wa.initData).then(finish).catch(() => finish(null))
+        }
+        if (tries++ < 25) setTimeout(attempt, 80)
+        else finish(null)
+      }
+      attempt()
+    }).catch(() => finish(null))
   }, [])
 
   // Signing in mid-purchase must not lose the purchase: the auth modal
