@@ -616,6 +616,9 @@ export default function App() {
   // control shows nothing (a same-size spacer) rather than flashing "sign in"
   // for a signed-in user while the request is still in flight.
   const [authReady, setAuthReady] = useState(false)
+  // Running inside Telegram as a Mini App? Tailors the copy/CTAs — "pay on the
+  // site" and "open in Telegram" make no sense when you're already in Telegram.
+  const [isMiniApp, setIsMiniApp] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
   const [authError, setAuthError] = useState(false)
@@ -684,6 +687,9 @@ export default function App() {
     const finish = (me) => { if (settled) return; settled = true; setUser(me || null); setAuthReady(true) }
     const inTelegram = () =>
       !!window.Telegram?.WebApp?.initData || /tgWebApp/i.test(window.location.hash) || 'TelegramWebviewProxy' in window
+    // Tailor the copy as soon as we know the context — independent of whether the
+    // user is already signed in (an existing session still gets Mini App copy).
+    if (inTelegram()) setIsMiniApp(true)
     api.getMe().then((me) => {
       if (me) return finish(me)
       if (!inTelegram()) return finish(null)
@@ -1138,21 +1144,25 @@ export default function App() {
                 base={'display:inline-flex; align-items:center; justify-content:center; gap:9px; background:var(--btn); color:var(--btnText); font-size:16px; font-weight:500; padding:14px 26px; border-radius:999px; text-decoration:none;' + (isMobile ? ' width:100%;' : '')}
                 hover="background:var(--btnHover);"
               >
-                {t.hero_pay_site}
+                {isMiniApp ? t.hero_pay : t.hero_pay_site}
               </HoverLink>
-              <HoverLink
-                href={BOT_URL}
-                target="_blank"
-                rel="noopener"
-                base={
-                  isMobile
-                    ? 'display:inline-flex; align-items:center; justify-content:center; gap:7px; width:100%; font-size:16px; font-weight:500; color:var(--ink); text-decoration:none; padding:13px 26px; border:1px solid var(--hair2); border-radius:999px;'
-                    : 'display:inline-flex; align-items:center; gap:7px; font-size:16px; font-weight:500; color:var(--ink); text-decoration:none; border-bottom:1px solid transparent; padding-bottom:2px;'
-                }
-                hover={isMobile ? 'background:var(--seg);' : 'border-bottom-color:var(--ink);'}
-              >
-                {TG_ICON} {t.cta_try}
-              </HoverLink>
+              {/* "Open in Telegram" is meaningless inside the Mini App — you're
+                  already there. Browser only. */}
+              {!isMiniApp && (
+                <HoverLink
+                  href={BOT_URL}
+                  target="_blank"
+                  rel="noopener"
+                  base={
+                    isMobile
+                      ? 'display:inline-flex; align-items:center; justify-content:center; gap:7px; width:100%; font-size:16px; font-weight:500; color:var(--ink); text-decoration:none; padding:13px 26px; border:1px solid var(--hair2); border-radius:999px;'
+                      : 'display:inline-flex; align-items:center; gap:7px; font-size:16px; font-weight:500; color:var(--ink); text-decoration:none; border-bottom:1px solid transparent; padding-bottom:2px;'
+                  }
+                  hover={isMobile ? 'background:var(--seg);' : 'border-bottom-color:var(--ink);'}
+                >
+                  {TG_ICON} {t.cta_try}
+                </HoverLink>
+              )}
             </div>
           </div>
           {/* Sub-paragraph is desktop-only: on mobile the globe takes the space
@@ -1417,9 +1427,11 @@ export default function App() {
               <span style={css('font-weight:600; font-size:18px; letter-spacing:-.015em;')}>AegisVPN</span>
             </div>
             <p style={css('font-size:14.5px; line-height:1.55; color:var(--muted2); margin:0 0 18px;')}>{t.foot_brand}</p>
-            <HoverLink href={BOT_URL} target="_blank" rel="noopener" base={primaryBtn + 'font-size:14px; padding:10px 18px;'} hover="background:var(--btnHover);">
-              {TG_ICON} {t.foot_tg}
-            </HoverLink>
+            {!isMiniApp && (
+              <HoverLink href={BOT_URL} target="_blank" rel="noopener" base={primaryBtn + 'font-size:14px; padding:10px 18px;'} hover="background:var(--btnHover);">
+                {TG_ICON} {t.foot_tg}
+              </HoverLink>
+            )}
           </div>
           <div style={css('display:flex; gap:clamp(32px,8vw,80px); flex-wrap:wrap;')}>
             <div>
