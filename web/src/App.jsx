@@ -1048,13 +1048,20 @@ export default function App() {
 
           {isMobile && (
             <div className="hdr-actions" style={css('display:flex; align-items:center; gap:10px;')}>
-              {/* Theme toggle moved into the top bar (the settings menu is gone);
-                  language now comes from the URL path (/ru/, /en/). */}
+              {/* Settings live in the top bar now (the menu is gone): theme
+                  toggle, a compact RU/EN switch, then the account control. */}
               <button
                 onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
                 aria-label="Theme"
                 style={css('display:flex; align-items:center; justify-content:center; width:40px; height:40px; border:none; border-radius:999px; background:var(--seg); cursor:pointer; color:var(--ink); padding:0; font-size:16px;')}
               ><ThemeGlyph dark={theme === 'dark'} /></button>
+              {/* A round toggle like the theme button: shows the CURRENT
+                  language, tap flips to the other (there are only two). */}
+              <button
+                onClick={() => switchLang(lang === 'ru' ? 'en' : 'ru')}
+                aria-label="Language"
+                style={css('display:flex; align-items:center; justify-content:center; width:40px; height:40px; border:none; border-radius:999px; background:var(--seg); cursor:pointer; color:var(--ink); padding:0; font-size:13px; font-weight:600; font-family:inherit; flex-shrink:0;')}
+              >{lang.toUpperCase()}</button>
               {/* Account control: the avatar when signed in, a compact sign-in
                   button when not. */}
               {!authReady ? (
