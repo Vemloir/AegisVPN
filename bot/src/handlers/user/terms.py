@@ -10,7 +10,13 @@ from pathlib import Path
 
 from aiogram import F, Router, html
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    WebAppInfo,
+)
 
 from src.services import UserService, get_user_language, t
 from src.services.telegraph import get_privacy_url, get_tos_url
@@ -24,6 +30,9 @@ ACCEPT_CALLBACK = "terms_accept"
 GITHUB_URL = "https://github.com/demented484/AegisVPN"
 NEWS_URL = "https://t.me/AegisVPNnews"
 SUPPORT_URL = "https://t.me/AegisVPNsupportBot"
+# Opened as a Mini App (web_app), so it launches inside Telegram and signs the
+# user in automatically from the initData Telegram passes.
+SITE_URL = "https://aegisvpn.org"
 
 _DOCS_DIR = Path(__file__).resolve().parents[2] / "privacy"
 
@@ -128,6 +137,7 @@ async def cmd_info(message: Message):
     )
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text=t(language, "info_site_button"), web_app=WebAppInfo(url=SITE_URL))],
             [InlineKeyboardButton(text=t(language, "info_support_button"), url=SUPPORT_URL)],
             [InlineKeyboardButton(text=t(language, "info_news_button"), url=NEWS_URL)],
         ]

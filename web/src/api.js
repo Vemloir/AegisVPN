@@ -24,6 +24,14 @@ export const getMe = () => fetch('/api/me', opts).then(json)
 export const loginWithTelegram = (payload) =>
   fetch('/api/auth/telegram', { ...opts, method: 'POST', body: JSON.stringify(payload) }).then(json)
 
+/**
+ * Auto sign-in when the site runs as a Telegram Mini App: hand the backend the
+ * signed `initData` string Telegram injected; it verifies the HMAC (a different
+ * scheme from the widget) and sets the same session cookie. No widget click.
+ */
+export const loginWithTma = (initData) =>
+  fetch('/api/auth/tma', { ...opts, method: 'POST', body: JSON.stringify({ init_data: initData }) }).then(json)
+
 export const logout = () => fetch('/api/auth/logout', { ...opts, method: 'POST' }).then(json)
 
 /** Record acceptance of the current legal documents (same flags the bot sets). */
