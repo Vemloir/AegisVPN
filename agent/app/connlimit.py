@@ -35,13 +35,26 @@ def _load_overrides() -> None:
         _overrides = {}
 
 
+def _write_overrides(values: dict[int, int]) -> None:
+    os.makedirs(os.path.dirname(_OVERRIDES_PATH), exist_ok=True)
+    tmp = _OVERRIDES_PATH + ".tmp"
+    try:
+        with open(tmp, "w") as fh:
+            json.dump({str(k): v for k, v in values.items()}, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, _OVERRIDES_PATH)
+    finally:
+        try:
+            os.remove(tmp)
+        except FileNotFoundError:
+            pass
+
+
 def _save_overrides() -> None:
     try:
-        os.makedirs(os.path.dirname(_OVERRIDES_PATH), exist_ok=True)
-        tmp = _OVERRIDES_PATH + ".tmp"
-        with open(tmp, "w") as fh:
-            json.dump({str(k): v for k, v in _overrides.items()}, fh)
-        os.replace(tmp, _OVERRIDES_PATH)
+        _write_overrides(_overrides)
     except OSError as exc:
         print(f"conn-limit: failed to persist overrides: {exc}")
 
@@ -53,6 +66,23 @@ def set_override(user_id: int, limit: int | None) -> None:
     else:
         _overrides[user_id] = max(0, int(limit))
     _save_overrides()
+
+
+def replace_overrides(overrides: dict[int, int]) -> None:
+    """Atomically replace the complete desired override set.
+
+    Unlike individual legacy pushes, a pull snapshot is authoritative: an
+    override absent from it must be removed rather than retained indefinitely.
+    Persist before swapping the in-memory map so a failed write cannot be
+    acknowledged as applied.
+    """
+    normalized = {
+        int(user_id): max(0, int(limit))
+        for user_id, limit in overrides.items()
+    }
+    _write_overrides(normalized)
+    global _overrides
+    _overrides = normalized
 
 
 def _user_id_from_email(email: str) -> int | None:
