@@ -1,6 +1,6 @@
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class DesiredClient(BaseModel):
@@ -37,3 +37,32 @@ class SnapshotPage(BaseModel):
     page_index: int
     page_digest: str
     items: list[DesiredItem]
+
+
+class NodeSyncRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    applied_generation: int = Field(ge=0)
+    applied_digest: str | None = Field(default=None, max_length=64)
+    agent_version: str = Field(max_length=64)
+    capabilities: list[str] = Field(default_factory=list, max_length=64)
+
+
+class NodeAckRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    generation: int = Field(ge=1)
+    digest: str = Field(min_length=64, max_length=64)
+    success: bool
+    error: str | None = Field(default=None, max_length=512)
+
+
+class NodeTelemetryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sequence: int = Field(ge=0)
+    payload: dict
+
+
+class NodeControlResult(BaseModel):
+    status: Literal["ok", "duplicate", "error-recorded"]

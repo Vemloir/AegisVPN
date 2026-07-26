@@ -26,6 +26,7 @@ from src.api.auth import (
     verify_telegram_webapp,
 )
 from src.api.checkout import terms_accepted
+from src.control.router import router as node_control_router
 from src.core.config import settings
 from src.core.database import async_session_maker
 from src.models.plan import Plan
@@ -37,6 +38,7 @@ from src.services.subscription_service import SubscriptionService
 app = FastAPI(title="AegisVPN site API", docs_url=None, redoc_url=None, openapi_url=None)
 app.include_router(checkout.router)
 app.include_router(legal.router)
+app.include_router(node_control_router)
 
 
 def _plan_name(days: int, lang: str = "ru") -> str:
