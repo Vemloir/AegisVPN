@@ -49,6 +49,10 @@ class Server(Base):
     control_last_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
     control_agent_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     control_capabilities: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Cascade routing is dormant by default. Existing nodes migrate to "both"
+    # so direct locations remain byte-for-byte unchanged; a future Russian
+    # entry is explicitly enrolled as "entry".
+    node_role: Mapped[str] = mapped_column(String(16), default="both")
     # Website presentation only — never used to route or connect. ISO 3166-1
     # alpha-2 ("FI"). The site derives the globe outline, the camera target and
     # the region filter from it; a node without it is served by the bot but not

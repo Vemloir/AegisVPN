@@ -24,6 +24,7 @@ from src.models import (
     Server,
     SubscriptionServer,
 )
+from src.services.cascade_service import record_cascade_ack
 
 router = APIRouter(prefix="/api/node/v1", tags=["node-control"])
 
@@ -98,6 +99,7 @@ async def sync_node(
             or request.applied_digest != snapshot.digest
         ):
             return SnapshotManifest(
+                schema_version=snapshot.schema_version,
                 generation=snapshot.generation,
                 digest=snapshot.digest,
                 item_count=snapshot.item_count,
@@ -134,6 +136,7 @@ async def get_snapshot_page(
     if page is None:
         raise HTTPException(status_code=404, detail="Snapshot page not found")
     return SnapshotPage(
+        schema_version=page.schema_version,
         generation=page.generation,
         page_index=page.page_index,
         page_digest=page.page_digest,
@@ -174,6 +177,11 @@ async def acknowledge_snapshot(
         current.applied_digest = request.digest
         current.control_last_reconciled_at = _utcnow()
         current.control_last_error = None
+        await record_cascade_ack(
+            session,
+            server_id=node.id,
+            generation=request.generation,
+        )
         await session.execute(
             update(SubscriptionServer)
             .where(SubscriptionServer.server_id == node.id)

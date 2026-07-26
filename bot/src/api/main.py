@@ -8,8 +8,8 @@ read from the tables the admin panel writes. Nothing is duplicated here.
 from __future__ import annotations
 
 import hashlib
-from json import JSONDecodeError
 from datetime import UTC, datetime
+from json import JSONDecodeError
 
 import aiohttp
 from fastapi import Cookie, FastAPI, Request, Response

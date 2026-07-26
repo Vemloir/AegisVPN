@@ -171,3 +171,32 @@ Do not echo the environment file or run the command with shell tracing. If no
 scoped token is available, promote PostgreSQL manually and change the four
 allowlisted DNS records in the Cloudflare dashboard; do not claim automatic
 failover.
+
+## Dormant cascade schema v2
+
+Cascade support is shipped disabled. Existing nodes migrate to role `both`, so
+their direct VLESS/Hy2 locations do not change. A future Russian ingress must be
+explicitly enrolled with role `entry`; foreign nodes used as second hops must
+allow role `exit` or `both`.
+
+Each enabled route has exactly one entry, an ordered set of exits, a revision,
+health policy, transport policy, and a dedicated service UUID per exit. The
+entry receives only the public Reality/XHTTP parameters and route service
+identities it needs. An exit receives only its own route identity. Service UUIDs
+are never subscription tokens and are not shared with users.
+
+Safety gates:
+
+- schema-v1 agents never receive cascade items;
+- an entry-only node is suppressed from subscriptions until the entry and every
+  exit acknowledge the same route revision using schema v2;
+- more than one enabled route claiming the same client inbound is rejected;
+- the entry routing rule targets only the Xray balancer and has no `direct`
+  fallback;
+- disabling a route immediately suppresses its subscription entry and publishes
+  exact snapshots that remove its managed outbounds and service identities.
+
+Activation requires a separately enrolled Russian node, a canary route, and
+measured latency/loss/throughput. Until then, do not create an enabled route in
+production. WireGuard is not part of this design: both hops use VLESS + Reality
++ XHTTP.

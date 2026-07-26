@@ -117,6 +117,7 @@ async def _reconcile_cached_state(mode: str) -> ReconcileResult | None:
         return None
     return await reconcile_snapshot(
         DesiredSnapshot(
+            schema_version=applied.schema_version,
             generation=applied.generation,
             digest=applied.digest,
             items=applied.items,

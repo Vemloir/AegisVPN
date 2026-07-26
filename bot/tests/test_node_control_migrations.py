@@ -42,9 +42,15 @@ async def test_control_schema_is_created_idempotently():
         "control_last_error",
         "control_agent_version",
         "control_capabilities",
+        "node_role",
     } <= await _column_names("servers")
     assert {
         "node_snapshots",
         "node_snapshot_pages",
         "node_telemetry",
+        "cascade_routes",
+        "cascade_route_exits",
+        "cascade_route_acks",
     } <= await _table_names()
+    assert "schema_version" in await _column_names("node_snapshots")
+    assert "schema_version" in await _column_names("node_snapshot_pages")

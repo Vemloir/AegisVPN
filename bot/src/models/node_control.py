@@ -14,6 +14,7 @@ class NodeSnapshot(Base):
         primary_key=True,
     )
     generation: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
     digest: Mapped[str] = mapped_column(String(64))
     item_count: Mapped[int] = mapped_column(Integer)
     page_count: Mapped[int] = mapped_column(Integer)
@@ -33,6 +34,7 @@ class NodeSnapshotPage(Base):
     server_id: Mapped[int] = mapped_column(primary_key=True)
     generation: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     page_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
     page_digest: Mapped[str] = mapped_column(String(64))
     items: Mapped[list[dict]] = mapped_column(JSON)
 

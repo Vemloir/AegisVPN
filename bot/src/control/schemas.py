@@ -16,14 +16,45 @@ class DesiredConnLimit(BaseModel):
     limit: int = Field(ge=0)
 
 
+class DesiredCascadeService(BaseModel):
+    kind: Literal["cascade_service"] = "cascade_service"
+    route_id: int = Field(ge=1)
+    revision: int = Field(ge=1)
+    config_digest: str = Field(min_length=64, max_length=64)
+    uuid: str
+    email: str
+
+
+class DesiredCascadeExit(BaseModel):
+    position: int = Field(ge=0)
+    host: str
+    port: int = Field(ge=1, le=65535)
+    uuid: str
+    public_key: str
+    short_id: str
+    server_name: str
+    xhttp_path: str = "/"
+
+
+class DesiredCascadeRoute(BaseModel):
+    kind: Literal["cascade_route"] = "cascade_route"
+    route_id: int = Field(ge=1)
+    revision: int = Field(ge=1)
+    config_digest: str = Field(min_length=64, max_length=64)
+    label: str
+    inbound_tags: list[str] = Field(min_length=1)
+    exits: list[DesiredCascadeExit] = Field(min_length=1)
+    health_policy: dict = Field(default_factory=dict)
+
+
 DesiredItem = Annotated[
-    DesiredClient | DesiredConnLimit,
+    DesiredClient | DesiredConnLimit | DesiredCascadeService | DesiredCascadeRoute,
     Field(discriminator="kind"),
 ]
 
 
 class SnapshotManifest(BaseModel):
-    schema_version: int = 1
+    schema_version: Literal[1, 2] = 1
     generation: int
     digest: str
     item_count: int
@@ -32,7 +63,7 @@ class SnapshotManifest(BaseModel):
 
 
 class SnapshotPage(BaseModel):
-    schema_version: int = 1
+    schema_version: Literal[1, 2] = 1
     generation: int
     page_index: int
     page_digest: str

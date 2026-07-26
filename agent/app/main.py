@@ -12,9 +12,9 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
 
 from . import hysteria
+from .certificate_sync import certificate_sync_loop
 from .config import settings
 from .connlimit import conn_limit_loop, set_override
-from .certificate_sync import certificate_sync_loop
 from .control_loop import start_control_task
 from .models import ClientAddRequest, ClientRemoveRequest, ConnLimitRequest, Hy2AuthRequest
 from .security import verify_token

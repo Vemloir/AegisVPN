@@ -86,6 +86,66 @@ async def test_client_downloads_and_verifies_paginated_snapshot():
     assert all(call[2]["ssl"] is ssl_context for call in calls)
 
 
+async def test_client_accepts_v2_cascade_snapshot_without_exposing_private_keys():
+    items = [
+        {
+            "kind": "cascade_route",
+            "route_id": 3,
+            "revision": 1,
+            "config_digest": "a" * 64,
+            "label": "Russia → Germany",
+            "inbound_tags": ["vless-in"],
+            "exits": [
+                {
+                    "position": 0,
+                    "host": "198.51.100.10",
+                    "port": 443,
+                    "uuid": "10000000-0000-0000-0000-000000000001",
+                    "public_key": "public-only",
+                    "short_id": "sid",
+                    "server_name": "www.cloudflare.com",
+                    "xhttp_path": "/cascade",
+                }
+            ],
+            "health_policy": {},
+        }
+    ]
+    digest = hashlib.sha256(_canonical(items)).hexdigest()
+
+    async def request(method, url, **kwargs):
+        if url.endswith("/sync"):
+            return _response(
+                {
+                    "schema_version": 2,
+                    "generation": 2,
+                    "digest": digest,
+                    "item_count": 1,
+                    "page_count": 1,
+                    "page_size": 10,
+                }
+            )
+        return _response(
+            {
+                "schema_version": 2,
+                "generation": 2,
+                "page_index": 0,
+                "page_digest": digest,
+                "items": items,
+            }
+        )
+
+    client = ControlClient(
+        urls=["https://control.example"],
+        token="node-secret",
+        ssl_context=object(),
+        requester=request,
+    )
+    snapshot = await client.sync(AppliedState(generation=0, digest=None))
+    assert snapshot.schema_version == 2
+    assert snapshot.items[0].kind == "cascade_route"
+    assert "private" not in snapshot.model_dump_json().lower()
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
@@ -107,7 +167,7 @@ async def test_client_rejects_untrusted_snapshot_content(mutation, message):
         items.append(dict(client_item))
     page_digest = hashlib.sha256(_canonical(items)).hexdigest()
     manifest_digest = hashlib.sha256(_canonical(items)).hexdigest()
-    schema_version = 2 if mutation == "unsupported-schema" else 1
+    schema_version = 3 if mutation == "unsupported-schema" else 1
     if mutation == "page-digest":
         page_digest = "0" * 64
     if mutation == "manifest-digest":
