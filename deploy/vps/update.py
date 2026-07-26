@@ -52,6 +52,7 @@ Usage examples:
 from __future__ import annotations
 
 import argparse
+import base64
 import copy
 import json
 import posixpath
@@ -843,6 +844,9 @@ HY2_TEMPLATE_LOCAL = ROOT / "deploy/vps/hysteria/config.template.yaml"
 # the single *_ecc directory acme.sh created.
 REMOTE_ACME_DIR = "/root/acme"
 ACME_IMAGE = "neilpang/acme.sh"
+CADDY_CERT_ROOT = (
+    "/root/aegis/deploy/vps/data/caddy/caddy/certificates"
+)
 
 # Telegram MTProto proxy (fake-TLS mtg). The camouflage SNI is baked into the
 # ee-secret; a reachable, unblocked big-CDN host is the goal. Overridable.
@@ -875,6 +879,28 @@ def resolve_geo_sni(host: str, override: str | None) -> str:
         f"domain for this node's location (node IPs/SNIs are not hardcoded in "
         f"this public repo)."
     )
+
+
+def provision_hy2_agent_env(c: paramiko.SSHClient, host: str) -> str:
+    """Enable only Hy2 auth/stats settings without changing Xray transports."""
+    if not _remote_exists(c, REMOTE_AGENT_ENV):
+        raise SystemExit(
+            f"[{host}] {REMOTE_AGENT_ENV} missing — provision the base node first"
+        )
+    current = _read_remote_text(c, REMOTE_AGENT_ENV)
+    env = _parse_env(current)
+    existing_secret = env.get("HY2_STATS_SECRET")
+    stats_secret = existing_secret or _gen_secret(32)
+    env["XRAY_CONN_IDLE"] = str(XRAY_CONN_IDLE)
+    env["HY2_ENABLED"] = "true"
+    env["HY2_STATS_URL"] = HY2_STATS_URL
+    env["HY2_STATS_SECRET"] = stats_secret
+    _write_remote_text_atomic(c, REMOTE_AGENT_ENV, _render_env(env))
+    print(
+        f"  [{host}] Hy2 Agent settings enabled; "
+        f"stats secret {'reused' if existing_secret else 'created'}"
+    )
+    return stats_secret
 
 
 def provision_agent_env(
@@ -1051,13 +1077,59 @@ def provision_code(c: paramiko.SSHClient, host: str) -> None:
 
 
 def renew_hy2_cert_acme(main_c: paramiko.SSHClient) -> tuple[str, str, str]:
-    """Run acme.sh --cron on the ACME host (renews the shared Hy2 Let's Encrypt
-    cert if due, via the DuckDNS DNS-01 creds acme.sh saved at issuance), then
-    return (cert_b64, key_b64, domain) of the current fullchain + key. Domain-
-    agnostic: globs the single *_ecc cert dir so this (public) script never
-    hardcodes the operator's DuckDNS domain; `domain` (the cert CN, used as the
-    bot's hy2_sni) is that dir's basename minus the trailing ``_ecc``."""
-    print("  [acme] acme.sh --cron (renew if due)…")
+    """Return a managed DuckDNS certificate for Hy2.
+
+    Prefer Caddy's automatically renewed certificate. Fall back to the legacy
+    acme.sh store when no Caddy-managed DuckDNS certificate exists.
+    """
+    caddy_cert = run(
+        main_c,
+        f"find {shlex.quote(CADDY_CERT_ROOT)} -type f "
+        f"-path '*duckdns.org/*.crt' 2>/dev/null | head -1",
+        "find caddy hy2 cert",
+        timeout=30,
+    ).strip()
+    if caddy_cert:
+        domain = posixpath.basename(caddy_cert)
+        if domain.endswith(".crt"):
+            domain = domain[:-4]
+        caddy_key = caddy_cert[:-4] + ".key"
+        match = run(
+            main_c,
+            f"cert_hash=$(openssl x509 -in {shlex.quote(caddy_cert)} "
+            f"-noout -pubkey | sha256sum | cut -d' ' -f1); "
+            f"key_hash=$(openssl pkey -in {shlex.quote(caddy_key)} "
+            f"-pubout | sha256sum | cut -d' ' -f1); "
+            f"test \"$cert_hash\" = \"$key_hash\" && echo MATCH",
+            "verify caddy hy2 key",
+            timeout=30,
+        ).strip()
+        if match != "MATCH":
+            raise SystemExit("[caddy] Hy2 certificate/private-key mismatch")
+        cert_b64 = run(
+            main_c,
+            f"base64 -w0 {shlex.quote(caddy_cert)}",
+            "read caddy hy2 cert",
+            timeout=30,
+        ).strip()
+        key_b64 = run(
+            main_c,
+            f"base64 -w0 {shlex.quote(caddy_key)}",
+            "read caddy hy2 key",
+            timeout=30,
+        ).strip()
+        enddate = run(
+            main_c,
+            f"openssl x509 -in {shlex.quote(caddy_cert)} -noout -enddate",
+            "caddy hy2 cert enddate",
+            timeout=30,
+        ).strip()
+        if not cert_b64 or not key_b64:
+            raise SystemExit("[caddy] Hy2 certificate/private key is empty")
+        print(f"  [caddy] current cert for {domain} {enddate}")
+        return cert_b64, key_b64, domain
+
+    print("  [acme] Caddy DuckDNS cert absent; trying acme.sh --cron…")
     run(main_c,
         f"docker run --rm -v {REMOTE_ACME_DIR}:/acme.sh {ACME_IMAGE} "
         f"--cron --home /acme.sh 2>&1 | tail -6",
@@ -1083,9 +1155,20 @@ def renew_hy2_cert_acme(main_c: paramiko.SSHClient) -> tuple[str, str, str]:
 def install_hy2_cert(c: paramiko.SSHClient, host: str, cert_b64: str, key_b64: str) -> None:
     """Write the LE cert + key into the node's hysteria dir (verifying the key
     matches the cert) and restart hysteria so it serves the fresh cert."""
-    run(c, f"echo {cert_b64} | base64 -d > {REMOTE_HY2_DIR}/cert.pem", "write cert", timeout=30)
-    run(c, f"echo {key_b64} | base64 -d > {REMOTE_HY2_DIR}/key.pem && "
-           f"chmod 600 {REMOTE_HY2_DIR}/key.pem", "write key", timeout=30)
+    cert_pem = base64.b64decode(cert_b64, validate=True).decode("ascii")
+    key_pem = base64.b64decode(key_b64, validate=True).decode("ascii")
+    _write_remote_text_atomic(
+        c,
+        f"{REMOTE_HY2_DIR}/cert.pem",
+        cert_pem,
+        mode=0o644,
+    )
+    _write_remote_text_atomic(
+        c,
+        f"{REMOTE_HY2_DIR}/key.pem",
+        key_pem,
+        mode=0o600,
+    )
     match = run(c,
         f"openssl x509 -in {REMOTE_HY2_DIR}/cert.pem -noout -pubkey > /tmp/_aegcp 2>/dev/null; "
         f"openssl ec -in {REMOTE_HY2_DIR}/key.pem -pubout > /tmp/_aegkp 2>/dev/null; "
@@ -1294,6 +1377,41 @@ def provision_stack(
     return obfs_password
 
 
+def enable_hy2(
+    main_c: paramiko.SSHClient,
+    node_c: paramiko.SSHClient,
+    *,
+    host: str,
+    geo_sni: str,
+) -> None:
+    """Enable Hy2 on an existing split node without restarting Xray."""
+    cert_b64, key_b64, hy2_domain = renew_hy2_cert_acme(main_c)
+    services = run(
+        node_c,
+        "cd /root/aegis/deploy/vps && "
+        "docker compose --profile hysteria config --services | "
+        "grep -x hysteria",
+        "verify hysteria compose service",
+        timeout=60,
+    )
+    if "hysteria" not in services.splitlines():
+        raise SystemExit(f"[{host}] compose has no hysteria service")
+
+    stats_secret = provision_hy2_agent_env(node_c, host)
+    provision_firewall(node_c, host)
+    obfs_password = provision_hysteria(
+        node_c,
+        host,
+        geo_sni,
+        stats_secret,
+    )
+    install_hy2_cert(node_c, host, cert_b64, key_b64)
+    update_agent(node_c, host)
+    verify_stack(node_c, host)
+    sync_bot_db_hy2(main_c, host, obfs_password, hy2_domain)
+    print(f"  [{host}] Hy2 enabled without restarting Xray ✓")
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -1402,9 +1520,16 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--renew-hy2-cert", action="store_true",
-        help="Renew the shared Hy2 Let's Encrypt cert on the ACME host "
-             "(--main-host) via acme.sh --cron, then install it on every --node "
-             "(IP:PASSWORD) and restart hysteria. Run before the cert expires.",
+        help="Read the managed Hy2 Let's Encrypt cert from the control host "
+             "(Caddy preferred, legacy acme.sh fallback), install it on every "
+             "--node, and restart Hysteria.",
+    )
+    p.add_argument(
+        "--enable-hy2",
+        action="store_true",
+        help="Enable Hysteria2 UDP/443 on existing split nodes with the control "
+             "host's managed DuckDNS certificate. Recreates only Agent and "
+             "Hysteria; Xray is not restarted.",
     )
     p.add_argument(
         "--split-migrate", action="store_true",
@@ -1421,8 +1546,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--geo-sni", default=None, metavar="NAME",
         help="Override the Hysteria2 self-signed cert CN / geo-SNI for "
-             "--provision-stack (e.g. csc.fi, www.chalmers.se, uio.no, "
-             "aegean.gr, www.osaka-u.ac.jp). Falls back to the built-in IP map.",
+             "--provision-stack/--enable-hy2 (e.g. csc.fi, "
+             "www.chalmers.se, uio.no, aegean.gr, www.osaka-u.ac.jp).",
     )
     p.add_argument(
         "--with-mtproxy", action="store_true",
@@ -1438,11 +1563,13 @@ def main() -> None:
     if not any((args.bot, args.nodes, args.patch_dns, args.patch_stability,
                 args.mtproxy, args.set_network,
                 args.split_migrate, args.provision_stack, args.renew_hy2_cert,
+                args.enable_hy2,
                 args.promote_pull, args.rollback_observe)):
         raise SystemExit(
             "Specify --bot, --nodes, --patch-dns, --patch-stability, --mtproxy, "
             "--set-network, --split-migrate, --provision-stack, "
-            "--renew-hy2-cert, --promote-pull, and/or --rollback-observe"
+            "--renew-hy2-cert, --enable-hy2, --promote-pull, and/or "
+            "--rollback-observe"
         )
     if args.promote_pull or args.rollback_observe:
         if not args.main_password or args.server_id is None:
@@ -1466,6 +1593,13 @@ def main() -> None:
     if args.renew_hy2_cert and (not args.main_password or not args.nodes_list):
         raise SystemExit("--renew-hy2-cert requires --main-password (ACME host) "
                          "and at least one --node IP:PASSWORD to install onto")
+    if args.enable_hy2 and (
+        not args.main_password or not args.nodes_list or not args.geo_sni
+    ):
+        raise SystemExit(
+            "--enable-hy2 requires --main-password, at least one "
+            "--node IP:PASSWORD, and --geo-sni"
+        )
     if args.bot and not args.main_password:
         raise SystemExit("--bot requires --main-password")
     if args.provision_stack and not args.nodes_list:
@@ -1603,6 +1737,31 @@ def main() -> None:
                 sync_bot_db_hy2(mc, ip, obfs, hy2_domain)
         finally:
             mc.close()
+
+    if args.enable_hy2:
+        print(f"[enable-hy2] connecting to control host {args.main_host}…")
+        main_hy2 = connect(args.main_host, args.main_password)
+        try:
+            for node_str in args.nodes_list:
+                parts = node_str.split(":")
+                if len(parts) < 2:
+                    raise SystemExit(
+                        f"Bad --node format (expected IP:PASSWORD): {node_str}"
+                    )
+                ip, password = parts[0], ":".join(parts[1:])
+                print(f"[enable-hy2 {ip}] connecting…")
+                node_hy2 = connect(ip, password)
+                try:
+                    enable_hy2(
+                        main_hy2,
+                        node_hy2,
+                        host=ip,
+                        geo_sni=args.geo_sni,
+                    )
+                finally:
+                    node_hy2.close()
+        finally:
+            main_hy2.close()
 
     if args.renew_hy2_cert:
         print(f"[renew-hy2] connecting to ACME host {args.main_host}…")
