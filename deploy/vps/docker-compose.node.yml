@@ -1,0 +1,51 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "5m"
+    max-file: "2"
+
+services:
+  xray:
+    build:
+      context: ../../agent
+    container_name: aegis-xray
+    restart: unless-stopped
+    env_file:
+      - ./vpn.env
+    environment:
+      - XRAY_RUN_MODE=xray-only
+    network_mode: host
+    logging: *default-logging
+    volumes:
+      - ./data/vpn:/data
+
+  agent:
+    build:
+      context: ../../agent
+    container_name: aegis-vpn
+    restart: unless-stopped
+    env_file:
+      - ./vpn.env
+    environment:
+      - XRAY_RUN_MODE=agent-only
+    network_mode: host
+    pid: "service:xray"
+    depends_on:
+      - xray
+    logging: *default-logging
+    volumes:
+      - ./data/vpn:/data
+      - ./data/control/node:/data/control:ro
+      - ./data/hysteria:/data/hysteria
+
+  hysteria:
+    image: tobyxdd/hysteria@sha256:97a8deb6c57765a72d4251420481dc8124222590d8e1b5af564e0858859cfe09
+    container_name: aegis-hysteria
+    restart: unless-stopped
+    network_mode: host
+    command: ["server", "-c", "/etc/hysteria/config.yaml"]
+    volumes:
+      - ./data/hysteria:/etc/hysteria
+    logging: *default-logging
+    profiles:
+      - hysteria
