@@ -115,3 +115,59 @@ control service that reads the same authoritative database. The agent tries the
 last healthy endpoint first, then fails over with bounded exponential backoff.
 Do not put a generic public reverse proxy in front unless it preserves the same
 mTLS client-certificate verification and trusted-header overwrite rules.
+
+## PostgreSQL/Patroni control-plane failover
+
+The dormant HA package lives in `deploy/vps/ha/`. Poland and USA are PostgreSQL
+members; Poland, USA, and Germany form the three-vote etcd quorum. Applications
+connect to the writable Patroni member only through local HAProxy on
+`127.0.0.1:5433`. Telegram polling and every scheduler job use PostgreSQL
+advisory locks, so a warm standby does not consume duplicate updates.
+
+Before cutover:
+
+1. generate a private HA CA plus per-host/client certificates outside Git;
+2. start etcd on all three members, then Patroni on Poland and USA;
+3. run `migrate_sqlite_to_postgres.py` against a copy of the SQLite database;
+4. compare every table's row count and SHA-256 report;
+5. stop the preferred member and use `verify_failover.py` to prove exactly one
+   node is writable;
+6. restore Poland and repeat before changing the live application DB URL.
+
+Never write back to the old SQLite database after PostgreSQL accepts production
+writes. Rollback after that point restores Patroni/PostgreSQL, not SQLite.
+
+## Cloudflare DNS-only failover
+
+Automatic DNS switching is disabled until a scoped token is installed. The
+token may edit DNS records only in the AegisVPN zone. Cloudflare proxying
+remains disabled and every managed record has TTL 60.
+
+Copy `deploy/vps/ha/cloudflare.env.example` to a root-readable environment file.
+Set only the exact apex, `www`, subscription, and control records that should
+follow the active application host. The Patroni callback mutates DNS only when
+the local node is primary and both Patroni and the application health endpoint
+return success.
+
+Dry verification uses the test fake and does not contact production:
+
+```bash
+PYTHONPATH=. bot/.venv/bin/pytest \
+  deploy/vps/tests/test_cloudflare_failover.py -q
+```
+
+After an update, the previous values are atomically saved with mode 0600. Manual
+rollback is:
+
+```bash
+set -a
+. /etc/aegis-ha/cloudflare.env
+set +a
+python3 /opt/aegis-ha/cloudflare_failover.py \
+  --restore /var/lib/aegis-ha/cloudflare-rollback.json
+```
+
+Do not echo the environment file or run the command with shell tracing. If no
+scoped token is available, promote PostgreSQL manually and change the four
+allowlisted DNS records in the Cloudflare dashboard; do not claim automatic
+failover.
