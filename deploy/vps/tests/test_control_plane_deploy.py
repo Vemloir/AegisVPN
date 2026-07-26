@@ -255,3 +255,12 @@ def test_rollback_remains_fixed_ip_only(monkeypatch):
             "allow_control_server": True,
         },
     )
+
+
+def test_control_host_update_recreates_bot_and_siteapi_without_xray():
+    source = inspect.getsource(update_script.update_bot)
+
+    assert "docker compose build bot siteapi" in source
+    assert "docker compose up -d --no-deps bot siteapi" in source
+    assert "aegis-siteapi" in source
+    assert "restart xray" not in source
