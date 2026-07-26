@@ -23,7 +23,7 @@ from .xray import (
     xray_api_remove,
 )
 
-_APPLIED_STATE_PATH = "/data/control/applied-state.json"
+_APPLIED_STATE_PATH = "/data/node-control/applied-state.json"
 
 
 class ReconcileError(RuntimeError):

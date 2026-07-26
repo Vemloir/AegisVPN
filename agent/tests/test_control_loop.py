@@ -1,6 +1,7 @@
 import asyncio
 
 from app import control_loop as loop_module
+from app import reconcile as reconcile_module
 from app.control_models import AppliedState, DesiredSnapshot
 from app.reconcile import ReconcileResult
 
@@ -211,6 +212,11 @@ async def _async_value(value):
 async def test_off_mode_starts_no_control_task(monkeypatch):
     monkeypatch.setattr(loop_module.settings, "control_mode", "off")
     assert loop_module.start_control_task() is None
+
+
+def test_runtime_state_is_outside_read_only_credential_mount():
+    assert loop_module._TELEMETRY_SEQUENCE_PATH.startswith("/data/node-control/")
+    assert reconcile_module._APPLIED_STATE_PATH.startswith("/data/node-control/")
 
 
 async def test_telemetry_carries_safe_and_fast_subscription_templates(monkeypatch):

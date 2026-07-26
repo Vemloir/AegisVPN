@@ -23,7 +23,7 @@ from .xray import (
     query_traffic_stats,
 )
 
-_TELEMETRY_SEQUENCE_PATH = "/data/control/telemetry-sequence"
+_TELEMETRY_SEQUENCE_PATH = "/data/node-control/telemetry-sequence"
 
 Sleep = Callable[[float], Awaitable[None]]
 Jitter = Callable[[float], float]
