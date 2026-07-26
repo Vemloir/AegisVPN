@@ -453,9 +453,14 @@ def update_agent(c: paramiko.SSHClient, host: str) -> None:
 
     In the split topology xray runs in its own container, so rebuilding `agent`
     leaves the data plane (and every live client session) untouched — code
-    deploys are zero-drop. Run --split-migrate once first to create the split.
+    deploys are zero-drop. The current Compose file is uploaded as well so
+    existing split nodes receive new Agent-only mounts such as /data/control;
+    `up --no-deps agent` still does not touch Xray or unrelated services. Run
+    --split-migrate once first to create the split.
     """
     _upload_agent_sources(c, host)
+    print(f"  [{host}] uploading current docker-compose.yml…")
+    upload(c, COMPOSE_LOCAL, REMOTE_COMPOSE)
     print(f"  [{host}] rebuilding + recreating agent (xray untouched)…")
     run(c, "cd /root/aegis/deploy/vps && docker compose up -d --build --no-deps agent 2>&1 | tail -4",
         "agent rebuild", timeout=300)

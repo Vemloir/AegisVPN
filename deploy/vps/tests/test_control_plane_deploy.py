@@ -404,6 +404,46 @@ def test_env_update_replaces_idle_and_preserves_unrelated_values():
     )
 
 
+def test_agent_update_uploads_current_compose_before_recreate(monkeypatch):
+    events: list[tuple] = []
+    client = object()
+
+    monkeypatch.setattr(
+        update_script,
+        "_upload_agent_sources",
+        lambda actual_client, host: events.append(
+            ("agent_sources", actual_client, host)
+        ),
+    )
+    monkeypatch.setattr(
+        update_script,
+        "upload",
+        lambda actual_client, source, destination: events.append(
+            ("upload", actual_client, source, destination)
+        ),
+    )
+    monkeypatch.setattr(
+        update_script,
+        "run",
+        lambda actual_client, command, label="", timeout=120: events.append(
+            ("run", actual_client, command, label, timeout)
+        )
+        or "",
+    )
+
+    update_script.update_agent(client, "192.0.2.10")
+
+    assert events[0] == ("agent_sources", client, "192.0.2.10")
+    assert events[1] == (
+        "upload",
+        client,
+        update_script.COMPOSE_LOCAL,
+        update_script.REMOTE_COMPOSE,
+    )
+    assert events[2][0] == "run"
+    assert events[2][3] == "agent rebuild"
+
+
 def test_stability_rollout_validates_candidate_before_restart(monkeypatch):
     template = json.loads((ROOT / "agent/template.json").read_text())
     live = deepcopy(template)
