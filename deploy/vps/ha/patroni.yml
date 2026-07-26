@@ -29,6 +29,10 @@ bootstrap:
     - hostssl all all 0.0.0.0/0 scram-sha-256 clientcert=verify-full
 
 postgresql:
+  callbacks:
+    on_start: /opt/aegis-ha/patroni_callback.sh
+    on_restart: /opt/aegis-ha/patroni_callback.sh
+    on_role_change: /opt/aegis-ha/patroni_callback.sh
   parameters:
     password_encryption: scram-sha-256
     ssl_min_protocol_version: TLSv1.3
