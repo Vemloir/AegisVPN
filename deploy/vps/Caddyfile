@@ -23,6 +23,16 @@ www.site.example.com {
 site.example.com {
     encode zstd gzip
 
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        Content-Security-Policy "default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://t.me https://*.telegram.org; font-src 'self' data:; connect-src 'self'; frame-src https://telegram.org https://oauth.telegram.org; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        X-Frame-Options "DENY"
+        -Server
+    }
+
     # Hashed bundles never change under the same name: cache forever.
     # Everything else (index.html above all) must be revalidated on every
     # load, or users keep seeing a stale page pointing at old bundles.
@@ -49,9 +59,15 @@ site.example.com {
     handle /sub-fast/* {
         reverse_proxy 127.0.0.1:8080
     }
+    @english path /en /en/*
+    handle @english {
+        root * /srv/web
+        try_files {path} {path}/ /en/index.html
+        file_server
+    }
     handle {
         root * /srv/web
-        try_files {path} /index.html
+        try_files {path} {path}/ /ru/index.html
         file_server
     }
 }

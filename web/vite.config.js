@@ -8,6 +8,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: './src/test/setup.js',
+    include: ['src/**/*.test.{js,jsx}'],
   },
   // Baked into the bundle (not shown on the page) so "which build is this?"
   // stays answerable by grepping the served JS, without putting a timestamp

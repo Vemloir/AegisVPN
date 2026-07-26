@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  <url>
+    <loc>https://aegisvpn.org/ru/</loc>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://aegisvpn.org/ru/" />
+    <xhtml:link rel="alternate" hreflang="en" href="https://aegisvpn.org/en/" />
+  </url>
+  <url>
+    <loc>https://aegisvpn.org/en/</loc>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://aegisvpn.org/ru/" />
+    <xhtml:link rel="alternate" hreflang="en" href="https://aegisvpn.org/en/" />
+  </url>
+</urlset>
