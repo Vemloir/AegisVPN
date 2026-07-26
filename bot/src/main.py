@@ -117,6 +117,31 @@ async def sub_fast_handler(request: web.Request) -> web.Response:
     return await subscription_response(request, SubscriptionService.FAST_PROFILE)
 
 
+def subscription_metadata_headers(sub, profile: str) -> dict[str, str]:
+    """Standard subscription metadata understood by Happ/v2ray clients."""
+    title = (
+        f"{settings.subscription_title} Fast"
+        if profile == SubscriptionService.FAST_PROFILE
+        else settings.subscription_title
+    )
+    upload = max(int(getattr(sub, "traffic_up_bytes", 0) or 0), 0)
+    download = max(int(getattr(sub, "traffic_down_bytes", 0) or 0), 0)
+    userinfo_parts = [f"upload={upload}", f"download={download}", "total=0"]
+    if not SubscriptionService.is_lifetime_subscription(sub):
+        userinfo_parts.append(f"expire={int(sub.expires_at.replace(tzinfo=UTC).timestamp())}")
+
+    headers = {
+        "Profile-Title": title,
+        "Subscription-Userinfo": "; ".join(userinfo_parts),
+        "Support-Url": settings.support_public_url.rstrip("/"),
+        "Profile-Web-Page-Url": settings.site_public_url.rstrip("/"),
+        "Subscription-Ping-Onopen-Enabled": "1",
+    }
+    if settings.subscription_update_interval_hours > 0:
+        headers["Profile-Update-Interval"] = str(settings.subscription_update_interval_hours)
+    return headers
+
+
 def _client_ip(request: web.Request) -> str | None:
     """Real client IP behind the Caddy reverse proxy (first X-Forwarded-For hop)."""
     xff = request.headers.get("X-Forwarded-For", "")
@@ -172,31 +197,10 @@ async def subscription_response(request: web.Request, profile: str) -> web.Respo
     response = web.Response(
         text=body, content_type="application/json" if wants_xray_json else "text/plain"
     )
-    title = (
-        f"{settings.subscription_title} Fast"
-        if profile == SubscriptionService.FAST_PROFILE
-        else settings.subscription_title
-    )
+    metadata_headers = subscription_metadata_headers(sub, profile)
+    title = metadata_headers["Profile-Title"]
     response.headers["Content-Disposition"] = f'attachment; filename="{title}"'
-    response.headers["Profile-Title"] = title
-    # Real per-client byte counters, summed across all of the user's nodes
-    # by the poll_traffic scheduler task. `total=0` means "no quota" — it is
-    # the standard unlimited marker, and clients (Happ, v2rayN, …) only draw
-    # the usage capsule when the `total` key is present, rendering it as ∞.
-    upload = max(int(getattr(sub, "traffic_up_bytes", 0) or 0), 0)
-    download = max(int(getattr(sub, "traffic_down_bytes", 0) or 0), 0)
-    userinfo_parts = [f"upload={upload}", f"download={download}", "total=0"]
-    if not SubscriptionService.is_lifetime_subscription(sub):
-        userinfo_parts.append(f"expire={int(sub.expires_at.replace(tzinfo=UTC).timestamp())}")
-    response.headers["Subscription-Userinfo"] = "; ".join(userinfo_parts)
-    if settings.subscription_update_interval_hours > 0:
-        response.headers["Profile-Update-Interval"] = str(settings.subscription_update_interval_hours)
-    if bot_public_url:
-        # Our Telegram bot is the only contact point. Clients (Happ, …) render
-        # Support-Url as a Telegram paper-plane button when it's a t.me link.
-        # We deliberately do NOT set Profile-Web-Page-Url, which would add a
-        # separate info ("i") icon for a website we don't have.
-        response.headers["Support-Url"] = bot_public_url
+    response.headers.update(metadata_headers)
     # Auto-ping all locations the moment the subscription opens, so users see
     # fresh latencies instead of "н/д" until they tap each one.
     #
@@ -205,7 +209,6 @@ async def subscription_response(request: web.Request, profile: str) -> web.Respo
     # briefly did) makes clients multiplex over a vision connection and traffic
     # silently dies ("connects but nothing loads"). Vision already coalesces
     # sub-streams itself, so mux buys nothing here anyway.
-    response.headers["Subscription-Ping-Onopen-Enabled"] = "1"
     return response
 
 

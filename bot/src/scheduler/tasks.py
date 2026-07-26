@@ -313,6 +313,8 @@ def _make_full_backup() -> Path | None:
         ("PUBLIC_BASE_URL", settings.public_base_url),
         ("SUBSCRIPTION_PUBLIC_BASE_URL", settings.subscription_public_base_url),
         ("BOT_PUBLIC_URL", settings.bot_public_url),
+        ("SUPPORT_PUBLIC_URL", settings.support_public_url),
+        ("SITE_PUBLIC_URL", settings.site_public_url),
         ("TELEGRAM_MODE", settings.telegram_mode),
         ("WEBAPP_PORT", settings.webapp_port),
         ("SITE_TITLE", settings.site_title),
