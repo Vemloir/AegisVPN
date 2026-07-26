@@ -219,7 +219,7 @@ def update_bot(c: paramiko.SSHClient) -> None:
 
     # Dependency manifests must ship too — the image installs from pyproject.toml,
     # so a dependency change is invisible to the build unless these are uploaded.
-    for manifest in ("pyproject.toml", "uv.lock"):
+    for manifest in ("Dockerfile.deploy", "pyproject.toml", "uv.lock"):
         src = BOT_DIR / manifest
         if src.exists():
             upload(c, src, f"/root/aegis/bot/{manifest}")
