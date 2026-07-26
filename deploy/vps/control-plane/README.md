@@ -135,6 +135,17 @@ certificate/token halves are rejected. Install all four generated files on the
 node atomically, recreate only Agent, wait for a heartbeat using the new pair,
 then clear all three `control_previous_*` columns.
 
+When the CA trust bundle itself changes, validate and force the Caddy reload:
+
+```bash
+docker exec aegis-caddy caddy validate --config /etc/caddy/Caddyfile
+docker exec aegis-caddy caddy reload --force --config /etc/caddy/Caddyfile
+```
+
+`--force` is required because the Caddyfile still contains the same trust-pool
+path. A normal reload may treat the configuration as unchanged and keep the
+old CA contents in memory even though `client-ca.crt` was replaced.
+
 For emergency deactivation set `servers.is_active=0`. The node may still
 authenticate long enough to receive an empty desired snapshot and drain every
 client, but it is excluded from new subscriptions. If credentials are suspected
