@@ -1,5 +1,6 @@
 from .base import Base
 from .device import Device
+from .node_control import NodeSnapshot, NodeSnapshotPage, NodeTelemetry
 from .payment import Payment
 from .plan import Plan
 from .referral import Referral
@@ -19,6 +20,9 @@ __all__ = [
     "SubscriptionServer",
     "ServerTransportPref",
     "Device",
+    "NodeSnapshot",
+    "NodeSnapshotPage",
+    "NodeTelemetry",
     "Payment",
     "Referral",
 ]

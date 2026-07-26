@@ -4,8 +4,9 @@ from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.models import Server, ServerAccessGrant, Subscription, SubscriptionServer, User
+from src.models import Device, Server, ServerAccessGrant, Subscription, SubscriptionServer, User
 from src.services.agent_client import AgentClient
+from src.services.node_control_service import NodeControlService
 
 
 class ServerAccessService:
@@ -119,10 +120,15 @@ class ServerAccessService:
         )
         subscriptions = result.scalars().all()
         removals: set[tuple[str, str, str]] = set()
+        publications: set[int] = set()
         for subscription in subscriptions:
             await ServerAccessService.reconcile_subscription_servers(
-                session, subscription, removals=removals
+                session,
+                subscription,
+                removals=removals,
+                publications=publications,
             )
+        await NodeControlService.publish_for_servers(session, publications)
         await ServerAccessService._flush_removals(removals)
 
     @staticmethod
@@ -132,10 +138,16 @@ class ServerAccessService:
         )
         subscriptions = result.scalars().all()
         removals: set[tuple[str, str, str]] = set()
+        publications: set[int] = set()
         for subscription in subscriptions:
             await ServerAccessService.reconcile_subscription_servers(
-                session, subscription, target_server_id=server_id, removals=removals
+                session,
+                subscription,
+                target_server_id=server_id,
+                removals=removals,
+                publications=publications,
             )
+        await NodeControlService.publish_for_servers(session, publications)
         await ServerAccessService._flush_removals(removals)
 
     @staticmethod
@@ -144,6 +156,7 @@ class ServerAccessService:
         subscription: Subscription,
         target_server_id: int | None = None,
         removals: set[tuple[str, str, str]] | None = None,
+        publications: set[int] | None = None,
     ) -> None:
         """Bring one subscription's links in line with what its user may access.
 
@@ -154,6 +167,9 @@ class ServerAccessService:
         own_removals = removals is None
         if removals is None:
             removals = set()
+        own_publications = publications is None
+        if publications is None:
+            publications = set()
         allowed_servers = await ServerAccessService.get_accessible_servers_for_user(session, subscription.user_id)
         allowed_server_ids = {server.id for server in allowed_servers}
         if target_server_id is not None:
@@ -183,14 +199,37 @@ class ServerAccessService:
                 continue
 
             shared_agent_still_allowed = any(
-                server.agent_url == link.server.agent_url and server.agent_token == link.server.agent_token
+                NodeControlService.pushes_to(server)
+                and server.agent_url == link.server.agent_url
+                and server.agent_token == link.server.agent_token
                 for server in allowed_servers
             )
 
-            if link.is_synced and not shared_agent_still_allowed:
-                removals.add(
-                    (link.server.agent_url, link.server.agent_token, subscription.client_uuid)
-                )
+            if (
+                link.is_synced
+                and NodeControlService.pushes_to(link.server)
+                and not shared_agent_still_allowed
+            ):
+                device_uuids = (
+                    await session.execute(
+                        select(Device.uuid).where(
+                            Device.subscription_id == subscription.id
+                        )
+                    )
+                ).scalars().all()
+                for client_uuid in (
+                    subscription.client_uuid,
+                    *device_uuids,
+                ):
+                    removals.add(
+                        (
+                            link.server.agent_url,
+                            link.server.agent_token,
+                            client_uuid,
+                        )
+                    )
+            if NodeControlService.publishes_for(link.server):
+                publications.add(link.server_id)
             await session.execute(
                 delete(SubscriptionServer).where(
                     SubscriptionServer.subscription_id == subscription.id,
@@ -198,5 +237,7 @@ class ServerAccessService:
                 )
             )
 
+        if own_publications:
+            await NodeControlService.publish_for_servers(session, publications)
         if own_removals:
             await ServerAccessService._flush_removals(removals)

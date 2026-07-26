@@ -104,10 +104,39 @@ async def get_xray_config() -> dict:
 
 async def save_xray_config(config: dict) -> None:
     try:
-        async with aiofiles.open(settings.xray_config_path, "w") as f:
-            await f.write(json.dumps(config, indent=2))
+        content = json.dumps(config, indent=2)
+        await asyncio.to_thread(
+            _atomic_write_text,
+            settings.xray_config_path,
+            content,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write config: {str(e)}") from e
+
+
+def _atomic_write_text(path: str, content: str) -> None:
+    directory = os.path.dirname(path) or "."
+    fd, temporary_path = tempfile.mkstemp(
+        prefix=".xray-config-",
+        suffix=".tmp",
+        dir=directory,
+    )
+    try:
+        with os.fdopen(fd, "w") as file:
+            file.write(content)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary_path, path)
+        directory_fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        try:
+            os.remove(temporary_path)
+        except FileNotFoundError:
+            pass
 
 
 def reload_xray() -> None:
@@ -143,6 +172,31 @@ async def run_xray_api(args: list[str]) -> tuple[int, str]:
         proc.kill()
         return 1, "timeout"
     return proc.returncode or 0, out.decode("utf-8", "replace")
+
+
+async def wait_for_xray_ready(
+    *,
+    attempts: int = 20,
+    delay_seconds: float = 0.25,
+) -> bool:
+    """Wait until the post-reload process answers its local API.
+
+    A successful response proves that the replacement Xray process has parsed
+    the atomically persisted desired config. Reconciliation must not acknowledge
+    the generation while the reload outcome remains unknown.
+    """
+    for attempt in range(max(1, attempts)):
+        try:
+            return_code, _ = await run_xray_api(
+                ["statsquery", f"--server={api_server()}", "user>>>"]
+            )
+        except (OSError, RuntimeError):
+            return_code = 1
+        if return_code == 0:
+            return True
+        if attempt + 1 < attempts:
+            await asyncio.sleep(delay_seconds)
+    return False
 
 
 async def xray_api_add(inbound: dict, client_record: dict) -> bool:

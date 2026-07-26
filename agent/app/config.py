@@ -1,4 +1,6 @@
-from pydantic import ConfigDict, field_validator
+from typing import Literal
+
+from pydantic import ConfigDict, SecretStr, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -40,9 +42,23 @@ class Settings(BaseSettings):
     hy2_stats_url: str = "http://127.0.0.1:9999"
     hy2_stats_secret: str | None = None
 
+    # Outbound desired-state control plane. "off" preserves the legacy public
+    # push API; "observe" verifies snapshots without mutation; "apply" makes
+    # the downloaded complete state authoritative.
+    control_mode: Literal["off", "observe", "apply"] = "off"
+    control_urls: str = ""
+    control_token: SecretStr | None = None
+    control_token_file: str = "/data/control/token"
+    control_client_cert: str = "/data/control/client.crt"
+    control_client_key: str = "/data/control/client.key"
+    control_ca_cert: str = "/data/control/ca.crt"
+    control_timeout_seconds: int = 40
+    control_max_page_bytes: int = 1_048_576
+    control_max_snapshot_bytes: int = 64 * 1_048_576
+
     @field_validator(
         "xray_tcp_port", "xray_grpc_port", "fast_host_ip",
-        "short_id_tcp", "public_key_tcp", "hy2_stats_secret",
+        "short_id_tcp", "public_key_tcp", "hy2_stats_secret", "control_token",
         mode="before",
     )
     @classmethod
@@ -54,6 +70,14 @@ class Settings(BaseSettings):
         if isinstance(v, str) and v.strip() == "":
             return None
         return v
+
+    @property
+    def control_url_list(self) -> list[str]:
+        return [
+            url.strip().rstrip("/")
+            for url in self.control_urls.split(",")
+            if url.strip()
+        ]
 
     model_config = ConfigDict(
         env_file="/data/agent.env",

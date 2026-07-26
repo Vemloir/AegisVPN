@@ -55,3 +55,8 @@ site.example.com {
         file_server
     }
 }
+
+# Optional outbound node-control virtual host. The glob is empty on legacy
+# installs. Enable it by copying control-plane/control.caddy.example to
+# data/control/server/control.caddy and setting CONTROL_DOMAIN.
+import /etc/caddy/control/*.caddy

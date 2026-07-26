@@ -13,7 +13,6 @@ from src.services.admin_service import AdminService
 
 from .common import fmt_bytes, is_admin
 from .keyboards import (
-    admin_back_keyboard,
     admin_panel_keyboard,
     admin_stats_keyboard,
     cancel_keyboard,

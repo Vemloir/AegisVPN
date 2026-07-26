@@ -57,12 +57,27 @@ import posixpath
 import shlex
 import stat
 import time
+from datetime import datetime
+from ipaddress import IPv4Address, ip_address
 from pathlib import Path
 
 try:
     import paramiko
-except ImportError as exc:
-    raise SystemExit("paramiko required: pip install paramiko") from exc
+except ImportError:  # Allows offline unit tests of pure rollout logic.
+    paramiko = None  # type: ignore[assignment]
+
+try:
+    from .control_plane import (
+        PromotionState,
+        render_agent_firewall,
+        validate_promotion,
+    )
+except ImportError:  # Direct execution: python deploy/vps/update.py
+    from control_plane import (
+        PromotionState,
+        render_agent_firewall,
+        validate_promotion,
+    )
 
 ROOT = Path(__file__).resolve().parents[2]
 AGENT_DIR = ROOT / "agent"
@@ -74,6 +89,8 @@ BOT_DIR = ROOT / "bot"
 # ---------------------------------------------------------------------------
 
 def connect(host: str, password: str, attempts: int = 4) -> paramiko.SSHClient:
+    if paramiko is None:
+        raise SystemExit("paramiko required: pip install paramiko")
     delay = 8.0
     last: Exception | None = None
     for attempt in range(1, attempts + 1):
@@ -85,8 +102,10 @@ def connect(host: str, password: str, attempts: int = 4) -> paramiko.SSHClient:
             return c
         except Exception as exc:
             last = exc
-            try: c.close()
-            except Exception: pass
+            try:
+                c.close()
+            except Exception:
+                pass
             if attempt == attempts:
                 break
             print(f"  ssh retry {attempt}/{attempts-1} ({exc}) sleep {delay:.0f}s")
@@ -242,6 +261,197 @@ def update_agent(c: paramiko.SSHClient, host: str) -> None:
     run(c, "cd /root/aegis/deploy/vps && docker compose up -d --build --no-deps agent 2>&1 | tail -4",
         "agent rebuild", timeout=300)
     print(f"  [{host}] agent updated ✓")
+
+
+def _set_node_control_settings(
+    c: paramiko.SSHClient,
+    *,
+    mode: str,
+    bind_host: str,
+) -> None:
+    values = {
+        "CONTROL_MODE": mode,
+        "AGENT_BIND_HOST": bind_host,
+    }
+    script = (
+        "from pathlib import Path\n"
+        "p=Path('/root/aegis/deploy/vps/vpn.env')\n"
+        f"values={values!r}\n"
+        "lines=p.read_text().splitlines()\n"
+        "seen=set()\n"
+        "out=[]\n"
+        "for line in lines:\n"
+        "    key=line.split('=',1)[0] if '=' in line else ''\n"
+        "    if key in values:\n"
+        "        out.append(f'{key}={values[key]}')\n"
+        "        seen.add(key)\n"
+        "    else:\n"
+        "        out.append(line)\n"
+        "for key,value in values.items():\n"
+        "    if key not in seen:\n"
+        "        out.append(f'{key}={value}')\n"
+        "tmp=p.with_suffix('.env.tmp')\n"
+        "tmp.write_text('\\n'.join(out)+'\\n')\n"
+        "tmp.chmod(0o600)\n"
+        "tmp.replace(p)\n"
+    )
+    run(
+        c,
+        f"python3 -c {shlex.quote(script)}",
+        "update node control settings",
+    )
+    run(
+        c,
+        "cd /root/aegis/deploy/vps && "
+        "docker compose up -d --no-deps --force-recreate agent 2>&1 | tail -3",
+        "recreate agent only",
+        timeout=120,
+    )
+
+
+def _apply_agent_firewall(
+    c: paramiko.SSHClient,
+    *,
+    control_server_ip: str,
+    allow_control_server: bool,
+) -> None:
+    script = "#!/bin/sh\nset -eu\n" + render_agent_firewall(
+        control_server_ip=control_server_ip,
+        public_agent=allow_control_server,
+    )
+    run(
+        c,
+        f"sh -c {shlex.quote(script)}",
+        "apply Agent API firewall",
+    )
+
+
+def _fetch_promotion_state(
+    main_c: paramiko.SSHClient,
+    *,
+    server_id: int,
+) -> PromotionState:
+    script = (
+        "import json,sqlite3\n"
+        "db='/root/aegis/deploy/vps/data/bot/aegis.db'\n"
+        "con=sqlite3.connect(db)\n"
+        "con.row_factory=sqlite3.Row\n"
+        f"sid={server_id}\n"
+        "row=con.execute('SELECT desired_generation,applied_generation,"
+        "applied_digest,control_last_seen_at,control_last_error FROM servers "
+        "WHERE id=?',(sid,)).fetchone()\n"
+        "if row is None: raise SystemExit('server not found')\n"
+        "snap=con.execute('SELECT digest FROM node_snapshots WHERE server_id=? "
+        "AND generation=?',(sid,row['desired_generation'])).fetchone()\n"
+        "print(json.dumps({'desired_generation':row['desired_generation'],"
+        "'applied_generation':row['applied_generation'],"
+        "'desired_digest':snap['digest'] if snap else None,"
+        "'applied_digest':row['applied_digest'],"
+        "'last_seen_at':row['control_last_seen_at'],"
+        "'last_error':row['control_last_error']}))\n"
+    )
+    payload = json.loads(
+        run(
+            main_c,
+            f"python3 -c {shlex.quote(script)}",
+            "read promotion state",
+        ).strip()
+    )
+    last_seen_raw = payload["last_seen_at"]
+    return PromotionState(
+        desired_generation=int(payload["desired_generation"]),
+        applied_generation=int(payload["applied_generation"]),
+        desired_digest=payload["desired_digest"],
+        applied_digest=payload["applied_digest"],
+        last_seen_at=(
+            datetime.fromisoformat(last_seen_raw) if last_seen_raw else None
+        ),
+        last_error=payload["last_error"],
+    )
+
+
+def _set_server_control_mode(
+    main_c: paramiko.SSHClient,
+    *,
+    server_id: int,
+    mode: str,
+) -> None:
+    if mode not in {"observe", "pull"}:
+        raise ValueError("central control mode must be observe or pull")
+    script = (
+        "import sqlite3\n"
+        "db='/root/aegis/deploy/vps/data/bot/aegis.db'\n"
+        "con=sqlite3.connect(db)\n"
+        f"cur=con.execute('UPDATE servers SET control_mode=? WHERE id=?',"
+        f"({mode!r},{server_id}))\n"
+        "assert cur.rowcount == 1, 'server not found'\n"
+        "con.commit()\n"
+    )
+    run(
+        main_c,
+        f"python3 -c {shlex.quote(script)}",
+        f"set central node mode {mode}",
+    )
+
+
+def promote_pull(
+    main_c: paramiko.SSHClient,
+    node_c: paramiko.SSHClient,
+    *,
+    server_id: int,
+    control_server_ip: str,
+    timeout_seconds: int,
+) -> None:
+    """Apply via outbound control, wait for an exact ack, then close TCP/8444."""
+    print("  switching node reconciler to apply (Agent API remains allowlisted)…")
+    _set_node_control_settings(node_c, mode="apply", bind_host="0.0.0.0")
+    _apply_agent_firewall(
+        node_c,
+        control_server_ip=control_server_ip,
+        allow_control_server=True,
+    )
+
+    deadline = time.monotonic() + timeout_seconds
+    last_error = "no acknowledgement received"
+    while time.monotonic() < deadline:
+        state = _fetch_promotion_state(main_c, server_id=server_id)
+        try:
+            validate_promotion(state, max_age_seconds=90)
+        except ValueError as exc:
+            last_error = str(exc)
+            time.sleep(2)
+            continue
+        break
+    else:
+        raise SystemExit(f"promotion guard failed: {last_error}")
+
+    print("  acknowledgement matches desired generation/digest; closing Agent API…")
+    _set_node_control_settings(node_c, mode="apply", bind_host="127.0.0.1")
+    _apply_agent_firewall(
+        node_c,
+        control_server_ip=control_server_ip,
+        allow_control_server=False,
+    )
+    _set_server_control_mode(main_c, server_id=server_id, mode="pull")
+    print("  pull promotion complete; Xray was not restarted ✓")
+
+
+def rollback_observe(
+    main_c: paramiko.SSHClient,
+    node_c: paramiko.SSHClient,
+    *,
+    server_id: int,
+    control_server_ip: str,
+) -> None:
+    """Restore observe/push without exposing TCP/8444 to the public Internet."""
+    _set_server_control_mode(main_c, server_id=server_id, mode="observe")
+    _set_node_control_settings(node_c, mode="observe", bind_host="0.0.0.0")
+    _apply_agent_firewall(
+        node_c,
+        control_server_ip=control_server_ip,
+        allow_control_server=True,
+    )
+    print("  rollback complete; Agent API is reachable only from control IP ✓")
 
 
 def split_migrate(c: paramiko.SSHClient, host: str) -> None:
@@ -932,6 +1142,31 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--main-password", required=False)
     p.add_argument("--bot", action="store_true", help="Update the bot on the main VPS")
     p.add_argument("--nodes", action="store_true", help="Update agent on --node targets")
+    control_rollout = p.add_mutually_exclusive_group()
+    control_rollout.add_argument(
+        "--promote-pull",
+        action="store_true",
+        help="Canary one node: enable authoritative outbound apply, wait for a "
+             "fresh matching generation/digest acknowledgement, then bind the "
+             "Agent API to loopback and close TCP/8444 without restarting Xray.",
+    )
+    control_rollout.add_argument(
+        "--rollback-observe",
+        action="store_true",
+        help="Return one node to observe/push and allow TCP/8444 only from the "
+             "fixed --main-host IP. Xray remains untouched.",
+    )
+    p.add_argument(
+        "--server-id",
+        type=int,
+        help="Bot database server id for --promote-pull/--rollback-observe.",
+    )
+    p.add_argument(
+        "--promotion-timeout",
+        type=int,
+        default=180,
+        help="Seconds to wait for an exact apply acknowledgement (default 180).",
+    )
     p.add_argument(
         "--patch-dns", action="store_true",
         help="Rewrite the DNS block of the LIVE xray config on --node targets from "
@@ -999,9 +1234,30 @@ def main() -> None:
     args = parse_args()
 
     if not any((args.bot, args.nodes, args.patch_dns, args.mtproxy, args.set_network,
-                args.split_migrate, args.provision_stack, args.renew_hy2_cert)):
+                args.split_migrate, args.provision_stack, args.renew_hy2_cert,
+                args.promote_pull, args.rollback_observe)):
         raise SystemExit("Specify --bot, --nodes, --patch-dns, --mtproxy, --set-network, "
-                         "--split-migrate, --provision-stack, and/or --renew-hy2-cert")
+                         "--split-migrate, --provision-stack, --renew-hy2-cert, "
+                         "--promote-pull, and/or --rollback-observe")
+    if args.promote_pull or args.rollback_observe:
+        if not args.main_password or args.server_id is None:
+            raise SystemExit(
+                "control rollout requires --main-password and --server-id"
+            )
+        if not args.nodes_list or len(args.nodes_list) != 1:
+            raise SystemExit(
+                "control rollout requires exactly one --node IP:PASSWORD"
+            )
+        if args.promotion_timeout < 1:
+            raise SystemExit("--promotion-timeout must be positive")
+        try:
+            fixed_control_ip = ip_address(args.main_host)
+        except ValueError as exc:
+            raise SystemExit(
+                "--main-host must be the fixed IPv4 control-server address"
+            ) from exc
+        if not isinstance(fixed_control_ip, IPv4Address):
+            raise SystemExit("--main-host must be a fixed IPv4 address")
     if args.renew_hy2_cert and (not args.main_password or not args.nodes_list):
         raise SystemExit("--renew-hy2-cert requires --main-password (ACME host) "
                          "and at least one --node IP:PASSWORD to install onto")
@@ -1029,6 +1285,37 @@ def main() -> None:
             update_bot(c)
         finally:
             c.close()
+
+    if args.promote_pull or args.rollback_observe:
+        node_spec = args.nodes_list[0]
+        parts = node_spec.split(":")
+        if len(parts) < 2:
+            raise SystemExit(
+                f"Bad --node format (expected IP:PASSWORD): {node_spec}"
+            )
+        node_ip, node_password = parts[0], ":".join(parts[1:])
+        print(f"[control-rollout {node_ip}] connecting to control and node hosts…")
+        main_control = connect(args.main_host, args.main_password)
+        node_control = connect(node_ip, node_password)
+        try:
+            if args.promote_pull:
+                promote_pull(
+                    main_control,
+                    node_control,
+                    server_id=args.server_id,
+                    control_server_ip=str(fixed_control_ip),
+                    timeout_seconds=args.promotion_timeout,
+                )
+            else:
+                rollback_observe(
+                    main_control,
+                    node_control,
+                    server_id=args.server_id,
+                    control_server_ip=str(fixed_control_ip),
+                )
+        finally:
+            node_control.close()
+            main_control.close()
 
     if args.split_migrate:
         for node_str in args.nodes_list:

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -55,6 +57,16 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
+    # Outbound node control plane. Caddy validates mTLS and injects a second
+    # shared secret on its loopback request so public clients cannot spoof the
+    # validated certificate fingerprint header.
+    node_control_proxy_secret: SecretStr | None = None
+    node_control_proxy_secret_file: str = "/control/proxy-secret"
+    node_control_long_poll_seconds: float = 25.0
+    node_control_poll_interval_seconds: float = 1.0
+    node_control_page_size: int = 500
+    node_control_max_telemetry_bytes: int = 1_048_576
+
     # Default simultaneous-connection limit per user, mirroring the node default
     # (agent CONN_LIMIT). Shown in the admin card when a user has no override.
     default_conn_limit: int = 5
@@ -72,6 +84,16 @@ class Settings(BaseSettings):
     @property
     def platega_enabled(self) -> bool:
         return bool(self.platega_merchant_id and self.platega_secret)
+
+    @property
+    def effective_node_control_proxy_secret(self) -> SecretStr | None:
+        if self.node_control_proxy_secret is not None:
+            return self.node_control_proxy_secret
+        try:
+            value = Path(self.node_control_proxy_secret_file).read_text().strip()
+        except OSError:
+            return None
+        return SecretStr(value) if value else None
 
     @property
     def db_url(self) -> str:
