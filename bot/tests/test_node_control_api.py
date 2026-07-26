@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
+from sqlalchemy import select
 
 from src.api.main import app
 from src.core.config import settings
@@ -232,11 +233,19 @@ async def test_pages_ack_and_telemetry_are_node_scoped_and_monotonic(monkeypatch
         node = await session.get(Server, node_id)
         other = await session.get(Server, other_id)
         telemetry = await session.get(NodeTelemetry, node_id)
+        link = (
+            await session.execute(
+                select(SubscriptionServer).where(
+                    SubscriptionServer.server_id == node_id
+                )
+            )
+        ).scalar_one()
     assert node.applied_generation == manifest["generation"]
     assert node.applied_digest == manifest["digest"]
     assert other.applied_generation == 0
     assert telemetry.sequence == 2
     assert telemetry.payload == {"online": 4}
+    assert link.is_synced is True
 
 
 async def test_telemetry_payload_is_bounded(monkeypatch):

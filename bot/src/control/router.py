@@ -2,6 +2,7 @@ import asyncio
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import update
 
 from src.control.auth import authenticate_node
 from src.control.schemas import (
@@ -15,7 +16,13 @@ from src.control.schemas import (
 from src.control.state import canonical_json, publish_snapshot
 from src.core.config import settings
 from src.core.database import async_session_maker
-from src.models import NodeSnapshot, NodeSnapshotPage, NodeTelemetry, Server
+from src.models import (
+    NodeSnapshot,
+    NodeSnapshotPage,
+    NodeTelemetry,
+    Server,
+    SubscriptionServer,
+)
 
 router = APIRouter(prefix="/api/node/v1", tags=["node-control"])
 
@@ -37,7 +44,6 @@ async def sync_node(
             current = await session.get(Server, node.id)
             if (
                 current is None
-                or not current.is_active
                 or current.control_mode not in {"observe", "pull"}
             ):
                 raise HTTPException(status_code=401, detail="Inactive node")
@@ -132,6 +138,11 @@ async def acknowledge_snapshot(
         current.applied_digest = request.digest
         current.control_last_reconciled_at = _utcnow()
         current.control_last_error = None
+        await session.execute(
+            update(SubscriptionServer)
+            .where(SubscriptionServer.server_id == node.id)
+            .values(is_synced=True)
+        )
         await session.commit()
     return NodeControlResult(status="ok")
 

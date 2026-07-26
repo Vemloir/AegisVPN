@@ -13,8 +13,9 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 
 from src.core.database import async_session_maker
-from src.models import Server, Subscription, User
+from src.models import NodeTelemetry, Server, Subscription, User
 from src.services.agent_client import AgentClient
+from src.services.node_control_service import NodeControlService
 from src.services.server_access_service import ServerAccessService
 from src.services.subscription_service import SubscriptionService
 
@@ -51,6 +52,12 @@ class AdminService:
             all_servers = (
                 await session.execute(select(Server).where(Server.is_active == True))  # noqa: E712
             ).scalars().all()
+            telemetry_payloads = {
+                telemetry.server_id: dict(telemetry.payload or {})
+                for telemetry in (
+                    await session.execute(select(NodeTelemetry))
+                ).scalars().all()
+            }
 
         # Per-location traffic, read straight off the server row (accumulated by
         # poll_traffic). Only active locations are shown — disabled ones carry a
@@ -67,6 +74,11 @@ class AdminService:
         traffic_total_down = sum(r[3] for r in traffic_per_server)
 
         async def fetch_xray_online(server: Server) -> tuple[str, str, int]:
+            if server.control_mode == "pull":
+                payload = telemetry_payloads.get(server.id) or {}
+                online = payload.get("online_emails")
+                count = len(online) if isinstance(online, list) else -1
+                return server.flag, server.name, count
             try:
                 count = await AgentClient(server.agent_url, server.agent_token).get_online()
             except Exception:
@@ -285,8 +297,15 @@ class AdminService:
                 .scalars()
                 .all()
             )
+            await NodeControlService.publish_for_servers(
+                session,
+                {server.id for server in servers},
+            )
+            await session.commit()
 
         async def _push(server: Server) -> bool:
+            if not NodeControlService.pushes_to(server):
+                return True
             try:
                 return await AgentClient(server.agent_url, server.agent_token).set_conn_limit(user_id, limit)
             except Exception:

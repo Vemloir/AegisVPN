@@ -54,7 +54,6 @@ async def authenticate_node(request: Request) -> Server:
             await session.execute(
                 select(Server).where(
                     Server.control_cert_fingerprint == fingerprint,
-                    Server.is_active == True,  # noqa: E712
                     Server.control_mode.in_(("observe", "pull")),
                 )
             )

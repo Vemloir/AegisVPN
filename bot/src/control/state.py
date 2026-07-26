@@ -43,6 +43,11 @@ async def build_desired_items(
     now: datetime | None = None,
 ) -> list[dict]:
     current_time = now or datetime.now(UTC).replace(tzinfo=None)
+    server = await session.get(Server, server_id)
+    if server is None:
+        raise LookupError(f"server {server_id} does not exist")
+    if not server.is_active:
+        return []
     subscriptions = (
         (
             await session.execute(
