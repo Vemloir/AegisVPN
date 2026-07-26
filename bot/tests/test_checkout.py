@@ -11,6 +11,7 @@ from pydantic import SecretStr
 from sqlalchemy import select
 
 from src.api.auth import issue_session
+from src.api.checkout import validate_provider_redirect
 from src.api.main import app
 from src.core.database import async_session_maker, engine
 from src.core.terms import TERMS_VERSION
@@ -94,7 +95,7 @@ async def test_sbp_creates_the_pending_payment_the_callback_will_look_up(monkeyp
         # The payer must land back on the site, not in the bot.
         assert kwargs["return_url"].startswith("https://")
         assert kwargs["amount_rub"] == 149
-        return {"transactionId": "tx-777", "redirect": "https://pay.example/tx-777"}
+        return {"transactionId": "tx-777", "redirect": "https://app.platega.io/tx-777"}
 
     monkeypatch.setattr("src.api.checkout.create_sbp_transaction", fake_create)
     # platega_enabled is derived from BOTH credentials; without them the site
@@ -104,7 +105,7 @@ async def test_sbp_creates_the_pending_payment_the_callback_will_look_up(monkeyp
 
     r = _client(user_id).post("/api/checkout", json={"plan_id": plan_id, "method": "sbp"})
     assert r.status_code == 200, r.text
-    assert r.json()["url"] == "https://pay.example/tx-777"
+    assert r.json()["url"] == "https://app.platega.io/tx-777"
 
     async with async_session_maker() as session:
         payment = (
@@ -139,3 +140,30 @@ async def test_an_unknown_method_is_rejected():
     user_id, plan_id = await _seed()
     r = _client(user_id).post("/api/checkout", json={"plan_id": plan_id, "method": "card"})
     assert r.status_code == 400
+
+
+@pytest.mark.parametrize(
+    ("method", "url"),
+    [
+        ("stars", "https://t.me/invoice/abc"),
+        ("sbp", "https://app.platega.io/transaction/abc"),
+    ],
+)
+def test_provider_redirect_allows_only_expected_https_hosts(method, url):
+    assert validate_provider_redirect(url, method) == url
+
+
+@pytest.mark.parametrize(
+    ("method", "url"),
+    [
+        ("stars", "javascript:alert(1)"),
+        ("stars", "https://t.me.evil.example/invoice/abc"),
+        ("stars", "https://user:pass@t.me/invoice/abc"),
+        ("stars", "http://t.me/invoice/abc"),
+        ("sbp", "//app.platega.io/transaction/abc"),
+        ("sbp", "https://app.platega.io.evil.example/transaction/abc"),
+        ("sbp", "https://app.platega.io:444/transaction/abc"),
+    ],
+)
+def test_provider_redirect_rejects_untrusted_targets(method, url):
+    assert validate_provider_redirect(url, method) is None
