@@ -23,4 +23,5 @@ Client/
 .claude/
 .serena/
 graphify-out/
+.worktrees/
 CLAUDE.md
