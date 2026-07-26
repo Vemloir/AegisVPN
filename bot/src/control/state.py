@@ -15,6 +15,11 @@ from src.models import (
 )
 
 
+def _supports_cascade(server: Server) -> bool:
+    capabilities = server.control_capabilities or {}
+    return "cascade-v2" in set(capabilities.get("features") or [])
+
+
 def canonical_json(value: object) -> bytes:
     return json.dumps(
         value,
@@ -33,7 +38,13 @@ def _expiry_ms(value: datetime) -> int:
 def _item_sort_key(item: dict) -> tuple[str, str, str]:
     if item["kind"] == "client":
         return "client", str(item["email"]), str(item["uuid"])
-    return "conn_limit", f"{int(item['user_id']):020d}", ""
+    if item["kind"] == "conn_limit":
+        return "conn_limit", f"{int(item['user_id']):020d}", ""
+    return (
+        str(item["kind"]),
+        f"{int(item['route_id']):020d}",
+        str(item.get("position", item.get("uuid", ""))),
+    )
 
 
 async def build_desired_items(
@@ -110,6 +121,12 @@ async def build_desired_items(
         }
         for user_id, limit in conn_limits.items()
     )
+    if _supports_cascade(server):
+        # Local import avoids the services package's compatibility exports
+        # importing NodeControlService back into this module during startup.
+        from src.services.cascade_service import build_cascade_items
+
+        items.extend(await build_cascade_items(session, server))
     items.sort(key=_item_sort_key)
     return items
 
@@ -129,6 +146,7 @@ async def publish_snapshot(
         )
     ).scalar_one()
     items = await build_desired_items(session, server_id)
+    schema_version = 2 if _supports_cascade(server) else 1
     digest = hashlib.sha256(canonical_json(items)).hexdigest()
     latest = (
         await session.execute(
@@ -138,7 +156,11 @@ async def publish_snapshot(
             .limit(1)
         )
     ).scalar_one_or_none()
-    if latest is not None and latest.digest == digest:
+    if (
+        latest is not None
+        and latest.digest == digest
+        and latest.schema_version == schema_version
+    ):
         return latest
 
     generation = max(
@@ -152,6 +174,7 @@ async def publish_snapshot(
     snapshot = NodeSnapshot(
         server_id=server_id,
         generation=generation,
+        schema_version=schema_version,
         digest=digest,
         item_count=len(items),
         page_count=len(pages),
@@ -165,6 +188,7 @@ async def publish_snapshot(
                 server_id=server_id,
                 generation=generation,
                 page_index=page_index,
+                schema_version=schema_version,
                 page_digest=hashlib.sha256(canonical_json(page_items)).hexdigest(),
                 items=page_items,
             )

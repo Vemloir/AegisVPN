@@ -4,10 +4,10 @@ import asyncio
 import inspect
 import os
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Callable
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization

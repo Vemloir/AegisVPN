@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from .config import settings
 from .control_models import (
     AppliedState,
+    DesiredCascadeService,
     DesiredClient,
     DesiredSnapshot,
     SnapshotManifest,
@@ -115,6 +116,7 @@ class ControlClient:
             timeout_seconds=settings.control_timeout_seconds,
             max_page_bytes=settings.control_max_page_bytes,
             max_snapshot_bytes=settings.control_max_snapshot_bytes,
+            capabilities=["cascade-v2"],
         )
 
     async def close(self) -> None:
@@ -203,7 +205,10 @@ class ControlClient:
 
     @staticmethod
     def _validate_schema_version(payload: Any) -> None:
-        if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schema_version") not in {1, 2}
+        ):
             raise ControlProtocolError("unsupported schema version")
 
     async def sync(self, applied: AppliedState) -> DesiredSnapshot | None:
@@ -256,7 +261,8 @@ class ControlClient:
             except ValidationError as exc:
                 raise ControlProtocolError("invalid snapshot page") from exc
             if (
-                page.generation != manifest.generation
+                page.schema_version != manifest.schema_version
+                or page.generation != manifest.generation
                 or page.page_index != page_index
             ):
                 raise ControlProtocolError("snapshot page identity mismatch")
@@ -268,7 +274,7 @@ class ControlClient:
             if actual_page_digest != page.page_digest:
                 raise ControlProtocolError("snapshot page digest mismatch")
             for item in page.items:
-                if isinstance(item, DesiredClient):
+                if isinstance(item, (DesiredClient, DesiredCascadeService)):
                     if item.uuid in seen_client_uuids:
                         raise ControlProtocolError("duplicate client UUID")
                     seen_client_uuids.add(item.uuid)
@@ -284,6 +290,7 @@ class ControlClient:
             raise ControlProtocolError("snapshot digest mismatch")
         try:
             return DesiredSnapshot(
+                schema_version=manifest.schema_version,
                 generation=manifest.generation,
                 digest=manifest.digest,
                 items=items,

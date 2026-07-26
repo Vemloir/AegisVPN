@@ -17,6 +17,7 @@ from src.core.logger import logger
 from src.models import Device, Server, ServerTransportPref, Subscription, SubscriptionServer
 from src.services import geoip
 from src.services.agent_client import AgentClient
+from src.services.cascade_service import advertisable_routes
 from src.services.node_control_service import NodeControlService
 from src.services.server_access_service import ServerAccessService
 
@@ -107,6 +108,26 @@ _XRAY_CLEAN_ROUTING = {
         {"type": "field", "domain": _RU_CN_DIRECT_DOMAINS, "outboundTag": "direct"},
     ],
 }
+
+
+def _cascade_visible_servers(
+    servers: list[Server],
+    route_labels_by_entry: dict[int, str],
+) -> list[Server]:
+    # An entry-only node must never be emitted as a direct exit. It appears only
+    # after its enabled route has been acknowledged by the entry and all exits.
+    return [
+        server
+        for server in servers
+        if server.node_role != "entry" or server.id in route_labels_by_entry
+    ]
+
+
+def _replace_link_label(link: str, label: str) -> str:
+    parts = urlsplit(link)
+    return urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, parts.query, label.strip())
+    )
 
 
 class SubscriptionService:
@@ -609,6 +630,15 @@ class SubscriptionService:
         )
         servers = result.scalars().all()
 
+        routes = await advertisable_routes(
+            session,
+            {server.id for server in servers if server.node_role == "entry"},
+        )
+        route_labels_by_entry = {
+            route.entry_server_id: route.label for route in routes
+        }
+        servers = _cascade_visible_servers(servers, route_labels_by_entry)
+
         servers = sorted(servers, key=SubscriptionService.server_sort_key)
         server_name_counts = Counter(
             SubscriptionService.server_display_name(server).casefold() for server in servers
@@ -630,6 +660,10 @@ class SubscriptionService:
         hy2_server_ids = await SubscriptionService._hy2_servers_for_user(
             session, sub.user_id, server_ids
         )
+        # Cascade is deliberately client-facing VLESS only. Per-location Hy2
+        # remains authoritative for direct locations and is ignored for entry
+        # routes until a separate UDP cascade is designed.
+        hy2_server_ids.difference_update(route_labels_by_entry)
         # AsyncSession cannot run concurrent queries. Resolve pull-node templates
         # sequentially before the network fetches below are gathered.
         pull_links: dict[int, str | None] = {}
@@ -676,13 +710,19 @@ class SubscriptionService:
                         profile=target_profile,
                     )
                 if text:
-                    return SubscriptionService.normalize_vless_uri(
+                    normalized = SubscriptionService.normalize_vless_uri(
                         text,
                         server,
                         duplicate_name_keys,
                         profile=target_profile,
                         transport=transport_by_server.get(server.id),
                     )
+                    if server.id in route_labels_by_entry:
+                        return _replace_link_label(
+                            normalized,
+                            route_labels_by_entry[server.id],
+                        )
+                    return normalized
             except Exception as exc:
                 logger.error(f"Failed to fetch sub from server {server.id}: {exc}")
             return ""

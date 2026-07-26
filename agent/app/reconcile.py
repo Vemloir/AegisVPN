@@ -4,9 +4,11 @@ import tempfile
 import time
 from dataclasses import dataclass
 
-from . import connlimit, hysteria
+from . import cascade, connlimit, hysteria
 from .control_models import (
     AppliedState,
+    DesiredCascadeRoute,
+    DesiredCascadeService,
     DesiredClient,
     DesiredConnLimit,
     DesiredSnapshot,
@@ -100,18 +102,29 @@ def _desired_parts(
     snapshot: DesiredSnapshot,
     *,
     now_ms: int,
-) -> tuple[list[DesiredClient], dict[int, int]]:
-    clients = [
-        item
-        for item in snapshot.items
-        if isinstance(item, DesiredClient) and item.expire_ms > now_ms
-    ]
+) -> tuple[list[DesiredClient], dict[int, int], list[DesiredCascadeRoute]]:
+    clients: list[DesiredClient] = []
+    routes: list[DesiredCascadeRoute] = []
+    for item in snapshot.items:
+        if isinstance(item, DesiredClient) and item.expire_ms > now_ms:
+            clients.append(item)
+        elif isinstance(item, DesiredCascadeService):
+            clients.append(
+                DesiredClient(
+                    kind="client",
+                    uuid=item.uuid,
+                    email=item.email,
+                    expire_ms=4_102_444_800_000,
+                )
+            )
+        elif isinstance(item, DesiredCascadeRoute):
+            routes.append(item)
     overrides = {
         item.user_id: item.limit
         for item in snapshot.items
         if isinstance(item, DesiredConnLimit)
     }
-    return clients, overrides
+    return clients, overrides, routes
 
 
 async def reconcile_snapshot(
@@ -121,17 +134,18 @@ async def reconcile_snapshot(
     now_ms: int | None = None,
 ) -> ReconcileResult:
     effective_now_ms = now_ms if now_ms is not None else time.time_ns() // 1_000_000
-    desired_clients, desired_overrides = _desired_parts(
+    desired_clients, desired_overrides, desired_routes = _desired_parts(
         snapshot,
         now_ms=effective_now_ms,
     )
 
     async with config_lock:
         config = await get_xray_config()
+        cascade_changed = cascade.apply_cascade_routes(config, desired_routes)
         additions: list[tuple[dict, dict]] = []
         removals: list[tuple[str, str]] = []
         removed_emails: set[str] = set()
-        config_changed = False
+        config_changed = cascade_changed
 
         for inbound in list_vless_inbounds(config):
             existing = list(
@@ -195,13 +209,14 @@ async def reconcile_snapshot(
         if config_changed:
             await save_xray_config(config)
 
-        api_ok = True
-        for tag, email in removals:
-            if not await xray_api_remove(tag, email):
-                api_ok = False
-        for inbound, record in additions:
-            if not await xray_api_add(inbound, record):
-                api_ok = False
+        api_ok = not cascade_changed
+        if not cascade_changed:
+            for tag, email in removals:
+                if not await xray_api_remove(tag, email):
+                    api_ok = False
+            for inbound, record in additions:
+                if not await xray_api_add(inbound, record):
+                    api_ok = False
         if not api_ok:
             reload_xray()
             if not await wait_for_xray_ready():
@@ -217,6 +232,7 @@ async def reconcile_snapshot(
                 connlimit.replace_overrides(desired_overrides)
             save_applied_state(
                 AppliedState(
+                    schema_version=snapshot.schema_version,
                     generation=snapshot.generation,
                     digest=snapshot.digest,
                     items=snapshot.items,

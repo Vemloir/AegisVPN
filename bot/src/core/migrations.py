@@ -95,6 +95,12 @@ MIGRATIONS: dict[str, list[Column]] = {
     ],
     "servers": [
         Column(
+            "node_role",
+            "VARCHAR(16) DEFAULT 'both'",
+            "VARCHAR(16) DEFAULT 'both'",
+            post_sql="UPDATE servers SET node_role = 'both' WHERE node_role IS NULL",
+        ),
+        Column(
             "control_mode",
             "VARCHAR(16) DEFAULT 'push'",
             "VARCHAR(16) DEFAULT 'push'",
@@ -181,6 +187,23 @@ MIGRATIONS: dict[str, list[Column]] = {
         # out-of-band by the operator via a direct DB update, like the obfs
         # password — never the actual domain in the (public) migration.
         Column("hy2_sni", "VARCHAR(255)", "VARCHAR(255)"),
+    ],
+    "node_snapshots": [
+        Column(
+            "schema_version",
+            "INTEGER DEFAULT 1 NOT NULL",
+            "INTEGER DEFAULT 1 NOT NULL",
+        ),
+    ],
+    "node_snapshot_pages": [
+        Column(
+            "schema_version",
+            "INTEGER DEFAULT 1 NOT NULL",
+            "INTEGER DEFAULT 1 NOT NULL",
+        ),
+    ],
+    "cascade_route_acks": [
+        Column("config_digest", "VARCHAR(64)", "VARCHAR(64)"),
     ],
 }
 

@@ -1,4 +1,5 @@
 from .base import Base
+from .cascade import CascadeRoute, CascadeRouteAck, CascadeRouteExit
 from .device import Device
 from .node_control import NodeSnapshot, NodeSnapshotPage, NodeTelemetry
 from .payment import Payment
@@ -12,6 +13,9 @@ from .user import User
 
 __all__ = [
     "Base",
+    "CascadeRoute",
+    "CascadeRouteExit",
+    "CascadeRouteAck",
     "User",
     "Server",
     "ServerAccessGrant",
