@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { css, useHoverStyle } from './css.js'
 import { dict } from './i18n.js'
-import Globe from './Globe.jsx'
 import TelegramLogin from './TelegramLogin.jsx'
 import { regionOf } from './countries.js'
 import * as api from './api.js'
@@ -11,6 +10,17 @@ import * as api from './api.js'
 const BOT_NAME = 'AegisEcoVPN_bot'
 const BOT_URL = `https://t.me/${BOT_NAME}`
 const SUPPORT_URL = 'https://t.me/AegisVPNsupportBot'
+const Globe = lazy(() => import('./Globe.jsx'))
+
+function DeferredGlobe(props) {
+  return (
+    <Suspense
+      fallback={<div aria-hidden="true" style={{ width: '100%', height: '100%', minHeight: 320 }} />}
+    >
+      <Globe {...props} />
+    </Suspense>
+  )
+}
 
 // Language lives in the URL path (/ru/ or /en/), so a shared link carries its
 // language. Anything that isn't /en falls back to Russian, the default.
@@ -1311,7 +1321,7 @@ export default function App() {
         {isMobile && (
           <Reveal delay={140} style={{ marginTop: '18px' }}>
             <div style={{ position: 'relative', width: '100%', height: '40svh' }}>
-              <Globe
+              <DeferredGlobe
                 locations={locations}
                 selected={selected}
                 onSelect={setSelected}
@@ -1352,7 +1362,7 @@ export default function App() {
       <section style={css('position:relative; padding:0 0 clamp(48px,10vw,92px);')}>
         {(
           <div style={css('position:relative; width:100%; min-height:clamp(360px,72vw,600px);')}>
-            <Globe
+            <DeferredGlobe
               locations={locations}
               selected={selected}
               onSelect={setSelected}
