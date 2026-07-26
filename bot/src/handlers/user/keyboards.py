@@ -140,16 +140,24 @@ def location_protocol_keyboard(
     protocol: str,
     hy2_capable: bool = False,
 ) -> InlineKeyboardMarkup:
-    """Protocol chooser. Hysteria2 is disabled fleet-wide (RU wired ISPs drop the
-    QUIC data streams — it failed even for third-party Hy2 providers), so only
-    VLESS is offered. ``hy2_capable`` is accepted for signature stability but no
-    longer surfaces a Hy2 option."""
+    """Protocol chooser with Hy2 selectable only on a capable node."""
     mark = t(language, "location_selected_mark")
     rows: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(
                 text=t(language, "location_proto_vless") + (mark if protocol == "vless" else ""),
                 callback_data=f"loc_proto_set:{server_id}:vless",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=t(language, "location_proto_hy2")
+                + (mark if protocol == "hy2" else ""),
+                callback_data=(
+                    f"loc_proto_set:{server_id}:hy2"
+                    if hy2_capable
+                    else f"loc_hy2:{server_id}"
+                ),
             )
         ],
         [InlineKeyboardButton(text=t(language, "back"), callback_data=f"loc:{server_id}")],

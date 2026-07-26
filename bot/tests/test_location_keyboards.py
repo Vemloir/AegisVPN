@@ -2,8 +2,8 @@
 transport choosers, and the callbacks they emit.
 
 The screen shows the current protocol/transport AS button labels (no markers);
-the choosers mark the current option with a localized suffix. Hysteria2 is shown
-but disabled (routes to the coming-soon alert, never to a set callback)."""
+the choosers mark the current option with a localized suffix. Hysteria2 is
+selectable only on a capable node and disabled everywhere else."""
 
 from src.handlers.user.keyboards import (
     location_protocol_keyboard,
@@ -50,16 +50,23 @@ def test_location_screen_hides_transport_button_off_vless():
 # --- protocol chooser --------------------------------------------------------
 
 
-def test_protocol_chooser_only_vless_no_hy2():
-    # Hy2 is disabled fleet-wide: the chooser offers ONLY VLESS, on every node
-    # (hy2_capable is accepted but no longer surfaces a Hy2 option).
-    for capable in (False, True):
-        kb = location_protocol_keyboard("ru", 7, "vless", hy2_capable=capable)
-        cbs = _callbacks(kb)
-        assert cbs == ["loc_proto_set:7:vless", "loc:7"]
-        assert not any("hy2" in c for c in cbs)
-        # The current protocol (VLESS) carries the localized marker.
-        assert "(текущий)" in _texts(kb)[0]
+def test_protocol_chooser_enables_hy2_only_on_capable_node():
+    capable = location_protocol_keyboard("ru", 7, "vless", hy2_capable=True)
+    assert _callbacks(capable) == [
+        "loc_proto_set:7:vless",
+        "loc_proto_set:7:hy2",
+        "loc:7",
+    ]
+    assert "(текущий)" in _texts(capable)[0]
+
+    unavailable = location_protocol_keyboard(
+        "ru", 7, "vless", hy2_capable=False
+    )
+    assert _callbacks(unavailable) == [
+        "loc_proto_set:7:vless",
+        "loc_hy2:7",
+        "loc:7",
+    ]
 
 
 # --- transport chooser -------------------------------------------------------

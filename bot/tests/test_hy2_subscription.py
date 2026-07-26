@@ -63,11 +63,8 @@ def test_has_alt_transports_true_for_hy2_only_node():
 # --- resolve_protocol --------------------------------------------------------
 
 
-def test_resolve_protocol_always_vless_hy2_disabled():
-    # Hy2 is disabled fleet-wide: EVERY input resolves to vless, even a stored
-    # "hy2" pref on a fully-capable node (emission is gated off; server config
-    # is left intact for a possible future re-enable).
-    assert SubscriptionService.resolve_protocol(_hy2_node(), "hy2") == "vless"
+def test_resolve_protocol_uses_hy2_only_on_capable_node():
+    assert SubscriptionService.resolve_protocol(_hy2_node(), "hy2") == "hy2"
     assert SubscriptionService.resolve_protocol(_hy2_node(hy2_sni=None), "hy2") == "vless"
     assert SubscriptionService.resolve_protocol(_hy2_node(), "vless") == "vless"
     assert SubscriptionService.resolve_protocol(_hy2_node(), None) == "vless"
@@ -186,3 +183,12 @@ async def test_misconfigured_hy2_falls_back_not_emitted_as_hy2():
         encoded = await SubscriptionService.get_subscription_vless_links(session, token)
     body = base64.b64decode(encoded).decode() if encoded else ""
     assert "hysteria2://" not in body
+
+
+async def test_capable_hy2_preference_emits_hysteria_link():
+    token = await _seed_hy2_sub(capable=True)
+    async with async_session_maker() as session:
+        encoded = await SubscriptionService.get_subscription_vless_links(session, token)
+    body = base64.b64decode(encoded).decode() if encoded else ""
+    assert body.startswith("hysteria2://")
+    assert "sni=aegis.example.test" in body
