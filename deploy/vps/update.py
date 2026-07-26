@@ -149,7 +149,13 @@ def upload(c: paramiko.SSHClient, local: Path, remote: str) -> None:
 # ---------------------------------------------------------------------------
 
 def update_bot(c: paramiko.SSHClient) -> None:
-    """Upload all bot sources (code + assets) and recreate the bot container only."""
+    """Upload bot/control API sources and recreate both control-host processes.
+
+    ``siteapi`` serves ``/api/node/v1/*`` while ``bot`` runs migrations and the
+    Telegram workflows. They share one image source tree, so deploying only one
+    leaves half of the control plane on stale code. Neither operation touches
+    Xray.
+    """
     print("  uploading bot sources…")
     # Upload EVERY source asset, not just .py — the privacy/ToS markdown (and any
     # future templates/json) live under src/ too and must reach the image. A
@@ -170,15 +176,29 @@ def update_bot(c: paramiko.SSHClient) -> None:
     # Recreate bot container WITHOUT going through docker compose up
     # (which would also restart aegis-vpn via depends_on).
     print("  rebuilding image…")
-    run(c, "cd /root/aegis/deploy/vps && docker compose build bot 2>&1 | tail -3",
-        "docker build bot", timeout=180)
+    run(
+        c,
+        "cd /root/aegis/deploy/vps && "
+        "docker compose build bot siteapi 2>&1 | tail -5",
+        "docker build bot/siteapi",
+        timeout=300,
+    )
 
-    print("  recreating container (vpn untouched)…")
-    run(c, "docker stop aegis-bot 2>/dev/null || true && docker rm aegis-bot 2>/dev/null || true",
-        "remove old bot")
-    run(c, "cd /root/aegis/deploy/vps && docker compose up -d --no-deps bot 2>&1",
-        "start bot", timeout=60)
-    print("  bot updated ✓")
+    print("  recreating bot + siteapi containers (vpn untouched)…")
+    run(
+        c,
+        "docker stop aegis-bot aegis-siteapi 2>/dev/null || true; "
+        "docker rm aegis-bot aegis-siteapi 2>/dev/null || true",
+        "remove old bot/siteapi",
+    )
+    run(
+        c,
+        "cd /root/aegis/deploy/vps && "
+        "docker compose up -d --no-deps bot siteapi 2>&1",
+        "start bot/siteapi",
+        timeout=90,
+    )
+    print("  bot + siteapi updated ✓")
 
 
 # ---------------------------------------------------------------------------
