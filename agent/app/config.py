@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     control_mode: Literal["off", "observe", "apply"] = "off"
     control_urls: str = ""
     control_token: SecretStr | None = None
+    control_token_file: str = "/data/control/token"
     control_client_cert: str = "/data/control/client.crt"
     control_client_key: str = "/data/control/client.key"
     control_ca_cert: str = "/data/control/ca.crt"

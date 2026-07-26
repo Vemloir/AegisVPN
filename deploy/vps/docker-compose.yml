@@ -41,6 +41,7 @@ services:
     logging: *default-logging
     volumes:
       - ./data/vpn:/data
+      - ./data/control/node:/data/control:ro
 
   bot:
     build:
@@ -55,6 +56,7 @@ services:
     volumes:
       - ./data/bot:/data
       - ./data/vpn:/vpn-data:ro
+      - ./data/control/server:/control:ro
 
   # Public website API (FastAPI, src.api.main:app). Reuses the bot image (same
   # deps + code), reads the SAME sqlite as the bot so the site can never disagree
@@ -73,6 +75,7 @@ services:
     logging: *default-logging
     volumes:
       - ./data/bot:/data
+      - ./data/control/server:/control:ro
 
   # Support bot (@AegisVPNsupportBot): two-way user<->operator relay used as the
   # official feedback channel. Long-polling (no inbound port). Token + operator
@@ -105,11 +108,14 @@ services:
     container_name: aegis-caddy
     restart: unless-stopped
     network_mode: host
+    environment:
+      - CONTROL_DOMAIN=${CONTROL_DOMAIN:-control.example.invalid}
     logging: *default-logging
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./data/caddy:/data
       - ./config/caddy:/config
+      - ./data/control/server:/etc/caddy/control:ro
       # Built website SPA (web/dist), served for aegisvpn.org. Only present on
       # the control host; nodes don't run caddy so the missing dir is harmless.
       - ./web:/srv/web:ro

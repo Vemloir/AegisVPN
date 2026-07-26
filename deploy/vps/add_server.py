@@ -23,21 +23,32 @@ device's subscription. Pass --tcp-port 0 for an xhttp-only node.
 from __future__ import annotations
 
 import argparse
-import json
-import os
 import posixpath
 import stat
-import sys
+import tempfile
 import time
+from ipaddress import IPv4Address, ip_address
 from pathlib import Path
 
 try:
     import paramiko
-except ImportError as exc:  # pragma: no cover
-    raise SystemExit(
-        "paramiko is required for deploy/vps/add_server.py. Install it first, "
-        "for example: python -m pip install paramiko"
-    ) from exc
+except ImportError:  # Allows offline unit tests of rendering helpers.
+    paramiko = None  # type: ignore[assignment]
+
+try:
+    from .control_plane import (
+        ensure_control_ca,
+        issue_node_credentials,
+        render_agent_firewall,
+        render_node_control_env,
+    )
+except ImportError:  # Direct execution: python deploy/vps/add_server.py
+    from control_plane import (
+        ensure_control_ca,
+        issue_node_credentials,
+        render_agent_firewall,
+        render_node_control_env,
+    )
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -71,6 +82,20 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--server-domain", required=True,
                    help="IP/hostname the client connects to (use bare IP, not sslip.io)")
     p.add_argument("--agent-url", help="Defaults to http://<new-host>:8444")
+    p.add_argument(
+        "--control-url",
+        action="append",
+        required=True,
+        help="Outbound node-control URL; repeat for failover. Must be HTTPS on "
+             "standard TCP/443, for example https://control.example.com.",
+    )
+    p.add_argument(
+        "--control-ca-dir",
+        required=True,
+        type=Path,
+        help="Operator-only directory containing client-ca.crt/client-ca.key. "
+             "It is created on first use and must be kept outside the repository.",
+    )
     # Everything below is a field the bot reads about a node. They used to be
     # unreachable from this script, so every new node silently landed on the
     # schema default and differed from the nodes already in service.
@@ -136,6 +161,11 @@ _dir_cache: dict[int, set[str]] = {}  # sftp_id -> set of paths we've already en
 def connect(host: str, password: str, attempts: int = 6, username: str = "root") -> paramiko.SSHClient:
     """Open an SSH session (root by default), retrying past rate-limit drops with
     exponential backoff."""
+    if paramiko is None:
+        raise SystemExit(
+            "paramiko is required for deploy/vps/add_server.py. Install it first, "
+            "for example: python -m pip install paramiko"
+        )
     delay = 5.0
     last: Exception | None = None
     for attempt in range(1, attempts + 1):
@@ -149,8 +179,10 @@ def connect(host: str, password: str, attempts: int = 6, username: str = "root")
             return client
         except (paramiko.SSHException, EOFError, OSError) as exc:
             last = exc
-            try: client.close()
-            except Exception: pass
+            try:
+                client.close()
+            except Exception:
+                pass
             if attempt == attempts:
                 break
             print(f"    ssh retry {attempt}/{attempts - 1} after {exc} (sleep {delay:.0f}s)")
@@ -359,6 +391,7 @@ XRAY_NETWORK={args.xray_network}
 REALITY_DEST={args.reality_dest}
 REALITY_SERVER_NAME={args.reality_server_name}
 HOST_IP={args.server_domain}
+{render_node_control_env(control_urls=args.control_url, mode="observe").rstrip()}
 EOF
 # Reset client state so re-provisioned nodes don't get duplicate clients
 rm -f /root/aegis/deploy/vps/data/vpn/client_map.json
@@ -451,6 +484,24 @@ def enable_root_command(password: str) -> str:
 
 def main() -> int:
     args = parse_args()
+    try:
+        main_control_ip = ip_address(args.main_host)
+    except ValueError as exc:
+        raise SystemExit(
+            "--main-host must be the fixed IPv4 address allowed to reach "
+            "the temporary observe-mode Agent API"
+        ) from exc
+    if not isinstance(main_control_ip, IPv4Address):
+        raise SystemExit("--main-host must be a fixed IPv4 address")
+
+    ca_cert, ca_key = ensure_control_ca(args.control_ca_dir.expanduser().resolve())
+    credential_workspace = tempfile.TemporaryDirectory(prefix="aegis-node-control-")
+    credentials = issue_node_credentials(
+        ca_cert=ca_cert,
+        ca_key=ca_key,
+        output_dir=Path(credential_workspace.name),
+        node_name=args.server_domain,
+    )
     # XHTTP and TCP+VISION are separate inbounds — they cannot share a port.
     # (--tcp-port 0 disables the second inbound, so skip the check then.)
     if args.tcp_port != "0" and args.xhttp_port == args.tcp_port:
@@ -476,8 +527,10 @@ def main() -> int:
         try:
             run_or_die(boot_client, enable_root_command(args.new_password), "enable root", timeout=90)
         finally:
-            try: boot_client.close()
-            except Exception: pass
+            try:
+                boot_client.close()
+            except Exception:
+                pass
         time.sleep(2)  # let sshd finish restarting before the root connect
 
     print(f"[1/6] connecting to new VPS {args.new_host}…")
@@ -498,10 +551,50 @@ def main() -> int:
         run_or_die(new_client, "mkdir -p /root/aegis/deploy/vps/data/vpn", "mkdir")
         upload_agent(new_client)
         upload_file(new_client, COMPOSE_FILE, "/root/aegis/deploy/vps/docker-compose.yml")
+        run_or_die(
+            new_client,
+            "install -d -m 0700 /root/aegis/deploy/vps/data/control/node",
+            "create control credential directory",
+        )
+        for local_path in (
+            credentials.client_cert,
+            credentials.client_key,
+            credentials.ca_cert,
+            credentials.token_file,
+        ):
+            upload_file(
+                new_client,
+                local_path,
+                f"/root/aegis/deploy/vps/data/control/node/{local_path.name}",
+            )
+        run_or_die(
+            new_client,
+            "chmod 0600 "
+            "/root/aegis/deploy/vps/data/control/node/client.key "
+            "/root/aegis/deploy/vps/data/control/node/token && "
+            "chmod 0644 "
+            "/root/aegis/deploy/vps/data/control/node/client.crt "
+            "/root/aegis/deploy/vps/data/control/node/ca.crt",
+            "protect control credentials",
+        )
 
         print("[4/6] starting vpn container, waiting for Reality keys…")
         write_remote_script(new_client, REMOTE_SETUP_SCRIPT, build_setup_script(args))
         run_or_die(new_client, f"sh {REMOTE_SETUP_SCRIPT}", "vpn bring-up", timeout=600)
+        write_remote_script(
+            new_client,
+            "/root/aegis/control-agent-firewall.sh",
+            "#!/bin/sh\nset -eu\n"
+            + render_agent_firewall(
+                control_server_ip=str(main_control_ip),
+                public_agent=True,
+            ),
+        )
+        run_or_die(
+            new_client,
+            "sh /root/aegis/control-agent-firewall.sh",
+            "restrict observe-mode Agent API",
+        )
 
         out = run_or_die(new_client, "cat /root/aegis/deploy/vps/data/vpn/agent.env", "read agent.env")
         remote_env = parse_env(out)
@@ -539,6 +632,10 @@ def main() -> int:
             f"ACCESS_MODE={shell_quote(args.access_mode)} "
             f"COUNTRY_CODE={shell_quote(args.country_code or '')} "
             f"DISPLAY_ORDER={shell_quote(str(args.display_order))} "
+            "CONTROL_MODE=observe "
+            f"CONTROL_TOKEN_HASH={shell_quote(credentials.token_hash)} "
+            "CONTROL_CERT_FINGERPRINT="
+            f"{shell_quote(credentials.cert_fingerprint)} "
             f"python3 {REMOTE_REGISTER_SCRIPT}"
         )
         out = run_or_die(main_client, register_command, "register", timeout=300)
@@ -557,22 +654,13 @@ def main() -> int:
                   "resync + restart still needs to happen manually.")
             return 0
 
-        print(f"[6/6] resync user UUIDs to server {server_id} + restart xray "
-              "so the running core picks them up…")
+        print(f"[6/6] resync user UUIDs to server {server_id}; live Xray API "
+              "keeps existing sessions intact…")
         upload_file(main_client, MAIN_RESYNC_SCRIPT, REMOTE_RESYNC_SCRIPT)
         out = run_or_die(main_client, f"python3 {REMOTE_RESYNC_SCRIPT} {server_id}",
                          "resync", timeout=300)
         print("     " + out.strip())
 
-        # The agent's /client/add path writes UUIDs to disk but doesn't always
-        # hot-reload into the running xray (known bug). Restarting the xray
-        # container forces it to re-read the config and accept all UUIDs.
-        run_or_die(
-            new_client,
-            "cd /root/aegis/deploy/vps && docker compose restart xray 2>&1 | tail -2",
-            "restart xray", timeout=120,
-        )
-        time.sleep(4)
         _, out, _ = exec_command(
             new_client,
             "docker exec aegis-vpn python3 -c "
@@ -621,11 +709,16 @@ def main() -> int:
             else:
                 print("     [warn] failed to generate MTProxy secret, skipping.")
     finally:
+        credential_workspace.cleanup()
         if main_client is not None:
-            try: main_client.close()
-            except Exception: pass
-        try: new_client.close()
-        except Exception: pass
+            try:
+                main_client.close()
+            except Exception:
+                pass
+        try:
+            new_client.close()
+        except Exception:
+            pass
 
     print("\n✓ Done.")
     print(f"   Name: {server_flag} {server_name}")
