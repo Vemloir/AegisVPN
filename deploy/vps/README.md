@@ -4,11 +4,16 @@ This deploy path is the current production layout for the main Aegis VPN VPS.
 
 ## Services
 
-Defined in [docker-compose.yml](C:/Users/detko/Documents/VPN/deploy/vps/docker-compose.yml):
+The control host uses `docker-compose.yml`:
 
-- `vpn` - `agent + xray`
-- `bot` - Telegram bot, HTTP API, subscription endpoint
-- `caddy` - HTTPS reverse proxy for the bot
+- `xray` and `agent` - independently restartable data and control planes
+- `bot`, `siteapi`, and `support-bot` - Telegram and public API services
+- `caddy` - HTTPS reverse proxy and website
+- `hysteria` - optional Hysteria 2 data plane
+
+Remote VPN nodes use `docker-compose.node.yml`. It contains only `xray`,
+`agent`, and the optional `hysteria` profile, so node updates never require
+control-host-only `bot.env` or `support.env` files.
 
 ## What This Deploy Does
 
@@ -67,10 +72,16 @@ mkdir -p data/bot data/vpn data/caddy config/caddy
 
 4. Adjust [Caddyfile](C:/Users/detko/Documents/VPN/deploy/vps/Caddyfile) if your domain or port differs.
 
-5. Start the stack:
+5. Start the control-host stack:
 
 ```bash
 docker compose up -d --build
+```
+
+On a remote VPN node, use:
+
+```bash
+docker compose -f docker-compose.node.yml up -d --build
 ```
 
 ## Notes
