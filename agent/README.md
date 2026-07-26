@@ -1,10 +1,11 @@
 # Aegis VPN — Node Agent
 
-A thin HTTP control plane that runs on every VPN node alongside
+A node-local reconciler that runs on every VPN server alongside
 [Xray](https://github.com/XTLS/Xray-core) (VLESS + Reality + xtls-rprx-vision).
-The [bot](../bot) calls it to add/remove clients, pull traffic stats, and build
-per-node subscription URIs. On first start it generates the Reality keys and an
-agent token into `/data/agent.env`.
+It initiates outbound mTLS HTTPS/TCP 443 connections to the central control
+host, verifies immutable desired-state snapshots, and applies exact Xray,
+Hysteria2, and connection-limit state. On first start it also generates Reality
+keys and a legacy Agent token into `/data/agent.env`.
 
 See the [top-level README](../README.md) for the full architecture.
 
@@ -12,19 +13,23 @@ See the [top-level README](../README.md) for the full architecture.
 
 ```
 app/
-├── config.py     settings (from /data/agent.env)
-├── models.py     request models
-├── security.py   bearer-token auth
-├── xray.py       Xray control plane: config I/O, live add/remove, sub URIs, stats
-├── connlimit.py  per-subscription simultaneous-IP limit
-└── main.py       FastAPI app — routes only
+├── config.py          settings (from /data/agent.env)
+├── control_client.py  bounded mTLS sync/page/ack/telemetry client
+├── control_loop.py    long poll, retry/backoff, cached expiry enforcement
+├── control_models.py  versioned desired/applied state
+├── reconcile.py       exact Xray/Hysteria/limit reconciliation
+├── xray.py            atomic config I/O and live Xray API operations
+├── connlimit.py       per-subscription simultaneous-IP limit
+└── main.py            local/legacy FastAPI routes
 entrypoint.sh     bootstraps keys + renders the live Xray config, then runs both
 template.json     base Xray config (no-logs, stats/api/policy)
 ```
 
-## API
+## Local and rollout API
 
-All endpoints except `/health` require `Authorization: Bearer <AGENT_TOKEN>`.
+These endpoints are retained for local Hysteria auth, diagnostics, and the
+temporary `observe` rollout. After pull promotion Uvicorn binds to
+`127.0.0.1`; TCP/8444 is also dropped at the firewall.
 
 | Method | Path             | Purpose                              |
 |--------|------------------|--------------------------------------|
@@ -37,7 +42,20 @@ All endpoints except `/health` require `Authorization: Bearer <AGENT_TOKEN>`.
 | GET    | `/stats`         | per-client traffic counters          |
 
 Client changes are applied live via `xray api adu`/`rmu` and persisted to the
-config (a `pkill -HUP` restart is only a fallback if the live API path fails).
+config. If a live operation fails, the fallback reload must return a healthy
+Xray API before the generation can be acknowledged.
+
+## Outbound control modes
+
+- `off`: legacy behavior only.
+- `observe`: download and verify snapshots without mutation or acknowledgement;
+  push remains active from the fixed central IP.
+- `apply`: reconcile exact state and acknowledge only after Xray, Hysteria,
+  connection limits, and durable local state all succeed.
+
+Snapshot pages bound each request but do not cap the number of devices. The
+last verified snapshot is stored under `/data/control/`, so expiry is enforced
+even while every central endpoint is unreachable.
 
 ## Development
 

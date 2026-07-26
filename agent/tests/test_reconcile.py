@@ -190,11 +190,80 @@ async def test_failed_live_apply_never_advances_applied_state(monkeypatch, tmp_p
         return False
 
     monkeypatch.setattr(reconcile, "xray_api_add", fail_add)
+    monkeypatch.setattr(reconcile, "wait_for_xray_ready", _false)
 
     with pytest.raises(reconcile.ReconcileError, match="live Xray"):
         await reconcile.reconcile_snapshot(_snapshot(), observe=False)
 
     assert reconcile.load_applied_state().generation == 0
+
+
+async def _false():
+    return False
+
+
+async def _true():
+    return True
+
+
+async def test_verified_reload_fallback_can_advance_applied_state(
+    monkeypatch,
+    tmp_path,
+):
+    _, _, _, _ = await _patch_runtime(monkeypatch, tmp_path)
+
+    async def fail_add(inbound, record):
+        return False
+
+    reloads: list[bool] = []
+    monkeypatch.setattr(reconcile, "xray_api_add", fail_add)
+    monkeypatch.setattr(
+        reconcile,
+        "reload_xray",
+        lambda: reloads.append(True),
+    )
+    monkeypatch.setattr(reconcile, "wait_for_xray_ready", _true)
+
+    result = await reconcile.reconcile_snapshot(_snapshot(), observe=False)
+
+    assert result.success is True
+    assert reloads == [True]
+    assert reconcile.load_applied_state().generation == 8
+
+
+async def test_cached_snapshot_expires_clients_without_new_generation(
+    monkeypatch,
+    tmp_path,
+):
+    config_path, _, _, _ = await _patch_runtime(monkeypatch, tmp_path)
+    snapshot = DesiredSnapshot(
+        generation=9,
+        digest="9" * 64,
+        items=[
+            {
+                "kind": "client",
+                "uuid": "keep",
+                "email": "user_1_sub_1",
+                "expire_ms": 2_000,
+            }
+        ],
+    )
+    monkeypatch.setattr(reconcile, "wait_for_xray_ready", _true)
+
+    await reconcile.reconcile_snapshot(
+        snapshot,
+        observe=False,
+        now_ms=1_000,
+    )
+    await reconcile.reconcile_snapshot(
+        snapshot,
+        observe=False,
+        now_ms=3_000,
+    )
+
+    config = json.loads(config_path.read_text())
+    clients = config["inbounds"][0]["settings"]["clients"]
+    assert clients == []
 
 
 def test_replace_overrides_replaces_and_persists_complete_map(monkeypatch, tmp_path):
@@ -206,3 +275,38 @@ def test_replace_overrides_replaces_and_persists_complete_map(monkeypatch, tmp_p
 
     assert connlimit._overrides == {1: 2, 2: 0}
     assert json.loads(path.read_text()) == {"1": 2, "2": 0}
+
+
+def test_corrupt_applied_state_recovers_as_unapplied(monkeypatch, tmp_path):
+    path = tmp_path / "applied-state.json"
+    path.write_text("{truncated")
+    monkeypatch.setattr(reconcile, "_APPLIED_STATE_PATH", str(path))
+
+    state = reconcile.load_applied_state()
+
+    assert state.generation == 0
+    assert state.digest is None
+    assert state.items == []
+
+
+def test_interrupted_atomic_state_write_preserves_previous_file(
+    monkeypatch,
+    tmp_path,
+):
+    path = tmp_path / "applied-state.json"
+    previous = b'{"generation":1,"digest":null,"items":[]}'
+    path.write_bytes(previous)
+
+    def interrupted(_source, _target):
+        raise OSError("simulated interruption")
+
+    monkeypatch.setattr(reconcile.os, "replace", interrupted)
+
+    with pytest.raises(OSError, match="simulated"):
+        reconcile._atomic_write_json(
+            str(path),
+            {"generation": 2, "digest": "2" * 64, "items": []},
+        )
+
+    assert path.read_bytes() == previous
+    assert list(tmp_path.glob(".control-state-*.tmp")) == []

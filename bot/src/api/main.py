@@ -7,7 +7,6 @@ read from the tables the admin panel writes. Nothing is duplicated here.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 from datetime import UTC, datetime
 
@@ -147,7 +146,7 @@ async def _fetch_avatar(url: str) -> tuple[bytes, str] | None:
                     chunks.append(chunk)
                 data = b"".join(chunks)
                 return (data, mime) if data else None
-    except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+    except (aiohttp.ClientError, TimeoutError, OSError):
         return None
 
 

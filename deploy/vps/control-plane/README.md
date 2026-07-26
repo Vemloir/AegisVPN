@@ -115,10 +115,25 @@ python3 deploy/vps/control_plane.py issue-node \
 ```
 
 The command prints only the token hash, certificate fingerprint, and output
-directory. Install all four generated files on the node atomically, update the
-stored hash/fingerprint in one database transaction, then recreate only Agent.
-Keep the old material until the new heartbeat arrives; remove it immediately
-afterward.
+directory. Before installing the new files, rotate the database identity in one
+transaction:
+
+```sql
+UPDATE servers
+SET control_previous_token_hash = control_token_hash,
+    control_previous_cert_fingerprint = control_cert_fingerprint,
+    control_previous_credential_expires_at = CURRENT_TIMESTAMP + INTERVAL '10 minutes',
+    control_token_hash = '<new token_hash>',
+    control_cert_fingerprint = '<new cert_fingerprint>'
+WHERE id = 7;
+```
+
+For SQLite use
+`datetime('now', '+10 minutes')` instead of the PostgreSQL interval expression.
+During that bounded window the old pair and new pair both work, while mixed
+certificate/token halves are rejected. Install all four generated files on the
+node atomically, recreate only Agent, wait for a heartbeat using the new pair,
+then clear all three `control_previous_*` columns.
 
 For emergency deactivation set `servers.is_active=0`. The node may still
 authenticate long enough to receive an empty desired snapshot and drain every

@@ -6,6 +6,7 @@ from pydantic import SecretStr
 from sqlalchemy import select
 
 from src.api.main import app
+from src.control.state import publish_snapshot
 from src.core.config import settings
 from src.core.database import async_session_maker, engine
 from src.models import Base, NodeTelemetry, Server, Subscription, SubscriptionServer, User
@@ -263,3 +264,144 @@ async def test_telemetry_payload_is_bounded(monkeypatch):
         )
 
     assert response.status_code == 413
+
+
+async def test_credential_rotation_overlap_accepts_only_matching_pairs(monkeypatch):
+    node_id, _ = await _seed_control_node()
+    _configure_control(monkeypatch)
+    new_token = "replacement-node-token-with-enough-entropy"
+    new_fingerprint = "ffeeddccbbaa"
+    async with async_session_maker() as session:
+        node = await session.get(Server, node_id)
+        node.control_previous_token_hash = node.control_token_hash
+        node.control_previous_cert_fingerprint = node.control_cert_fingerprint
+        node.control_previous_credential_expires_at = (
+            datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=10)
+        )
+        node.control_token_hash = hashlib.sha256(new_token.encode()).hexdigest()
+        node.control_cert_fingerprint = new_fingerprint
+        await session.commit()
+
+    body = {
+        "applied_generation": 0,
+        "agent_version": "rotation-test",
+        "capabilities": [],
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        old_pair = await client.post(
+            "/api/node/v1/sync",
+            json=body,
+            headers=_headers(),
+        )
+        new_pair = await client.post(
+            "/api/node/v1/sync",
+            json=body,
+            headers=_headers(
+                fingerprint=new_fingerprint,
+                token=new_token,
+            ),
+        )
+        mixed_pair = await client.post(
+            "/api/node/v1/sync",
+            json=body,
+            headers=_headers(
+                fingerprint=new_fingerprint,
+                token=NODE_TOKEN,
+            ),
+        )
+
+    assert old_pair.status_code == new_pair.status_code == 200
+    assert mixed_pair.status_code == 401
+
+    async with async_session_maker() as session:
+        node = await session.get(Server, node_id)
+        node.control_previous_credential_expires_at = (
+            datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=1)
+        )
+        await session.commit()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        expired_old_pair = await client.post(
+            "/api/node/v1/sync",
+            json=body,
+            headers=_headers(),
+        )
+
+    assert expired_old_pair.status_code == 401
+
+
+async def test_clearing_certificate_identity_deactivates_node(monkeypatch):
+    node_id, _ = await _seed_control_node()
+    _configure_control(monkeypatch)
+    async with async_session_maker() as session:
+        node = await session.get(Server, node_id)
+        node.control_cert_fingerprint = None
+        node.control_previous_cert_fingerprint = None
+        await session.commit()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            "/api/node/v1/sync",
+            json={
+                "applied_generation": 0,
+                "agent_version": "deactivated",
+                "capabilities": [],
+            },
+            headers=_headers(),
+        )
+
+    assert response.status_code == 401
+
+
+async def test_stale_generation_ack_cannot_roll_back_applied_state(monkeypatch):
+    node_id, _ = await _seed_control_node()
+    _configure_control(monkeypatch)
+    async with async_session_maker() as session:
+        first = await publish_snapshot(session, node_id, page_size=1)
+        await session.commit()
+        subscription = (
+            await session.execute(select(Subscription))
+        ).scalar_one()
+        subscription.is_active = False
+        await session.flush()
+        second = await publish_snapshot(session, node_id, page_size=1)
+        await session.commit()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        newest = await client.post(
+            "/api/node/v1/ack",
+            json={
+                "generation": second.generation,
+                "digest": second.digest,
+                "success": True,
+            },
+            headers=_headers(),
+        )
+        stale = await client.post(
+            "/api/node/v1/ack",
+            json={
+                "generation": first.generation,
+                "digest": first.digest,
+                "success": True,
+            },
+            headers=_headers(),
+        )
+
+    assert newest.status_code == stale.status_code == 200
+    assert stale.json() == {"status": "duplicate"}
+    async with async_session_maker() as session:
+        node = await session.get(Server, node_id)
+    assert node.applied_generation == second.generation
+    assert node.applied_digest == second.digest
