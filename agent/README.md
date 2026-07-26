@@ -54,7 +54,7 @@ Xray API before the generation can be acknowledged.
   connection limits, and durable local state all succeed.
 
 Snapshot pages bound each request but do not cap the number of devices. The
-last verified snapshot is stored under `/data/control/`, so expiry is enforced
+last verified snapshot is stored under `/data/node-control/`, so expiry is enforced
 even while every central endpoint is unreachable.
 
 ## Development
