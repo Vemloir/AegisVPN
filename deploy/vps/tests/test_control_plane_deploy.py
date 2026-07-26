@@ -154,7 +154,8 @@ def test_observe_and_pull_rendering_keeps_data_plane_ports_untouched():
     assert "AGENT_BIND_HOST=127.0.0.1" in promoted
     assert "8444" in firewall
     assert "--dport 8444 -s 127.0.0.0/8 -j ACCEPT" in firewall
-    assert "--dport 8444 -j DROP" in firewall
+    assert "--dport 8444 -j REJECT --reject-with tcp-reset" in firewall
+    assert "--dport 8444 -j DROP" not in firewall
     assert "--dport 8444 -s 203.0.113.10 -j ACCEPT" in rollback
     assert "443" not in firewall
     assert "443" not in rollback
