@@ -13,6 +13,7 @@ from sqlalchemy import select
 from src.core.bootstrap import bootstrap_application
 from src.core.config import settings
 from src.core.database import async_session_maker
+from src.core.leader import run_leader_worker
 from src.core.logger import setup_logger
 from src.handlers import setup_routers
 from src.middlewares.identity import IdentitySyncMiddleware
@@ -362,9 +363,12 @@ async def run_polling_mode(bot: Bot, dp: Dispatcher) -> None:
     runner = await start_http_server(app)
 
     try:
-        await bot.delete_webhook(drop_pending_updates=False)
-        logger.info("Telegram mode: polling")
-        await dp.start_polling(bot)
+        async def poll() -> None:
+            await bot.delete_webhook(drop_pending_updates=False)
+            logger.info("Telegram mode: polling (leader)")
+            await dp.start_polling(bot)
+
+        await run_leader_worker("telegram-main-polling", poll)
     finally:
         scheduler.shutdown(wait=False)
         await runner.cleanup()

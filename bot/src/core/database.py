@@ -13,6 +13,8 @@ if not settings.db_url.startswith("sqlite+aiosqlite"):
     engine_kwargs.update(
         pool_size=10,
         max_overflow=20,
+        pool_pre_ping=True,
+        pool_recycle=300,
     )
 
 engine = create_async_engine(settings.db_url, **engine_kwargs)
