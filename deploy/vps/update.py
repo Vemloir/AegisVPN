@@ -299,7 +299,7 @@ def patch_node_stability(c: paramiko.SSHClient, host: str) -> None:
     if patched.get("outbounds") != live.get("outbounds"):
         raise SystemExit(f"[{host}] stability patch changed outbounds; aborting")
 
-    candidate_path = REMOTE_XRAY_CONFIG + ".candidate"
+    candidate_path = REMOTE_XRAY_CONFIG + ".candidate.json"
     backup_path = (
         REMOTE_XRAY_CONFIG
         + ".backup-"
@@ -322,7 +322,7 @@ def patch_node_stability(c: paramiko.SSHClient, host: str) -> None:
     run(
         c,
         "docker exec aegis-xray xray run -test "
-        "-c /data/xray-config.json.candidate",
+        "-c /data/xray-config.json.candidate.json",
         "validate stability candidate",
         timeout=60,
     )
