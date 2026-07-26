@@ -1,0 +1,38 @@
+scope: aegis-control
+namespace: /aegis/
+
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576
+    synchronous_mode: true
+    synchronous_mode_strict: false
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        max_connections: 150
+        wal_level: replica
+        hot_standby: "on"
+        ssl: "on"
+        ssl_cert_file: /tls/server.crt
+        ssl_key_file: /tls/server.key
+        ssl_ca_file: /tls/ca.crt
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+  pg_hba:
+    - local all all peer
+    - hostssl replication replicator 0.0.0.0/0 scram-sha-256 clientcert=verify-full
+    - hostssl all all 0.0.0.0/0 scram-sha-256 clientcert=verify-full
+
+postgresql:
+  parameters:
+    password_encryption: scram-sha-256
+    ssl_min_protocol_version: TLSv1.3
+  create_replica_methods:
+    - basebackup
+  basebackup:
+    checkpoint: fast

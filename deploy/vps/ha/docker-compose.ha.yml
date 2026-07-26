@@ -1,0 +1,78 @@
+services:
+  etcd:
+    image: quay.io/coreos/etcd:v3.6.4@sha256:885a73b09cde0293c84adad3d589cc5d091f03e61d390b94413c0a866ccfe232
+    container_name: aegis-ha-etcd
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - /usr/local/bin/etcd
+      - --name=${HA_NODE_NAME}
+      - --data-dir=/var/lib/etcd
+      - --listen-client-urls=https://${HA_BIND_IP}:2379,https://127.0.0.1:2379
+      - --advertise-client-urls=https://${HA_BIND_IP}:2379
+      - --listen-peer-urls=https://${HA_BIND_IP}:2380
+      - --initial-advertise-peer-urls=https://${HA_BIND_IP}:2380
+      - --initial-cluster=${ETCD_INITIAL_CLUSTER}
+      - --initial-cluster-token=aegis-control-v1
+      - --initial-cluster-state=${ETCD_INITIAL_CLUSTER_STATE:-new}
+      - --cert-file=/tls/server.crt
+      - --key-file=/tls/server.key
+      - --trusted-ca-file=/tls/ca.crt
+      - --client-cert-auth=true
+      - --peer-cert-file=/tls/server.crt
+      - --peer-key-file=/tls/server.key
+      - --peer-trusted-ca-file=/tls/ca.crt
+      - --peer-client-cert-auth=true
+      - --auto-compaction-retention=1
+    environment:
+      - ETCD_CLIENT_CERT_AUTH=true
+      - ETCD_PEER_CLIENT_CERT_AUTH=true
+    volumes:
+      - ./data/etcd:/var/lib/etcd
+      - ./tls:/tls:ro
+
+  patroni:
+    image: ghcr.io/zalando/spilo-17:4.0-p3@sha256:b7db9e8f62e809ebd9a0679fbdba147a811fdd240ab78380ea4720a46a017184
+    container_name: aegis-ha-patroni
+    restart: unless-stopped
+    network_mode: host
+    profiles: ["postgres"]
+    entrypoint: ["patroni"]
+    command: ["/etc/patroni/patroni.yml"]
+    environment:
+      PATRONI_SCOPE: aegis-control
+      PATRONI_NAME: ${PATRONI_NAME}
+      PATRONI_RESTAPI_LISTEN: ${HA_BIND_IP}:8008
+      PATRONI_RESTAPI_CONNECT_ADDRESS: ${HA_BIND_IP}:8008
+      PATRONI_RESTAPI_CERTFILE: /tls/server.crt
+      PATRONI_RESTAPI_KEYFILE: /tls/server.key
+      PATRONI_RESTAPI_CAFILE: /tls/ca.crt
+      PATRONI_ETCD3_HOSTS: ${ETCD_HOSTS}
+      PATRONI_ETCD3_PROTOCOL: https
+      PATRONI_ETCD3_CACERT: /tls/ca.crt
+      PATRONI_ETCD3_CERT: /tls/client.crt
+      PATRONI_ETCD3_KEY: /tls/client.key
+      PATRONI_POSTGRESQL_LISTEN: ${HA_BIND_IP}:5432
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: ${HA_BIND_IP}:5432
+      PATRONI_POSTGRESQL_AUTHENTICATION_SUPERUSER_USERNAME: postgres
+      PATRONI_POSTGRESQL_AUTHENTICATION_SUPERUSER_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD}
+      PATRONI_POSTGRESQL_AUTHENTICATION_REPLICATION_USERNAME: replicator
+      PATRONI_POSTGRESQL_AUTHENTICATION_REPLICATION_PASSWORD: ${POSTGRES_REPLICATION_PASSWORD}
+      PATRONI_POSTGRESQL_DATA_DIR: /home/postgres/pgroot/pgdata
+    volumes:
+      - ./patroni.yml:/etc/patroni/patroni.yml:ro
+      - ./data/postgres:/home/postgres/pgroot/pgdata
+      - ./tls:/tls:ro
+
+  haproxy:
+    image: haproxy:3.2.4-alpine@sha256:436a5691e6fd563ca4090e351048fda1066bec93b595cc8eaf26988c65eb1152
+    container_name: aegis-ha-haproxy
+    restart: unless-stopped
+    network_mode: host
+    profiles: ["postgres"]
+    environment:
+      PL_HA_IP: ${PL_HA_IP}
+      USA_HA_IP: ${USA_HA_IP}
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./tls:/tls:ro

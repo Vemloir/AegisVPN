@@ -20,6 +20,7 @@ from .config import settings
 from .deps import ADMIN_IDS, storage
 from .handlers import router
 from .i18n import t
+from .leader import run_support_leader
 
 logger = logging.getLogger("support_bot")
 
@@ -40,8 +41,15 @@ async def main() -> None:
     await bot.set_my_commands(_commands("en"), language_code="en")
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
-    logger.info("Support ticket bot starting (polling); %d operator(s) configured", len(ADMIN_IDS))
-    await dp.start_polling(bot)
+    async def poll() -> None:
+        logger.info("Support ticket bot starting (polling leader); %d operator(s) configured", len(ADMIN_IDS))
+        await dp.start_polling(bot)
+
+    await run_support_leader(
+        settings.leader_database_url,
+        poll,
+        retry_seconds=settings.leader_retry_seconds,
+    )
 
 
 if __name__ == "__main__":
