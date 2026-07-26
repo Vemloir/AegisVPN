@@ -1,5 +1,7 @@
 import os
 import inspect
+import json
+from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -267,3 +269,209 @@ def test_control_host_update_recreates_bot_and_siteapi_without_xray():
     assert "docker compose up -d --no-deps bot siteapi" in source
     assert "aegis-siteapi" in source
     assert "restart xray" not in source
+
+
+def test_template_uses_stable_policy_routing_and_independent_dns():
+    template = json.loads((ROOT / "agent/template.json").read_text())
+    level0 = template["policy"]["levels"]["0"]
+    routing = template["routing"]
+
+    assert level0["handshake"] == 8
+    assert level0["connIdle"] == 300
+    assert routing["domainStrategy"] == "AsIs"
+    assert not any(
+        rule.get("network") == "udp"
+        and str(rule.get("port")) == "443"
+        and rule.get("outboundTag") == "block"
+        for rule in routing["rules"]
+    )
+    assert not any(
+        (
+            "geoip:ru" in rule.get("ip", [])
+            or "geosite:category-ru" in rule.get("domain", [])
+        )
+        and rule.get("outboundTag") == "direct"
+        for rule in routing["rules"]
+    )
+    assert template["dns"] == {
+        "servers": [
+            "https+local://9.9.9.9/dns-query",
+            "https+local://1.1.1.1/dns-query",
+        ],
+        "queryStrategy": "UseIPv4",
+        "enableParallelQuery": True,
+        "serveStale": True,
+        "serveExpiredTTL": 86400,
+    }
+
+
+def test_entrypoint_and_provisioning_keep_idle_at_300():
+    entrypoint = (ROOT / "agent/entrypoint.sh").read_text()
+    update_source = (ROOT / "deploy/vps/update.py").read_text()
+
+    assert "XRAY_CONN_IDLE=${XRAY_CONN_IDLE:-300}" in entrypoint
+    assert 'conn_idle = _int_env("XRAY_CONN_IDLE", 300)' in entrypoint
+    assert 'XRAY_CONN_IDLE = 300' in update_source
+    assert 'env["XRAY_CONN_IDLE"] = "300"' in update_source
+    assert 'env.setdefault("XRAY_CONN_IDLE", "60")' not in update_source
+
+
+def test_stability_patch_preserves_data_plane_identity_and_clients():
+    template = json.loads((ROOT / "agent/template.json").read_text())
+    live = deepcopy(template)
+    live["policy"]["levels"]["0"].update(
+        {
+            "handshake": 4,
+            "connIdle": 30,
+            "statsUserUplink": True,
+            "customPolicy": 17,
+        }
+    )
+    live["dns"] = {
+        "servers": ["https://9.9.9.9/dns-query"],
+        "queryStrategy": "UseIPv4",
+    }
+    live["routing"]["domainStrategy"] = "IPIfNonMatch"
+    live["routing"]["rules"].insert(
+        -1,
+        {
+            "type": "field",
+            "domain": ["geosite:google-gemini"],
+            "outboundTag": "warp",
+        },
+    )
+    live["inbounds"][0]["settings"]["clients"] = [
+        {"id": "uuid-one", "email": "user-one"},
+        {"id": "uuid-two", "email": "user-two"},
+    ]
+    live["inbounds"][0]["streamSettings"]["realitySettings"]["privateKey"] = (
+        "node-private-key"
+    )
+    live["outbounds"].insert(
+        1,
+        {"tag": "warp", "protocol": "wireguard", "settings": {"secretKey": "secret"}},
+    )
+
+    patched = update_script.apply_stability_profile(live, template)
+
+    assert patched["dns"] == template["dns"]
+    assert patched["policy"]["levels"]["0"] == {
+        "handshake": 8,
+        "connIdle": 300,
+        "statsUserUplink": True,
+        "statsUserDownlink": True,
+        "statsUserOnline": True,
+        "customPolicy": 17,
+    }
+    assert patched["routing"]["domainStrategy"] == "AsIs"
+    assert patched["inbounds"] == live["inbounds"]
+    assert patched["outbounds"] == live["outbounds"]
+    assert any(
+        rule.get("outboundTag") == "warp"
+        for rule in patched["routing"]["rules"]
+    )
+    assert not any(
+        rule.get("network") == "udp"
+        and str(rule.get("port")) == "443"
+        and rule.get("outboundTag") == "block"
+        for rule in patched["routing"]["rules"]
+    )
+    assert not any(
+        (
+            "geoip:ru" in rule.get("ip", [])
+            or "geosite:category-ru" in rule.get("domain", [])
+        )
+        and rule.get("outboundTag") == "direct"
+        for rule in patched["routing"]["rules"]
+    )
+
+
+def test_env_update_replaces_idle_and_preserves_unrelated_values():
+    current = "HOST_IP=192.0.2.10\nXRAY_CONN_IDLE=30\nCONTROL_MODE=apply\n"
+
+    updated = update_script.update_env_values(
+        current,
+        {"XRAY_CONN_IDLE": "300"},
+    )
+
+    assert updated == (
+        "HOST_IP=192.0.2.10\n"
+        "XRAY_CONN_IDLE=300\n"
+        "CONTROL_MODE=apply\n"
+    )
+
+
+def test_stability_rollout_validates_candidate_before_restart(monkeypatch):
+    template = json.loads((ROOT / "agent/template.json").read_text())
+    live = deepcopy(template)
+    live["policy"]["levels"]["0"].update({"handshake": 4, "connIdle": 30})
+    live["routing"]["domainStrategy"] = "IPIfNonMatch"
+    live["routing"]["rules"].insert(
+        -1,
+        {
+            "type": "field",
+            "network": "udp",
+            "port": "443",
+            "outboundTag": "block",
+        },
+    )
+    live["inbounds"][0]["settings"]["clients"] = [
+        {"id": "uuid-one", "email": "user-one"}
+    ]
+    remote_text = {
+        update_script.REMOTE_XRAY_CONFIG: json.dumps(live),
+        update_script.REMOTE_AGENT_ENV: "XRAY_CONN_IDLE=30\nPRIVATE_KEY=secret\n",
+        update_script.REMOTE_VPN_ENV: "CONTROL_MODE=apply\nXRAY_CONN_IDLE=30\n",
+    }
+    writes: list[tuple[str, str, int]] = []
+    commands: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        update_script,
+        "_read_remote_text",
+        lambda _client, path: remote_text[path],
+    )
+    monkeypatch.setattr(
+        update_script,
+        "_write_remote_text_atomic",
+        lambda _client, path, text, mode=0o600: writes.append(
+            (path, text, mode)
+        ),
+    )
+
+    def fake_run(_client, command, label="", timeout=120):
+        commands.append((label, command))
+        if label == "post-stability health":
+            return '{"status":"ok","clients":1}\n'
+        return ""
+
+    monkeypatch.setattr(update_script, "run", fake_run)
+
+    update_script.patch_node_stability(object(), "192.0.2.10")
+
+    candidate_path, candidate_text, candidate_mode = writes[0]
+    candidate = json.loads(candidate_text)
+    assert candidate_path == update_script.REMOTE_XRAY_CONFIG + ".candidate"
+    assert candidate_mode == 0o600
+    assert candidate["inbounds"] == live["inbounds"]
+    assert candidate["outbounds"] == live["outbounds"]
+    assert candidate["policy"]["levels"]["0"]["connIdle"] == 300
+    assert candidate["routing"]["domainStrategy"] == "AsIs"
+    assert not any(
+        rule.get("network") == "udp" and str(rule.get("port")) == "443"
+        for rule in candidate["routing"]["rules"]
+    )
+
+    env_writes = {path: text for path, text, _mode in writes[1:]}
+    assert "XRAY_CONN_IDLE=300\n" in env_writes[update_script.REMOTE_AGENT_ENV]
+    assert "XRAY_CONN_IDLE=300\n" in env_writes[update_script.REMOTE_VPN_ENV]
+
+    labels = [label for label, _command in commands]
+    assert labels.index("validate stability candidate") < labels.index(
+        "activate stability candidate"
+    )
+    assert labels.index("activate stability candidate") < labels.index(
+        "restart xray"
+    )
+    assert "post-stability health" in labels
+    assert all("bot" not in command for _label, command in commands)

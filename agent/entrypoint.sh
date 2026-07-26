@@ -61,7 +61,7 @@ XHTTP_PATH=${XHTTP_PATH:-"/"}
 XHTTP_MODE=${XHTTP_MODE:-"auto"}
 XRAY_GRPC_PORT=${XRAY_GRPC_PORT:-}
 XRAY_GRPC_SERVICE=${XRAY_GRPC_SERVICE:-"grpc"}
-XRAY_CONN_IDLE=${XRAY_CONN_IDLE:-30}
+XRAY_CONN_IDLE=${XRAY_CONN_IDLE:-300}
 REALITY_TCP_DEST=${REALITY_TCP_DEST:-$REALITY_DEST}
 REALITY_TCP_SERVER_NAME=${REALITY_TCP_SERVER_NAME:-$REALITY_SERVER_NAME}
 TCP_KEYS=$(xray x25519 2>&1)
@@ -143,7 +143,7 @@ def _int_env(name: str, default: int) -> int:
 # either direction; the timer resets on every byte, so active tunnels are never
 # cut — it just frees ghost sessions (e.g. a half-open socket left behind after
 # a client roamed Wi-Fi<->cellular) faster, which also releases conn-limit slots.
-conn_idle = _int_env("XRAY_CONN_IDLE", 30)
+conn_idle = _int_env("XRAY_CONN_IDLE", 300)
 # TCP keepalive on the inbound socket detects a dead/half-open peer at the kernel
 # level (idle a bit under connIdle so it can probe before connIdle reaps).
 keepalive_idle = _int_env("XRAY_KEEPALIVE_IDLE", 20)
@@ -250,8 +250,8 @@ if grpc_port:
 config["inbounds"] = new_inbounds + other_inbounds
 
 # Enforce connIdle on every boot: the policy block is otherwise preserved as-is
-# from the on-disk config, so nodes initialised with the old 300s default would
-# keep it forever without this. Only the connIdle field is touched; handshake
+# from the on-disk config, so nodes initialised with an older per-node value
+# would keep it forever without this. Only the connIdle field is touched; handshake
 # and the per-user stats flags stay whatever the config already had.
 level0 = config.setdefault("policy", {}).setdefault("levels", {}).setdefault("0", {})
 level0["connIdle"] = conn_idle

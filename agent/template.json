@@ -6,10 +6,13 @@
   },
   "dns": {
     "servers": [
-      "https://9.9.9.9/dns-query",
-      "https://149.112.112.112/dns-query"
+      "https+local://9.9.9.9/dns-query",
+      "https+local://1.1.1.1/dns-query"
     ],
-    "queryStrategy": "UseIPv4"
+    "queryStrategy": "UseIPv4",
+    "enableParallelQuery": true,
+    "serveStale": true,
+    "serveExpiredTTL": 86400
   },
   "stats": {},
   "api": {
@@ -23,8 +26,8 @@
   "policy": {
     "levels": {
       "0": {
-        "handshake": 4,
-        "connIdle": 30,
+        "handshake": 8,
+        "connIdle": 300,
         "statsUserUplink": true,
         "statsUserDownlink": true,
         "statsUserOnline": true
@@ -73,7 +76,7 @@
   ],
   "routing": {
     "domainMatcher": "hybrid",
-    "domainStrategy": "IPIfNonMatch",
+    "domainStrategy": "AsIs",
     "rules": [
       {
         "type": "field",
@@ -103,12 +106,6 @@
       },
       {
         "type": "field",
-        "network": "udp",
-        "port": "443",
-        "outboundTag": "block"
-      },
-      {
-        "type": "field",
         "ip": [
           "geoip:private"
         ],
@@ -118,20 +115,6 @@
         "type": "field",
         "domain": [
           "geosite:private"
-        ],
-        "outboundTag": "direct"
-      },
-      {
-        "type": "field",
-        "domain": [
-          "geosite:category-ru"
-        ],
-        "outboundTag": "direct"
-      },
-      {
-        "type": "field",
-        "ip": [
-          "geoip:ru"
         ],
         "outboundTag": "direct"
       },
