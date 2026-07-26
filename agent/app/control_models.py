@@ -3,11 +3,6 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 
 
-class AppliedState(BaseModel):
-    generation: int = Field(ge=0)
-    digest: str | None = None
-
-
 class DesiredClient(BaseModel):
     kind: Literal["client"]
     uuid: str
@@ -25,6 +20,14 @@ DesiredItem = Annotated[
     DesiredClient | DesiredConnLimit,
     Field(discriminator="kind"),
 ]
+
+
+class AppliedState(BaseModel):
+    generation: int = Field(ge=0)
+    digest: str | None = None
+    # Persist the verified items as well as their digest so expiries can still
+    # be enforced while every control endpoint is unreachable.
+    items: list[DesiredItem] = Field(default_factory=list)
 
 
 class SnapshotManifest(BaseModel):

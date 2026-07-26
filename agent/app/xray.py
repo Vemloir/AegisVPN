@@ -104,10 +104,39 @@ async def get_xray_config() -> dict:
 
 async def save_xray_config(config: dict) -> None:
     try:
-        async with aiofiles.open(settings.xray_config_path, "w") as f:
-            await f.write(json.dumps(config, indent=2))
+        content = json.dumps(config, indent=2)
+        await asyncio.to_thread(
+            _atomic_write_text,
+            settings.xray_config_path,
+            content,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write config: {str(e)}") from e
+
+
+def _atomic_write_text(path: str, content: str) -> None:
+    directory = os.path.dirname(path) or "."
+    fd, temporary_path = tempfile.mkstemp(
+        prefix=".xray-config-",
+        suffix=".tmp",
+        dir=directory,
+    )
+    try:
+        with os.fdopen(fd, "w") as file:
+            file.write(content)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary_path, path)
+        directory_fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        try:
+            os.remove(temporary_path)
+        except FileNotFoundError:
+            pass
 
 
 def reload_xray() -> None:
