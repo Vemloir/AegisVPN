@@ -184,11 +184,14 @@ def test_ssl_context_loads_control_ca_and_node_identity(monkeypatch):
     calls: list[tuple] = []
 
     class FakeContext:
+        def load_verify_locations(self, *, cafile):
+            calls.append(("extra-ca", cafile))
+
         def load_cert_chain(self, certfile, keyfile):
             calls.append(("identity", certfile, keyfile))
 
-    def fake_default_context(*, cafile):
-        calls.append(("ca", cafile))
+    def fake_default_context():
+        calls.append(("system-ca",))
         return FakeContext()
 
     monkeypatch.setattr("app.control_client.ssl.create_default_context", fake_default_context)
@@ -201,7 +204,8 @@ def test_ssl_context_loads_control_ca_and_node_identity(monkeypatch):
 
     assert isinstance(context, FakeContext)
     assert calls == [
-        ("ca", "/control/ca.crt"),
+        ("system-ca",),
+        ("extra-ca", "/control/ca.crt"),
         ("identity", "/control/client.crt", "/control/client.key"),
     ]
 

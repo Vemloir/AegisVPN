@@ -114,6 +114,8 @@ def render_agent_firewall(
     commands = [
         f"iptables -N {chain} 2>/dev/null || true",
         f"iptables -F {chain}",
+        f"iptables -A {chain} -p tcp --dport 8444 "
+        "-s 127.0.0.0/8 -j ACCEPT",
     ]
     if public_agent:
         commands.append(

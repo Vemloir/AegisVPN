@@ -114,4 +114,4 @@ Configure multiple `CONTROL_URLS` values, each on HTTPS/TCP 443 and backed by a
 control service that reads the same authoritative database. The agent tries the
 last healthy endpoint first, then fails over with bounded exponential backoff.
 Do not put a generic public reverse proxy in front unless it preserves the same
-mTLS client-certificate verification and trusted-header stripping rules.
+mTLS client-certificate verification and trusted-header overwrite rules.

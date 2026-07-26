@@ -10,8 +10,9 @@
     }
 
     reverse_proxy 127.0.0.1:8000 {
-        header_up -X-Aegis-Proxy-Secret
-        header_up -X-Aegis-Node-Fingerprint
+        # Set replaces any caller-supplied value. Do not pair these with
+        # header_up delete rules: Caddy stores delete/set in one transform and
+        # the delete wins, stripping the trusted values too.
         header_up X-Aegis-Proxy-Secret {file./etc/caddy/control/proxy-secret}
         header_up X-Aegis-Node-Fingerprint {tls_client_fingerprint}
     }

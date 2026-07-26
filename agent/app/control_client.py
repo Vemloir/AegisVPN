@@ -51,7 +51,12 @@ def build_ssl_context(
     cert_path: str,
     key_path: str,
 ) -> ssl.SSLContext:
-    context = ssl.create_default_context(cafile=ca_path)
+    # Keep the operating system's public trust store for a normal ACME-issued
+    # control hostname, then add the operator CA as an optional extra trust
+    # anchor. Passing ``cafile`` directly to create_default_context replaces the
+    # defaults on CPython and rejects Let's Encrypt/ZeroSSL certificates.
+    context = ssl.create_default_context()
+    context.load_verify_locations(cafile=ca_path)
     context.load_cert_chain(certfile=cert_path, keyfile=key_path)
     return context
 

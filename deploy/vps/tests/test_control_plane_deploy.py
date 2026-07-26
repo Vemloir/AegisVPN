@@ -115,6 +115,8 @@ def test_caddy_compose_and_agent_bind_are_private_by_construction():
     assert "trust_pool file /etc/caddy/control/client-ca.crt" in caddyfile
     assert "{tls_client_fingerprint}" in caddyfile
     assert "{file./etc/caddy/control/proxy-secret}" in caddyfile
+    assert "header_up -X-Aegis-Proxy-Secret" not in caddyfile
+    assert "header_up -X-Aegis-Node-Fingerprint" not in caddyfile
     agent_service = compose.split("\n  agent:", 1)[1].split("\n  bot:", 1)[0]
     assert "./data/control/node:/data/control:ro" in agent_service
     assert "./data/control/server:/etc/caddy/control:ro" in compose
@@ -147,6 +149,7 @@ def test_observe_and_pull_rendering_keeps_data_plane_ports_untouched():
     assert "CONTROL_MODE=apply" in promoted
     assert "AGENT_BIND_HOST=127.0.0.1" in promoted
     assert "8444" in firewall
+    assert "--dport 8444 -s 127.0.0.0/8 -j ACCEPT" in firewall
     assert "--dport 8444 -j DROP" in firewall
     assert "--dport 8444 -s 203.0.113.10 -j ACCEPT" in rollback
     assert "443" not in firewall

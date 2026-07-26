@@ -39,8 +39,8 @@ curl https://control.example.com/api/node/v1/sync
 ```
 
 The request must fail because no client certificate was presented. Caddy
-removes any caller-supplied identity headers before injecting the verified
-certificate fingerprint and loopback-only proxy secret.
+overwrites any caller-supplied identity headers with the verified certificate
+fingerprint and loopback-only proxy secret.
 
 ## 2. Enroll a new node in observation mode
 
