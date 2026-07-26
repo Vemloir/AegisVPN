@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from src.main import subscription_metadata_headers
+from src.main import client_wants_xray_json, subscription_metadata_headers
 from src.models import Subscription
 from src.services import SubscriptionService
 
@@ -38,3 +38,8 @@ def test_subscription_metadata_keeps_usage_and_update_contract():
     assert headers["Subscription-Userinfo"].startswith(
         "upload=123; download=456; total=0; expire="
     )
+
+
+def test_ua_varmlen_receives_xray_json_subscription():
+    assert client_wants_xray_json("UA Varmlen/1.4.2")
+    assert client_wants_xray_json("ua varmlen")

@@ -154,7 +154,21 @@ def _client_ip(request: web.Request) -> str | None:
 # instead of a base64 vless link list. Matched case-insensitively as a substring
 # of the User-Agent. Everything else (Clash, sing-box, browsers, curl) keeps the
 # link list, so this is additive and non-breaking for non-xray clients.
-_XRAY_JSON_CLIENTS = ("happ", "v2raytun", "v2rayng", "v2rayn", "nekobox", "nekoray", "streisand", "foxray")
+_XRAY_JSON_CLIENTS = (
+    "happ",
+    "v2raytun",
+    "v2rayng",
+    "v2rayn",
+    "nekobox",
+    "nekoray",
+    "streisand",
+    "foxray",
+    "ua varmlen",
+)
+
+
+def client_wants_xray_json(user_agent: str) -> bool:
+    return any(client in user_agent.lower() for client in _XRAY_JSON_CLIENTS)
 
 
 async def subscription_response(request: web.Request, profile: str) -> web.Response:
@@ -166,7 +180,7 @@ async def subscription_response(request: web.Request, profile: str) -> web.Respo
     client_ip = _client_ip(request)
     # xray clients (Happ, v2rayTun, …) get a full JSON config array with the
     # routing/DNS baked in; everyone else keeps the base64 link list.
-    wants_xray_json = any(k in ua.lower() for k in _XRAY_JSON_CLIENTS)
+    wants_xray_json = client_wants_xray_json(ua)
 
     async with async_session_maker() as session:
         sub = await SubscriptionService.get_subscription_by_token(session, sub_token)
