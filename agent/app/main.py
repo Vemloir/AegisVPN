@@ -14,6 +14,7 @@ from fastapi.responses import PlainTextResponse
 from . import hysteria
 from .config import settings
 from .connlimit import conn_limit_loop, set_override
+from .certificate_sync import certificate_sync_loop
 from .control_loop import start_control_task
 from .models import ClientAddRequest, ClientRemoveRequest, ConnLimitRequest, Hy2AuthRequest
 from .security import verify_token
@@ -35,11 +36,12 @@ from .xray import (
 
 app = FastAPI(title="Aegis VPN Agent")
 _control_task: asyncio.Task | None = None
+_certificate_task: asyncio.Task | None = None
 
 
 @app.on_event("startup")
 async def _start_background_tasks() -> None:
-    global _control_task
+    global _certificate_task, _control_task
     # Always run the loop: even with the node default disabled (conn_limit=0),
     # per-user overrides pushed by the bot must still be enforced.
     asyncio.create_task(conn_limit_loop())
@@ -48,17 +50,24 @@ async def _start_background_tasks() -> None:
     # immediately. No-op (empty set) on nodes without any vless clients.
     await hysteria.refresh()
     _control_task = start_control_task()
+    if settings.hy2_enabled and settings.control_mode != "off":
+        _certificate_task = asyncio.create_task(
+            certificate_sync_loop(),
+            name="hy2-certificate-sync",
+        )
 
 
 @app.on_event("shutdown")
 async def _stop_background_tasks() -> None:
-    global _control_task
-    if _control_task is None:
-        return
-    _control_task.cancel()
-    with suppress(asyncio.CancelledError):
-        await _control_task
+    global _certificate_task, _control_task
+    for task in (_control_task, _certificate_task):
+        if task is None:
+            continue
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
     _control_task = None
+    _certificate_task = None
 
 
 @app.get("/health")

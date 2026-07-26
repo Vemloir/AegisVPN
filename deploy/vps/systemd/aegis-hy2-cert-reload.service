@@ -1,0 +1,9 @@
+[Unit]
+Description=Reload Aegis Hysteria after an atomic certificate update
+After=docker.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/docker restart aegis-hysteria
+ExecStartPost=/usr/bin/rm -f /root/aegis/deploy/vps/data/hysteria/.reload

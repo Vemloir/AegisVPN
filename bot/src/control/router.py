@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import update
 
 from src.control.auth import authenticate_node
+from src.control.certificates import load_hy2_certificate_bundle
 from src.control.schemas import (
     NodeAckRequest,
     NodeControlResult,
@@ -29,6 +30,41 @@ router = APIRouter(prefix="/api/node/v1", tags=["node-control"])
 
 def _utcnow() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+@router.get("/hy2-certificate")
+async def get_hy2_certificate(
+    response: Response,
+    node: Server = Depends(authenticate_node),
+) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    if not node.hy2_capable:
+        raise HTTPException(
+            status_code=404,
+            detail="Hy2 is disabled",
+            headers={"Cache-Control": "no-store"},
+        )
+    try:
+        bundle = load_hy2_certificate_bundle(settings.node_hy2_certificate_dir)
+    except (OSError, ValueError, UnicodeDecodeError):
+        raise HTTPException(
+            status_code=503,
+            detail="Hy2 certificate is unavailable",
+            headers={"Cache-Control": "no-store"},
+        ) from None
+    if bundle.hostname != (node.hy2_sni or "").strip().lower():
+        raise HTTPException(
+            status_code=409,
+            detail="Hy2 hostname mismatch",
+            headers={"Cache-Control": "no-store"},
+        )
+    return {
+        "certificate": bundle.certificate,
+        "private_key": bundle.private_key,
+        "hostname": bundle.hostname,
+        "fingerprint": bundle.fingerprint,
+        "not_after": bundle.not_after.isoformat(),
+    }
 
 
 @router.post("/sync", response_model=SnapshotManifest)
