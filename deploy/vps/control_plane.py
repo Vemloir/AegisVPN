@@ -103,9 +103,11 @@ def render_agent_firewall(
 ) -> str:
     """Return an idempotent iptables policy scoped only to TCP/8444.
 
-    In pull mode the port is dropped. During rollback it is reachable solely
-    from the fixed control-server IP. Xray/Hysteria ports are intentionally not
-    mentioned, so rollout cannot mutate the data-plane firewall.
+    In pull mode the port is rejected with a TCP reset, so it is both
+    unreachable and does not look like a hanging service to external scanners.
+    During rollback it is reachable solely from the fixed control-server IP.
+    Xray/Hysteria ports are intentionally not mentioned, so rollout cannot
+    mutate the data-plane firewall.
     """
     address = ip_address(control_server_ip)
     if address.version != 4:
@@ -124,7 +126,8 @@ def render_agent_firewall(
         )
     commands.extend(
         (
-            f"iptables -A {chain} -p tcp --dport 8444 -j DROP",
+            f"iptables -A {chain} -p tcp --dport 8444 "
+            "-j REJECT --reject-with tcp-reset",
             (
                 f"iptables -C INPUT -p tcp --dport 8444 -j {chain} "
                 f"2>/dev/null || iptables -I INPUT 1 -p tcp --dport 8444 "
