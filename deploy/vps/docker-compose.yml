@@ -42,6 +42,7 @@ services:
     volumes:
       - ./data/vpn:/data
       - ./data/control/node:/data/control:ro
+      - ./data/hysteria:/data/hysteria
 
   bot:
     build:

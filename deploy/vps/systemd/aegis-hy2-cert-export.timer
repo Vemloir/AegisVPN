@@ -1,0 +1,12 @@
+[Unit]
+Description=Regularly export the renewed Aegis Hy2 certificate
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=6h
+RandomizedDelaySec=10min
+Persistent=true
+Unit=aegis-hy2-cert-export.service
+
+[Install]
+WantedBy=timers.target

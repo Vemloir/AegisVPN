@@ -1,0 +1,10 @@
+[Unit]
+Description=Export Caddy-managed Hy2 certificate for Aegis nodes
+After=docker.service
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+EnvironmentFile=-/root/aegis/deploy/vps/hy2-cert.env
+ExecStart=/usr/bin/python3 /root/aegis/deploy/vps/export_hy2_certificate.py

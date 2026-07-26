@@ -86,6 +86,8 @@ except ImportError:  # Direct execution: python deploy/vps/update.py
 ROOT = Path(__file__).resolve().parents[2]
 AGENT_DIR = ROOT / "agent"
 BOT_DIR = ROOT / "bot"
+SYSTEMD_DIR = ROOT / "deploy/vps/systemd"
+HY2_EXPORT_SCRIPT = ROOT / "deploy/vps/export_hy2_certificate.py"
 RUNTIME_VERSIONS_FILE = ROOT / "deploy/vps/runtime-versions.env"
 
 _REQUIRED_RUNTIME_KEYS = {
@@ -247,6 +249,7 @@ def update_bot(c: paramiko.SSHClient) -> None:
         "start bot/siteapi",
         timeout=90,
     )
+    _install_control_hy2_certificate_export(c)
     print("  bot + siteapi updated ✓")
 
 
@@ -452,6 +455,39 @@ def _upload_agent_sources(c: paramiko.SSHClient, host: str) -> None:
         upload(c, f, f"/root/aegis/agent/{rel.as_posix()}")
 
 
+def _install_control_hy2_certificate_export(c: paramiko.SSHClient) -> None:
+    upload(
+        c,
+        HY2_EXPORT_SCRIPT,
+        "/root/aegis/deploy/vps/export_hy2_certificate.py",
+    )
+    for name in (
+        "aegis-hy2-cert-export.service",
+        "aegis-hy2-cert-export.timer",
+    ):
+        upload(c, SYSTEMD_DIR / name, f"/etc/systemd/system/{name}")
+    run(
+        c,
+        "systemctl daemon-reload && "
+        "systemctl enable --now aegis-hy2-cert-export.timer",
+        "enable Hy2 certificate export",
+    )
+
+
+def _install_node_hy2_certificate_reload(c: paramiko.SSHClient) -> None:
+    for name in (
+        "aegis-hy2-cert-reload.service",
+        "aegis-hy2-cert-reload.path",
+    ):
+        upload(c, SYSTEMD_DIR / name, f"/etc/systemd/system/{name}")
+    run(
+        c,
+        "systemctl daemon-reload && "
+        "systemctl enable --now aegis-hy2-cert-reload.path",
+        "enable Hy2 certificate reload",
+    )
+
+
 def patch_node_dns(c: paramiko.SSHClient, host: str) -> None:
     """Replace the DNS block of a LIVE node's xray config, in place.
 
@@ -511,6 +547,7 @@ def update_agent(c: paramiko.SSHClient, host: str) -> None:
     print(f"  [{host}] rebuilding + recreating agent (xray untouched)…")
     run(c, "cd /root/aegis/deploy/vps && docker compose up -d --build --no-deps agent 2>&1 | tail -4",
         "agent rebuild", timeout=300)
+    _install_node_hy2_certificate_reload(c)
     print(f"  [{host}] agent updated ✓")
 
 

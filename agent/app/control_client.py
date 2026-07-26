@@ -334,3 +334,26 @@ class ControlClient:
             raise ControlRequestError(
                 f"control telemetry rejected with status {response.status}"
             )
+
+    async def get_hy2_certificate(self) -> dict[str, str] | None:
+        response = await self._request_with_failover(
+            "GET",
+            "/api/node/v1/hy2-certificate",
+            json_body=None,
+            max_bytes=512 * 1024,
+        )
+        if response.status == 404:
+            return None
+        if response.status != 200:
+            raise ControlRequestError(
+                f"certificate endpoint rejected with status {response.status}"
+            )
+        payload = self._parse_json(response)
+        required = {"certificate", "private_key", "hostname", "fingerprint"}
+        if (
+            not isinstance(payload, dict)
+            or not required.issubset(payload)
+            or not all(isinstance(payload[key], str) for key in required)
+        ):
+            raise ControlProtocolError("invalid certificate bundle")
+        return payload

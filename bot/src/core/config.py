@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     node_control_poll_interval_seconds: float = 1.0
     node_control_page_size: int = 500
     node_control_max_telemetry_bytes: int = 1_048_576
+    # Root-owned Caddy certificate export. The API can only read it and only
+    # returns it to a fully authenticated, Hy2-enabled node.
+    node_hy2_certificate_dir: str = "/control/hy2-cert"
 
     # Default simultaneous-connection limit per user, mirroring the node default
     # (agent CONN_LIMIT). Shown in the admin card when a user has no override.

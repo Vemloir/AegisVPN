@@ -671,3 +671,28 @@ def test_hy2_private_key_is_installed_without_shell_exposure(monkeypatch):
     ]
     assert all(cert_b64 not in command for command in commands)
     assert all(key_b64 not in command for command in commands)
+
+
+def test_hy2_certificate_automation_is_root_owned_and_restarts_only_hysteria():
+    compose = (ROOT / "deploy/vps/docker-compose.yml").read_text()
+    export_service = (
+        ROOT / "deploy/vps/systemd/aegis-hy2-cert-export.service"
+    ).read_text()
+    export_timer = (
+        ROOT / "deploy/vps/systemd/aegis-hy2-cert-export.timer"
+    ).read_text()
+    reload_service = (
+        ROOT / "deploy/vps/systemd/aegis-hy2-cert-reload.service"
+    ).read_text()
+    reload_path = (
+        ROOT / "deploy/vps/systemd/aegis-hy2-cert-reload.path"
+    ).read_text()
+
+    agent_service = compose.split("\n  agent:", 1)[1].split("\n  bot:", 1)[0]
+    assert "./data/hysteria:/data/hysteria" in agent_service
+    assert "User=root" in export_service
+    assert "export_hy2_certificate.py" in export_service
+    assert "Persistent=true" in export_timer
+    assert "docker restart aegis-hysteria" in reload_service
+    assert "xray" not in reload_service.lower()
+    assert "PathExists=" in reload_path

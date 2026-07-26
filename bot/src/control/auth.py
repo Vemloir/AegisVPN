@@ -22,6 +22,7 @@ def _unauthorized() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid node credentials",
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -31,6 +32,7 @@ async def authenticate_node(request: Request) -> Server:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Node control is not configured",
+            headers={"Cache-Control": "no-store"},
         )
 
     proxy_secret = request.headers.get("X-Aegis-Proxy-Secret", "")

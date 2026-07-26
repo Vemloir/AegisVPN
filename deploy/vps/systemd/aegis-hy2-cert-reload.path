@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for a renewed Aegis Hysteria certificate
+
+[Path]
+PathExists=/root/aegis/deploy/vps/data/hysteria/.reload
+Unit=aegis-hy2-cert-reload.service
+
+[Install]
+WantedBy=multi-user.target
