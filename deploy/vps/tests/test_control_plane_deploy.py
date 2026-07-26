@@ -1,6 +1,8 @@
 import os
 import inspect
+import base64
 import json
+import sys
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -475,3 +477,156 @@ def test_stability_rollout_validates_candidate_before_restart(monkeypatch):
     )
     assert "post-stability health" in labels
     assert all("bot" not in command for _label, command in commands)
+
+
+def test_hy2_certificate_source_prefers_caddy_managed_duckdns(monkeypatch):
+    calls: list[str] = []
+    cert_path = (
+        "/root/aegis/deploy/vps/data/caddy/caddy/certificates/"
+        "acme-v02.api.letsencrypt.org-directory/"
+        "vpn-example.duckdns.org/vpn-example.duckdns.org.crt"
+    )
+
+    def fake_run(_client, _command, label="", timeout=120):
+        calls.append(label)
+        return {
+            "find caddy hy2 cert": cert_path,
+            "read caddy hy2 cert": "CERT_BASE64",
+            "read caddy hy2 key": "KEY_BASE64",
+            "caddy hy2 cert enddate": "notAfter=Oct 10 15:12:59 2026 GMT",
+            "verify caddy hy2 key": "MATCH",
+        }.get(label, "")
+
+    monkeypatch.setattr(update_script, "run", fake_run)
+
+    cert, key, domain = update_script.renew_hy2_cert_acme(object())
+
+    assert (cert, key, domain) == (
+        "CERT_BASE64",
+        "KEY_BASE64",
+        "vpn-example.duckdns.org",
+    )
+    assert "verify caddy hy2 key" in calls
+    assert "acme cron" not in calls
+
+
+def test_enable_hy2_does_not_restart_or_reconfigure_xray(monkeypatch):
+    events: list[tuple[str, tuple]] = []
+
+    monkeypatch.setattr(
+        update_script,
+        "run",
+        lambda _client, command, label="", timeout=120: events.append(
+            ("run", (label, command))
+        )
+        or "hysteria\n",
+    )
+    monkeypatch.setattr(
+        update_script,
+        "renew_hy2_cert_acme",
+        lambda _client: ("CERT", "KEY", "vpn-example.duckdns.org"),
+    )
+    for name, result in (
+        ("provision_hy2_agent_env", "stats-secret"),
+        ("provision_hysteria", ""),
+        ("provision_firewall", None),
+        ("install_hy2_cert", None),
+        ("update_agent", None),
+        ("verify_stack", None),
+        ("sync_bot_db_hy2", None),
+    ):
+        monkeypatch.setattr(
+            update_script,
+            name,
+            lambda *args, _name=name, _result=result, **kwargs: (
+                events.append((_name, (*args, kwargs))),
+                _result,
+            )[1],
+        )
+
+    update_script.enable_hy2(
+        object(),
+        object(),
+        host="192.0.2.10",
+        geo_sni="www.example.edu",
+    )
+
+    names = [name for name, _payload in events]
+    assert names == [
+        "run",
+        "provision_hy2_agent_env",
+        "provision_firewall",
+        "provision_hysteria",
+        "install_hy2_cert",
+        "update_agent",
+        "verify_stack",
+        "sync_bot_db_hy2",
+    ]
+    first_label, first_command = events[0][1]
+    assert first_label == "verify hysteria compose service"
+    assert "--profile hysteria config --services" in first_command
+    source = inspect.getsource(update_script.enable_hy2)
+    assert "provision_code" not in source
+    assert "restart xray" not in source
+    env_source = inspect.getsource(update_script.provision_hy2_agent_env)
+    assert "XRAY_TCP_PORT" not in env_source
+    assert "REALITY_" not in env_source
+
+
+def test_cli_exposes_dedicated_hy2_enable_without_full_stack(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "update.py",
+            "--enable-hy2",
+            "--main-password",
+            "main-secret",
+            "--node",
+            "192.0.2.10:node-secret",
+            "--geo-sni",
+            "www.example.edu",
+        ],
+    )
+
+    args = update_script.parse_args()
+
+    assert args.enable_hy2 is True
+    assert args.provision_stack is False
+
+
+def test_hy2_private_key_is_installed_without_shell_exposure(monkeypatch):
+    cert = "-----BEGIN CERTIFICATE-----\ncert\n-----END CERTIFICATE-----\n"
+    key = "-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n"
+    cert_b64 = base64.b64encode(cert.encode()).decode()
+    key_b64 = base64.b64encode(key.encode()).decode()
+    writes: list[tuple[str, str, int]] = []
+    commands: list[str] = []
+
+    monkeypatch.setattr(
+        update_script,
+        "_write_remote_text_atomic",
+        lambda _client, path, text, mode=0o600: writes.append(
+            (path, text, mode)
+        ),
+    )
+
+    def fake_run(_client, command, label="", timeout=120):
+        commands.append(command)
+        return "MATCH" if label == "cert/key match" else ""
+
+    monkeypatch.setattr(update_script, "run", fake_run)
+
+    update_script.install_hy2_cert(
+        object(),
+        "192.0.2.10",
+        cert_b64,
+        key_b64,
+    )
+
+    assert writes == [
+        (f"{update_script.REMOTE_HY2_DIR}/cert.pem", cert, 0o644),
+        (f"{update_script.REMOTE_HY2_DIR}/key.pem", key, 0o600),
+    ]
+    assert all(cert_b64 not in command for command in commands)
+    assert all(key_b64 not in command for command in commands)
