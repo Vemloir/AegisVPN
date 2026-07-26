@@ -12,7 +12,7 @@ import { useEffect, useRef } from 'react'
  * Requires the site's domain to be registered for the bot via BotFather
  * (/setdomain), and the page to be served over HTTPS.
  */
-export default function TelegramLogin({ botName, onAuth, lang = 'ru' }) {
+export default function TelegramLogin({ botName, onAuth, lang = 'ru', iframeTitle = 'Telegram login' }) {
   const holder = useRef(null)
   const cb = useRef(onAuth)
   cb.current = onAuth
@@ -37,11 +37,20 @@ export default function TelegramLogin({ botName, onAuth, lang = 'ru' }) {
     s.setAttribute('data-onauth', `${fnName}(user)`)
     el.appendChild(s)
 
+    const labelIframe = () => {
+      const iframe = el.querySelector('iframe')
+      if (iframe) iframe.title = iframeTitle
+    }
+    const observer = new MutationObserver(labelIframe)
+    observer.observe(el, { childList: true, subtree: true })
+    labelIframe()
+
     return () => {
+      observer.disconnect()
       delete window[fnName]
       el.replaceChildren()
     }
-  }, [botName, lang])
+  }, [botName, lang, iframeTitle])
 
-  return <div ref={holder} style={{ display: 'flex', justifyContent: 'center' }} />
+  return <div ref={holder} aria-label={iframeTitle} style={{ display: 'flex', justifyContent: 'center' }} />
 }

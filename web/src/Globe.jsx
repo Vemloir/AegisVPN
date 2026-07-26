@@ -472,6 +472,7 @@ export default function Globe({
   return (
     <canvas
       ref={canvasRef}
+      aria-hidden="true"
       style={{ width: '100%', height: '100%', display: 'block', ...style }}
     />
   )

@@ -3,6 +3,8 @@
 // with what is actually for sale. What lives here is wording only.
 
 const ru = {
+  meta_title: 'AegisVPN — приватный VPN со стабильным соединением',
+  meta_description: 'Быстрый приватный VPN на VLESS Reality: одна подписка для всех локаций.',
   nav_servers: 'Локации', nav_pricing: 'Тариф',
   cta_try: 'В Telegram', cta_full: 'Подключиться в Telegram', cta_how: 'Как это работает',
   hero_eyebrow: 'VPN на Xray VLESS + Reality',
@@ -16,15 +18,15 @@ const ru = {
   price_kicker: 'Тариф', price_title: 'Все тарифы включают доступ ко всем локациям',
   price_sub: 'Оплата: Telegram Stars или СБП.',
   plan_per_month: 'в месяц',
-  price_cancel: 'Telegram Stars или СБП · отмена в любой момент',
+  price_cancel: 'Telegram Stars или СБП · разовый платёж без автопродления',
   included: [
     // Стоит сразу после строки про одновременные подключения: вместе они
     // объясняют лимит целиком — ставь куда хочешь, ограничен только онлайн.
     'Без лимита на количество устройств',
     'Все локации по одной подписке',
   ],
-  price_note: 'Отмена в любой момент.',
-  plan_kicker: 'Тарифы', plan_title: 'Простые тарифы. Одна сеть.', plan_sub: 'Чем дольше период, тем ниже цена за месяц. Отмена в любой момент.',
+  price_note: 'Разовый платёж без автопродления.',
+  plan_kicker: 'Тарифы', plan_title: 'Простые тарифы. Одна сеть.', plan_sub: 'Чем дольше период, тем ниже цена за месяц. Подписка не продлевается автоматически.',
   plan_term: 'Срок', plan_cta: 'Оформить',
   plan_cheaper: (n) => `Выгоднее на ${n}%`,
   plan_dearer: (n) => `Дороже на ${n}%`,
@@ -36,6 +38,8 @@ const ru = {
   plan_conns_unlimited: 'Без ограничений на подключения',
   plan_lifetime: 'Бессрочная',
   auth_login: 'Войти', auth_title: 'Вход в кабинет', auth_sub: 'Войдите через Telegram, чтобы управлять подпиской.',
+  auth_tg_frame: 'Вход через Telegram',
+  modal_close: 'Закрыть',
   auth_sub_pay: 'Войдите через Telegram — подписка выдаётся на ваш аккаунт.',
   pay_title: 'Оплата подписки', pay_sbp: 'Оплатить через СБП', pay_stars: 'Оплатить звёздами',
   pay_redirecting: 'Открываем оплату…',
@@ -77,6 +81,8 @@ const ru = {
 }
 
 const en = {
+  meta_title: 'AegisVPN — private VPN for a steady connection',
+  meta_description: 'Fast, private VPN with VLESS Reality and one subscription for every location.',
   nav_servers: 'Locations', nav_pricing: 'Pricing',
   cta_try: 'Open Telegram', cta_full: 'Open in Telegram', cta_how: 'How it works',
   hero_eyebrow: 'VPN on Xray VLESS + Reality',
@@ -90,13 +96,13 @@ const en = {
   price_kicker: 'Pricing', price_title: 'Every plan includes access to every location',
   price_sub: 'Payment: Telegram Stars or SBP.',
   plan_per_month: 'per month',
-  price_cancel: 'Telegram Stars or SBP · cancel anytime',
+  price_cancel: 'Telegram Stars or SBP · one-time payment, no automatic renewal',
   included: [
     'No limit on the number of devices',
     'Every location on one subscription',
   ],
-  price_note: 'Cancel anytime.',
-  plan_kicker: 'Pricing', plan_title: 'Simple plans. One network.', plan_sub: 'The longer the term, the lower the monthly price. Cancel anytime.',
+  price_note: 'One-time payment with no automatic renewal.',
+  plan_kicker: 'Pricing', plan_title: 'Simple plans. One network.', plan_sub: 'The longer the term, the lower the monthly price. Subscriptions do not renew automatically.',
   plan_term: 'Term', plan_cta: 'Get this plan',
   plan_cheaper: (n) => `${n}% cheaper`,
   plan_dearer: (n) => `${n}% dearer`,
@@ -105,6 +111,8 @@ const en = {
   plan_conns_unlimited: 'No connection limit',
   plan_lifetime: 'Lifetime',
   auth_login: 'Sign in', auth_title: 'Sign in to your account', auth_sub: 'Sign in with Telegram to manage your subscription.',
+  auth_tg_frame: 'Sign in with Telegram',
+  modal_close: 'Close',
   auth_sub_pay: 'Sign in with Telegram — the subscription is issued to your account.',
   pay_title: 'Checkout', pay_sbp: 'Pay with SBP', pay_stars: 'Pay with Stars',
   pay_redirecting: 'Opening payment…',

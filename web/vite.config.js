@@ -5,6 +5,10 @@ import react from '@vitejs/plugin-react'
 // FastAPI service). In dev we proxy to it directly so cookies stay first-party.
 export default defineConfig({
   plugins: [react()],
+  test: {
+    environment: 'jsdom',
+    setupFiles: './src/test/setup.js',
+  },
   // Baked into the bundle (not shown on the page) so "which build is this?"
   // stays answerable by grepping the served JS, without putting a timestamp
   // in front of users.

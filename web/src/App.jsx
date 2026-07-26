@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { css, useHoverStyle } from './css.js'
 import { dict } from './i18n.js'
 import Globe from './Globe.jsx'
@@ -8,6 +10,7 @@ import * as api from './api.js'
 
 const BOT_NAME = 'AegisEcoVPN_bot'
 const BOT_URL = `https://t.me/${BOT_NAME}`
+const SUPPORT_URL = 'https://t.me/AegisVPNsupportBot'
 
 // Language lives in the URL path (/ru/ or /en/), so a shared link carries its
 // language. Anything that isn't /en falls back to Russian, the default.
@@ -92,8 +95,16 @@ const MODAL_EXIT_MS = 160
 //
 // onClose may be null, which means "not dismissible right now" (the checkout
 // modal while a payment is being opened): every route out becomes a no-op.
-function Modal({ onClose, children, maxWidth = 420 }) {
+export function Modal({
+  onClose,
+  children,
+  maxWidth = 420,
+  ariaLabel = 'AegisVPN dialog',
+  closeLabel = 'Close',
+}) {
   const [closing, setClosing] = useState(false)
+  const dialogRef = useRef(null)
+  const closeRef = useRef(null)
 
   const requestClose = useCallback(() => {
     if (!onClose || closing) return
@@ -106,9 +117,56 @@ function Modal({ onClose, children, maxWidth = 420 }) {
   }, [onClose, closing])
 
   useEffect(() => {
-    const esc = (e) => e.key === 'Escape' && requestClose()
-    window.addEventListener('keydown', esc)
-    return () => window.removeEventListener('keydown', esc)
+    const returnFocus = document.activeElement
+    const previousOverflow = document.body.style.overflow
+    const backgrounds = [...document.querySelectorAll('[data-modal-background]')]
+    const previousBackgroundState = backgrounds.map((node) => ({
+      node,
+      inert: node.inert,
+      ariaHidden: node.getAttribute('aria-hidden'),
+    }))
+    document.body.style.overflow = 'hidden'
+    for (const node of backgrounds) {
+      node.inert = true
+      node.setAttribute('aria-hidden', 'true')
+    }
+    closeRef.current?.focus()
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        requestClose()
+        return
+      }
+      if (event.key !== 'Tab' || !dialogRef.current) return
+      const focusable = [...dialogRef.current.querySelectorAll(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )].filter((node) => !node.hasAttribute('hidden'))
+      if (focusable.length === 0) {
+        event.preventDefault()
+        dialogRef.current.focus()
+        return
+      }
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+      for (const { node, inert, ariaHidden } of previousBackgroundState) {
+        node.inert = inert
+        if (ariaHidden === null) node.removeAttribute('aria-hidden')
+        else node.setAttribute('aria-hidden', ariaHidden)
+      }
+      if (returnFocus instanceof HTMLElement) returnFocus.focus()
+    }
   }, [requestClose])
 
   return (
@@ -131,6 +189,11 @@ function Modal({ onClose, children, maxWidth = 420 }) {
       }}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={ariaLabel}
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         style={{
           ...css('position:relative; width:100%; background:var(--card); border:1px solid var(--hair2); border-radius:20px; padding:32px 28px;'),
@@ -143,12 +206,32 @@ function Modal({ onClose, children, maxWidth = 420 }) {
       >
         {children}
         <button
+          ref={closeRef}
           onClick={requestClose}
-          aria-label="Close"
-          style={css('position:absolute; top:18px; right:18px; width:32px; height:32px; border:none; background:transparent; color:var(--muted2); font-size:22px; line-height:1; cursor:pointer; border-radius:8px; transition:color .16s ease;')}
+          aria-label={closeLabel}
+          disabled={!onClose}
+          style={css('position:absolute; top:12px; right:12px; width:44px; height:44px; border:none; background:transparent; color:var(--muted2); font-size:22px; line-height:1; cursor:pointer; border-radius:10px; transition:color .16s ease;')}
         >×</button>
       </div>
     </div>
+  )
+}
+
+export function LegalContent({ text, unavailable }) {
+  if (text === null) return null
+  if (!text) return <p>{unavailable}</p>
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        h1: ({ children }) => <h2 style={css("font-family:'Newsreader','EB Garamond',serif; font-size:24px; line-height:1.2; margin:0 0 18px; color:var(--ink);")}>{children}</h2>,
+        h2: ({ children }) => <h3 style={css("font-family:'Newsreader','EB Garamond',serif; font-size:19px; line-height:1.3; margin:24px 0 8px; color:var(--ink);")}>{children}</h3>,
+        p: ({ children }) => <p style={css('margin:0 0 12px;')}>{children}</p>,
+        a: ({ children, href }) => <a href={href} target="_blank" rel="noopener noreferrer" style={css('color:var(--accent);')}>{children}</a>,
+      }}
+    >
+      {text}
+    </ReactMarkdown>
   )
 }
 
@@ -642,6 +725,17 @@ export default function App() {
 
   const t = dict(lang)
 
+  useEffect(() => {
+    document.title = t.meta_title
+    let description = document.querySelector('meta[name="description"]')
+    if (!description) {
+      description = document.createElement('meta')
+      description.setAttribute('name', 'description')
+      document.head.appendChild(description)
+    }
+    description.setAttribute('content', t.meta_description)
+  }, [t])
+
   // Switch language by rewriting the path (/ru/ or /en/) — no reload needed, the
   // whole UI just re-renders from the new dictionary, and the URL stays
   // shareable. Back/forward re-derive the language from the path.
@@ -975,6 +1069,7 @@ export default function App() {
     // answerable in one glance at the DOM (it is what settled the long
     // 'nothing changed' hunt).
     <div style={rootStyle} data-build={__BUILD_STAMP__}>
+      <div data-modal-background>
       {/* ============================ HEADER ============================
           Frosted glass: a translucent tint of the page, a heavy blur, an edge
           line and a top highlight. NOTE this is knowingly re-introducing a
@@ -1451,7 +1546,14 @@ export default function App() {
             <div>
               <div style={css('font-size:13px; font-weight:600; color:var(--ink); margin-bottom:14px;')}>{t.foot_company}</div>
               <div style={css('display:flex; flex-direction:column; gap:11px; font-size:14.5px; color:var(--muted);')}>
-                <HoverLink href={BOT_URL} base={navLink} hover="color:var(--accent);">{t.foot_support}</HoverLink>
+                <HoverLink href={SUPPORT_URL} target="_blank" rel="noopener" base={navLink} hover="color:var(--accent);">{t.foot_support}</HoverLink>
+                <button
+                  type="button"
+                  onClick={() => openLegal('privacy')}
+                  style={css('min-height:44px; margin:-11px 0; padding:11px 0; border:none; background:none; color:inherit; font:inherit; text-align:left; cursor:pointer;')}
+                >
+                  {t.foot_privacy}
+                </button>
               </div>
             </div>
           </div>
@@ -1460,12 +1562,13 @@ export default function App() {
           © {new Date().getFullYear()} AegisVPN. {t.foot_rights}
         </div>
       </footer>
+      </div>
 
       {/* ============================ CHECKOUT ==========================
           onClose is null while the payment page is being opened: that tells the
           Modal it is not dismissible, and it ignores backdrop, Escape and ×. */}
       {checkoutOpen && selectedPlan && user && (
-        <Modal onClose={payBusy ? null : () => setCheckoutOpen(false)} maxWidth={440}>
+        <Modal onClose={payBusy ? null : () => setCheckoutOpen(false)} maxWidth={440} ariaLabel={t.pay_title} closeLabel={t.modal_close}>
           <h3 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:26px; letter-spacing:-.01em; margin:4px 0 18px; color:var(--ink);")}>{t.pay_title}</h3>
 
           <div style={css('display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:14px 0; border-top:1px solid var(--hair); border-bottom:1px solid var(--hair); margin-bottom:20px;')}>
@@ -1539,7 +1642,7 @@ export default function App() {
 
       {/* Waiting for the provider → bot → DB confirmation after coming back. */}
       {awaitingPayment && (
-        <Modal onClose={() => setAwaitingPayment(false)} maxWidth={380}>
+        <Modal onClose={() => setAwaitingPayment(false)} maxWidth={380} ariaLabel={t.pay_wait_title} closeLabel={t.modal_close}>
           <div style={css('text-align:center; padding:8px 0;')}>
             <div style={{ ...css('width:28px; height:28px; margin:0 auto 18px; border:2px solid var(--hair2); border-top-color:var(--accent); border-radius:50%;'), animation: 'vpnSpin .8s linear infinite' }} />
             <h3 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:22px; margin:0 0 8px; color:var(--ink);")}>{t.pay_wait_title}</h3>
@@ -1550,23 +1653,25 @@ export default function App() {
 
       {/* Terms of Service / Privacy Policy, from the same files the bot serves. */}
       {legalDoc && (
-        <Modal onClose={() => setLegalDoc(null)} maxWidth={720}>
+        <Modal onClose={() => setLegalDoc(null)} maxWidth={720} ariaLabel={legalDoc.title} closeLabel={t.modal_close}>
           <h3 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:24px; margin:4px 0 16px; color:var(--ink);")}>{legalDoc.title}</h3>
-          <div style={css('max-height:60vh; overflow-y:auto; font-size:14px; line-height:1.65; color:var(--muted); white-space:pre-wrap;')}>
-            {legalDoc.text === null ? t.loading : legalDoc.text || t.legal_unavailable}
+          <div style={css('max-height:60vh; overflow-y:auto; font-size:14px; line-height:1.65; color:var(--muted);')}>
+            {legalDoc.text === null
+              ? t.loading
+              : <LegalContent text={legalDoc.text} unavailable={t.legal_unavailable} />}
           </div>
         </Modal>
       )}
 
       {/* ============================== AUTH ============================ */}
       {authOpen && (
-        <Modal onClose={() => { setAuthOpen(false); setPendingCheckout(false) }}>
+        <Modal onClose={() => { setAuthOpen(false); setPendingCheckout(false) }} ariaLabel={t.auth_title} closeLabel={t.modal_close}>
           <h3 style={css("font-family:'Newsreader','EB Garamond',serif; font-weight:500; font-size:26px; letter-spacing:-.01em; margin:4px 0 10px; color:var(--ink);")}>{t.auth_title}</h3>
           <p style={css('font-size:14.5px; line-height:1.55; color:var(--muted2); margin:0 0 24px;')}>
             {pendingCheckout ? t.auth_sub_pay : t.auth_sub}
           </p>
 
-          <TelegramLogin botName={BOT_NAME} onAuth={onTelegramAuth} lang={lang} />
+          <TelegramLogin botName={BOT_NAME} onAuth={onTelegramAuth} lang={lang} iframeTitle={t.auth_tg_frame} />
 
           {authError && (
             <p style={css('margin:16px 0 0; font-size:13.5px; color:var(--accent); text-align:center;')}>{t.auth_failed}</p>
@@ -1577,7 +1682,7 @@ export default function App() {
 
       {/* ============================ ACCOUNT ========================== */}
       {accountOpen && user && (
-        <Modal onClose={() => setAccountOpen(false)} maxWidth={460}>
+        <Modal onClose={() => setAccountOpen(false)} maxWidth={460} ariaLabel={t.acc_greeting} closeLabel={t.modal_close}>
           <div style={css('display:flex; align-items:center; gap:14px; margin-bottom:22px;')}>
             <Avatar user={user} size={48} fallbackLabel={t.acc_guest_label} />
             <div style={css('min-width:0;')}>
