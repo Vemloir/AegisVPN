@@ -211,3 +211,60 @@ async def _async_value(value):
 async def test_off_mode_starts_no_control_task(monkeypatch):
     monkeypatch.setattr(loop_module.settings, "control_mode", "off")
     assert loop_module.start_control_task() is None
+
+
+async def test_telemetry_carries_safe_and_fast_subscription_templates(monkeypatch):
+    async def empty_list():
+        return []
+
+    async def empty_dict():
+        return {}
+
+    async def config():
+        return {
+            "inbounds": [
+                {
+                    "tag": "safe",
+                    "port": 443,
+                    "protocol": "vless",
+                    "settings": {"clients": []},
+                    "streamSettings": {
+                        "network": "xhttp",
+                        "xhttpSettings": {"path": "/", "mode": "auto"},
+                        "realitySettings": {"serverNames": ["safe.example"]},
+                    },
+                },
+                {
+                    "tag": "fast",
+                    "port": 2053,
+                    "protocol": "vless",
+                    "settings": {"clients": []},
+                    "streamSettings": {
+                        "network": "tcp",
+                        "realitySettings": {"serverNames": ["fast.example"]},
+                    },
+                },
+            ]
+        }
+
+    monkeypatch.setattr(loop_module, "get_online_emails", empty_list)
+    monkeypatch.setattr(loop_module.hysteria, "online", empty_list)
+    monkeypatch.setattr(loop_module, "query_traffic_stats", empty_dict)
+    monkeypatch.setattr(loop_module.hysteria, "traffic", empty_dict)
+    monkeypatch.setattr(loop_module, "get_xray_config", config)
+    monkeypatch.setattr(
+        loop_module,
+        "load_applied_state",
+        lambda: AppliedState(generation=1, digest="1" * 64),
+    )
+
+    payload = await loop_module._build_telemetry(None)
+
+    templates = {
+        template["profile"]: template
+        for template in payload["subscription_templates"]
+    }
+    assert templates["safe"]["port"] == 443
+    assert ["type", "xhttp"] in templates["safe"]["query"]
+    assert templates["fast"]["port"] == 2053
+    assert ["flow", "xtls-rprx-vision"] in templates["fast"]["query"]

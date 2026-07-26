@@ -15,7 +15,13 @@ from .reconcile import (
     load_applied_state,
     reconcile_snapshot,
 )
-from .xray import get_online_emails, query_traffic_stats
+from .xray import (
+    build_subscription_query,
+    find_vless_inbound,
+    get_online_emails,
+    get_xray_config,
+    query_traffic_stats,
+)
 
 _TELEMETRY_SEQUENCE_PATH = "/data/control/telemetry-sequence"
 
@@ -62,11 +68,43 @@ async def _build_telemetry(result: ReconcileResult | None) -> dict:
         bucket["uplink"] += int(counters.get("uplink", 0) or 0)
         bucket["downlink"] += int(counters.get("downlink", 0) or 0)
     state = load_applied_state()
+    config = await get_xray_config()
+    subscription_templates: list[dict] = []
+    for profile, preferred_network in (("safe", "xhttp"), ("fast", "tcp")):
+        inbound = find_vless_inbound(config, preferred_network=preferred_network)
+        if not inbound:
+            continue
+        host = (
+            settings.fast_host_ip
+            if profile == "fast" and settings.fast_host_ip
+            else settings.host_ip
+        )
+        port = int(
+            inbound.get("port")
+            or (
+                settings.xray_tcp_port
+                if profile == "fast"
+                else settings.xray_port
+            )
+            or settings.xray_port
+        )
+        subscription_templates.append(
+            {
+                "profile": profile,
+                "host": host,
+                "port": port,
+                "query": [
+                    [key, value]
+                    for key, value in build_subscription_query(inbound)
+                ],
+            }
+        )
     return {
         "applied_generation": state.generation,
         "applied_digest": state.digest,
         "online_emails": sorted(online),
         "stats": stats,
+        "subscription_templates": subscription_templates,
         "reconciliation": asdict(result) if result is not None else None,
     }
 

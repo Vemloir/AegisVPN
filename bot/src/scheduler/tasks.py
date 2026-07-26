@@ -13,8 +13,8 @@ from sqlalchemy.orm import joinedload
 from src.core.config import settings
 from src.core.database import async_session_maker
 from src.core.logger import logger
-from src.models import Payment, Server, Subscription, SubscriptionServer, User
-from src.services import AgentClient, SubscriptionService, confirm_platega_payment, t
+from src.models import NodeTelemetry, Payment, Server, Subscription, SubscriptionServer, User
+from src.services import AgentClient, NodeControlService, SubscriptionService, confirm_platega_payment, t
 from src.services.platega_client import PlategaError, get_transaction_status
 
 
@@ -160,6 +160,9 @@ async def retry_unsynced_servers():
         for sub_server in unsynced_links:
             server = sub_server.server
             sub = sub_server.subscription
+            if server.control_mode == "pull":
+                await NodeControlService.publish_for_servers(session, {server.id})
+                continue
             client = AgentClient(server.agent_url, server.agent_token)
             try:
                 email = f"user_{sub.user_id}_sub_{sub.id}"
@@ -187,12 +190,20 @@ async def poll_traffic():
 
         changed = False
         for server in servers:
-            client = AgentClient(server.agent_url, server.agent_token)
-            try:
-                stats = await client.get_stats()
-            except Exception as exc:
-                logger.warning("traffic poll: server %s stats failed: %s", server.id, exc)
-                continue
+            if server.control_mode == "pull":
+                telemetry = await session.get(NodeTelemetry, server.id)
+                stats = (
+                    dict((telemetry.payload or {}).get("stats") or {})
+                    if telemetry is not None
+                    else {}
+                )
+            else:
+                client = AgentClient(server.agent_url, server.agent_token)
+                try:
+                    stats = await client.get_stats()
+                except Exception as exc:
+                    logger.warning("traffic poll: server %s stats failed: %s", server.id, exc)
+                    continue
             if not stats:
                 continue
 
