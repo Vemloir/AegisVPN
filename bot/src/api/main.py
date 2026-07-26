@@ -8,6 +8,7 @@ read from the tables the admin panel writes. Nothing is duplicated here.
 from __future__ import annotations
 
 import hashlib
+from json import JSONDecodeError
 from datetime import UTC, datetime
 
 import aiohttp
@@ -38,6 +39,11 @@ app = FastAPI(title="AegisVPN site API", docs_url=None, redoc_url=None, openapi_
 app.include_router(checkout.router)
 app.include_router(legal.router)
 app.include_router(node_control_router)
+
+
+def _no_store(response: Response) -> None:
+    """Keep authenticated or authentication-related responses out of caches."""
+    response.headers["Cache-Control"] = "no-store"
 
 
 def _plan_name(days: int, lang: str = "ru") -> str:
@@ -181,7 +187,7 @@ async def _me_payload(session: AsyncSession, user: User) -> dict:
         # image kept the same URL, so the browser served the stale copy.)
         # photo_url stays as a last-resort fallback for images we couldn't fetch.
         "avatar_url": (
-            f"/api/avatar/{user.id}?v={hashlib.sha1(user.avatar_data).hexdigest()[:12]}"
+            f"/api/avatar/me?v={hashlib.sha1(user.avatar_data).hexdigest()[:12]}"
             if user.avatar_data
             else None
         ),
@@ -213,6 +219,7 @@ async def _login(tg_id: int, fresh: dict, response: Response) -> dict | None:
     """Upsert the Telegram user, refresh their profile + cached avatar, and set
     the session cookie. Shared by the Login Widget and the Mini App — they differ
     only in HOW tg_id/fresh were verified, not in what a sign-in does."""
+    _no_store(response)
     async with async_session_maker() as session:
         user = (
             await session.execute(select(User).where(User.tg_id == tg_id))
@@ -267,6 +274,7 @@ async def _login(tg_id: int, fresh: dict, response: Response) -> dict | None:
 
 @app.get("/api/me")
 async def me(response: Response, aegis_session: str | None = Cookie(default=None)) -> dict | None:
+    _no_store(response)
     async with async_session_maker() as session:
         user = await _current_user(session, aegis_session)
         if user is None or user.is_banned:
@@ -278,7 +286,15 @@ async def me(response: Response, aegis_session: str | None = Cookie(default=None
 @app.post("/api/auth/telegram")
 async def auth_telegram(request: Request, response: Response) -> dict | None:
     """Sign in from the Telegram Login Widget (a browser, outside Telegram)."""
-    payload = await request.json()
+    _no_store(response)
+    try:
+        payload = await request.json()
+    except (JSONDecodeError, UnicodeDecodeError):
+        response.status_code = 400
+        return {"error": "bad_request"}
+    if not isinstance(payload, dict):
+        response.status_code = 400
+        return {"error": "bad_request"}
     tg_id = verify_telegram_login(payload)
     if tg_id is None:
         response.status_code = 401
@@ -291,8 +307,16 @@ async def auth_tma(request: Request, response: Response) -> dict | None:
     """Auto sign-in when the site runs as a Telegram Mini App: the client posts
     Telegram's signed initData, we verify it and issue the same session — no
     Login Widget click, because Telegram already knows who the user is."""
-    payload = await request.json()
-    init_data = payload.get("init_data") if isinstance(payload, dict) else None
+    _no_store(response)
+    try:
+        payload = await request.json()
+    except (JSONDecodeError, UnicodeDecodeError):
+        response.status_code = 400
+        return {"error": "bad_request"}
+    if not isinstance(payload, dict):
+        response.status_code = 400
+        return {"error": "bad_request"}
+    init_data = payload.get("init_data")
     user = verify_telegram_webapp(init_data or "")
     if user is None:
         response.status_code = 401
@@ -302,20 +326,22 @@ async def auth_tma(request: Request, response: Response) -> dict | None:
 
 @app.post("/api/auth/logout")
 async def logout(response: Response) -> dict:
+    _no_store(response)
     response.delete_cookie(SESSION_COOKIE, path="/")
     return {"ok": True}
 
 
-@app.get("/api/avatar/{user_id}")
-async def avatar(user_id: int) -> Response:
-    """Serve a user's cached avatar from our own domain. Public (a profile
-    picture is not a secret) and immutable per ?v token, so it caches hard."""
+@app.get("/api/avatar/me")
+async def avatar(aegis_session: str | None = Cookie(default=None)) -> Response:
+    """Serve only the signed-in user's cached Telegram avatar."""
     async with async_session_maker() as session:
-        user = await session.get(User, user_id)
-    if user is None or not user.avatar_data:
-        return Response(status_code=404)
+        user = await _current_user(session, aegis_session)
+    if user is None or user.is_banned:
+        return Response(status_code=401, headers={"Cache-Control": "no-store"})
+    if not user.avatar_data:
+        return Response(status_code=404, headers={"Cache-Control": "no-store"})
     return Response(
         content=user.avatar_data,
         media_type=user.avatar_mime or "image/jpeg",
-        headers={"Cache-Control": "public, max-age=604800, immutable"},
+        headers={"Cache-Control": "private, max-age=604800, immutable"},
     )

@@ -17,6 +17,7 @@ made in the bot. Anything the site invents here would be a second, weaker copy.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 
 import aiohttp
 from fastapi import APIRouter, Cookie, Response
@@ -38,6 +39,10 @@ from src.services.platega_client import PlategaError, create_sbp_transaction
 router = APIRouter()
 
 _TIMEOUT = aiohttp.ClientTimeout(total=20, connect=5)
+_PROVIDER_REDIRECT_HOSTS = {
+    "stars": frozenset({"t.me"}),
+    "sbp": frozenset({"app.platega.io"}),
+}
 
 
 class CheckoutRequest(BaseModel):
@@ -49,6 +54,27 @@ def _site_url() -> str:
     """Where Platega sends the payer back. The site is the apex domain; www
     redirects to it (the Telegram widget only works on one registered domain)."""
     return (settings.site_public_url or "https://aegisvpn.org").rstrip("/")
+
+
+def validate_provider_redirect(url: object, method: str) -> str | None:
+    """Return a provider redirect only when it is an expected HTTPS origin."""
+    if not isinstance(url, str):
+        return None
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except ValueError:
+        return None
+    allowed_hosts = _PROVIDER_REDIRECT_HOSTS.get(method, frozenset())
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname not in allowed_hosts
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 443)
+    ):
+        return None
+    return url
 
 
 def terms_accepted(user: User) -> bool:
@@ -104,6 +130,7 @@ async def accept_terms(response: Response, aegis_session: str | None = Cookie(de
     Writes the same three fields the bot's gate writes, so acceptance made on
     the site is acceptance everywhere — the user is never asked twice.
     """
+    response.headers["Cache-Control"] = "no-store"
     user_id = read_session(aegis_session)
     if user_id is None:
         response.status_code = 401
@@ -128,6 +155,7 @@ async def checkout(
     aegis_session: str | None = Cookie(default=None),
 ) -> dict | None:
     """Start a payment and return the URL the browser should go to."""
+    response.headers["Cache-Control"] = "no-store"
     user_id = read_session(aegis_session)
     if user_id is None:
         response.status_code = 401
@@ -176,6 +204,11 @@ async def checkout(
                 logger.error(f"Stars invoice link failed (user {user.id}, plan {plan.id}): {exc}")
                 response.status_code = 502
                 return {"error": "provider_error"}
+            link = validate_provider_redirect(link, "stars")
+            if link is None:
+                logger.error(f"Stars returned an untrusted redirect (user {user.id}, plan {plan.id})")
+                response.status_code = 502
+                return {"error": "provider_error"}
             return {"url": link, "method": "stars"}
 
         # СБП
@@ -200,9 +233,9 @@ async def checkout(
             return {"error": "provider_error"}
 
         tx_id = resp.get("transactionId")
-        redirect = resp.get("redirect")
+        redirect = validate_provider_redirect(resp.get("redirect"), "sbp")
         if not tx_id or not redirect:
-            logger.error(f"Platega create returned no tx/redirect on site: {resp}")
+            logger.error("Platega create returned no transaction id or a rejected redirect")
             response.status_code = 502
             return {"error": "provider_error"}
 
