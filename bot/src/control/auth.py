@@ -1,8 +1,9 @@
 import hashlib
 import hmac
+from datetime import UTC, datetime
 
 from fastapi import HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from src.core.config import settings
 from src.core.database import async_session_maker
@@ -50,22 +51,52 @@ async def authenticate_node(request: Request) -> Server:
         raise _unauthorized()
 
     async with async_session_maker() as session:
-        server = (
-            await session.execute(
-                select(Server).where(
-                    Server.control_cert_fingerprint == fingerprint,
-                    Server.control_mode.in_(("observe", "pull")),
+        candidates = (
+            (
+                await session.execute(
+                    select(Server).where(
+                        or_(
+                            Server.control_cert_fingerprint == fingerprint,
+                            Server.control_previous_cert_fingerprint == fingerprint,
+                        ),
+                        Server.control_mode.in_(("observe", "pull")),
+                    )
                 )
             )
-        ).scalar_one_or_none()
-
-    if (
-        server is None
-        or not server.control_token_hash
-        or not hmac.compare_digest(
-            hash_node_token(token),
-            server.control_token_hash,
+            .scalars()
+            .all()
         )
-    ):
+
+    token_hash = hash_node_token(token)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    authenticated: list[Server] = []
+    for candidate in candidates:
+        current_pair = bool(
+            candidate.control_cert_fingerprint
+            and candidate.control_token_hash
+            and hmac.compare_digest(
+                candidate.control_cert_fingerprint,
+                fingerprint,
+            )
+            and hmac.compare_digest(candidate.control_token_hash, token_hash)
+        )
+        previous_pair = bool(
+            candidate.control_previous_cert_fingerprint
+            and candidate.control_previous_token_hash
+            and candidate.control_previous_credential_expires_at
+            and candidate.control_previous_credential_expires_at >= now
+            and hmac.compare_digest(
+                candidate.control_previous_cert_fingerprint,
+                fingerprint,
+            )
+            and hmac.compare_digest(
+                candidate.control_previous_token_hash,
+                token_hash,
+            )
+        )
+        if current_pair or previous_pair:
+            authenticated.append(candidate)
+
+    if len(authenticated) != 1:
         raise _unauthorized()
-    return server
+    return authenticated[0]

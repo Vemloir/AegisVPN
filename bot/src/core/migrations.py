@@ -102,6 +102,17 @@ MIGRATIONS: dict[str, list[Column]] = {
         ),
         Column("control_token_hash", "VARCHAR(64)", "VARCHAR(64)"),
         Column("control_cert_fingerprint", "VARCHAR(128)", "VARCHAR(128)"),
+        Column("control_previous_token_hash", "VARCHAR(64)", "VARCHAR(64)"),
+        Column(
+            "control_previous_cert_fingerprint",
+            "VARCHAR(128)",
+            "VARCHAR(128)",
+        ),
+        Column(
+            "control_previous_credential_expires_at",
+            "TIMESTAMP",
+            "TIMESTAMP",
+        ),
         Column("desired_generation", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
         Column("applied_generation", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
         Column("applied_digest", "VARCHAR(64)", "VARCHAR(64)"),

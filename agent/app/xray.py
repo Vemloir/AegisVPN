@@ -174,6 +174,31 @@ async def run_xray_api(args: list[str]) -> tuple[int, str]:
     return proc.returncode or 0, out.decode("utf-8", "replace")
 
 
+async def wait_for_xray_ready(
+    *,
+    attempts: int = 20,
+    delay_seconds: float = 0.25,
+) -> bool:
+    """Wait until the post-reload process answers its local API.
+
+    A successful response proves that the replacement Xray process has parsed
+    the atomically persisted desired config. Reconciliation must not acknowledge
+    the generation while the reload outcome remains unknown.
+    """
+    for attempt in range(max(1, attempts)):
+        try:
+            return_code, _ = await run_xray_api(
+                ["statsquery", f"--server={api_server()}", "user>>>"]
+            )
+        except (OSError, RuntimeError):
+            return_code = 1
+        if return_code == 0:
+            return True
+        if attempt + 1 < attempts:
+            await asyncio.sleep(delay_seconds)
+    return False
+
+
 async def xray_api_add(inbound: dict, client_record: dict) -> bool:
     """Add a single client to a live inbound via `xray api adu` (no restart).
 

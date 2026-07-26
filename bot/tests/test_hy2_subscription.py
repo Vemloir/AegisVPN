@@ -6,7 +6,6 @@ link list.
 """
 
 import base64
-import json
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 

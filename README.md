@@ -7,7 +7,8 @@ Aegis VPN is a Telegram bot for selling and managing VPN subscriptions backed by
 The project now uses a split architecture:
 
 - `bot` stores users, subscriptions, plans, server access rules, and serves the subscription URL.
-- `agent` runs on each VPN server, manages the local Xray config, and exposes a small HTTP API for add/remove client operations.
+- `agent` runs on each VPN server, manages the local Xray/Hysteria state, and
+  initiates an authenticated outbound control connection over HTTPS/TCP 443.
 - `deploy/vps` contains the production compose stack for the main VPS.
 - `Caddy` terminates HTTPS for the bot subscription endpoint and proxies traffic to the internal bot HTTP server.
 
@@ -15,7 +16,8 @@ The project now uses a split architecture:
 
 ### Main VPS
 
-The main VPS usually runs three services from [deploy/vps/docker-compose.yml](deploy/vps/docker-compose.yml):
+The main VPS runs the database/bot plus the HTTPS control endpoint from
+[deploy/vps/docker-compose.yml](deploy/vps/docker-compose.yml):
 
 - `aegis-vpn` - local `agent + xray`
 - `aegis-bot` - Telegram bot, SQLite DB, subscription endpoint
@@ -25,14 +27,19 @@ Typical flow:
 
 1. A user buys or renews a subscription in Telegram.
 2. The bot creates or updates a subscription record in SQLite.
-3. The bot syncs the user's UUID to all servers available to that user.
-4. Each server `agent` writes the UUID into the local Xray config and reloads Xray.
+3. The bot publishes an immutable, paginated desired-state snapshot for every
+   affected node.
+4. Each node long-polls the mTLS control endpoint over outbound HTTPS/443,
+   verifies the complete snapshot digest, and reconciles Xray live.
 5. The user receives a subscription URL like `https://<domain>:8443/sub/<token>`.
 6. When the client opens that URL, the bot dynamically builds a Base64 subscription from all synced servers.
 
 ### Additional VPN servers
 
-Every extra VPS runs only the `agent/xray` side. The main bot talks to those nodes over their `agent_url`.
+Every extra VPS runs only the `agent/xray` side (and optionally Hysteria2).
+Normal management is node-initiated; no public Agent API is needed after a node
+is promoted to `pull`. The legacy push path remains available only during the
+per-node `observe` canary and is restricted to the fixed control-server IP.
 
 This is what makes multi-server subscriptions possible:
 
@@ -49,6 +56,8 @@ This is what makes multi-server subscriptions possible:
 - subscription reminders before expiration
 - automatic subscription disable on expiry
 - multi-server subscriptions
+- outbound mTLS node control with exact offline recovery
+- unlimited devices via paginated snapshots (no device-count cap)
 - per-server `public/restricted` access mode
 - allowlist grants for restricted servers
 - admin panel in Telegram
@@ -145,6 +154,9 @@ The `agent` code in [agent](agent):
   - `POST /client/remove`
   - `POST /client/bulk`
   - `GET /sub/{uuid}`
+- long-polls `/api/node/v1/*` on the central control host using a per-node mTLS
+  certificate and token
+- reconciles complete desired state, including revocations made while offline
 
 Relevant files:
 
@@ -161,7 +173,7 @@ Instead:
 1. the bot loads the subscription by `sub_token`
 2. checks that it is active
 3. reconciles allowed servers for the user
-4. requests one VLESS URI from each synced server `agent`
+4. builds each VLESS URI from the node's authenticated outbound telemetry
 5. normalizes the URI parameters
 6. joins all server URIs into one text payload
 7. returns Base64 to the client from `/sub/{token}`
@@ -214,7 +226,8 @@ Important files:
 Notes:
 
 - the bot usually listens internally on `127.0.0.1:8080`
-- Caddy exposes the HTTPS subscription endpoint, commonly on `:8443`
+- Caddy exposes subscriptions and the dedicated mTLS control hostname
+- node control always uses ordinary HTTPS on TCP/443, not WireGuard
 - Xray listens on the port from `vpn.env`, often `9443` if `443` is already occupied
 - the root page `/` is intentionally hidden and returns `404`
 - the only public bot endpoints that matter are `/health` and `/sub/{token}`
@@ -242,10 +255,18 @@ python deploy/vps/add_server.py \
   --new-host NEW_SERVER_IP \
   --new-password YOUR_NEW_ROOT_PASSWORD \
   --server-name "🇩🇪 Germany" \
-  --server-domain de.1-2-3-4.sslip.io
+  --server-domain NEW_SERVER_IP \
+  --reality-dest example.org:443 \
+  --reality-server-name example.org \
+  --control-url https://control.example.com \
+  --control-ca-dir /secure/operator/aegis-control-ca
 ```
 
 The flag emoji prefix in `--server-name` is parsed automatically.
+
+CA initialization, one-node promotion, rollback, rotation, and incident
+procedures are documented in
+[docs/control-plane-operations.md](docs/control-plane-operations.md).
 
 ## Local Notes
 
@@ -264,3 +285,7 @@ If you see references to:
 - direct user-facing VLESS links in `/subscription`
 
 those are outdated and should not be treated as current architecture.
+
+## License
+
+This project is open source under the [MIT License](LICENSE).

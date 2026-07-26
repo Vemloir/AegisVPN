@@ -18,6 +18,7 @@ from .xray import (
     list_vless_inbounds,
     reload_xray,
     save_xray_config,
+    wait_for_xray_ready,
     xray_api_add,
     xray_api_remove,
 )
@@ -203,7 +204,8 @@ async def reconcile_snapshot(
                 api_ok = False
         if not api_ok:
             reload_xray()
-            raise ReconcileError("live Xray reconciliation failed")
+            if not await wait_for_xray_ready():
+                raise ReconcileError("live Xray reconciliation failed")
 
         if config_changed:
             hysteria.refresh_from_config(config)

@@ -8,10 +8,17 @@ from src.models import Server
 
 
 def _server(**kwargs) -> Server:
-    base = dict(
-        id=5, name="Testland", flag="\U0001F1EC\U0001F1F7", host="h", port=443,
-        public_key="p", short_id="s", access_mode="public", is_active=True,
-    )
+    base = {
+        "id": 5,
+        "name": "Testland",
+        "flag": "\U0001F1EC\U0001F1F7",
+        "host": "h",
+        "port": 443,
+        "public_key": "p",
+        "short_id": "s",
+        "access_mode": "public",
+        "is_active": True,
+    }
     base.update(kwargs)
     return Server(**base)
 
