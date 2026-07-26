@@ -25,7 +25,7 @@ def _unauthorized() -> HTTPException:
 
 
 async def authenticate_node(request: Request) -> Server:
-    configured_proxy_secret = settings.node_control_proxy_secret
+    configured_proxy_secret = settings.effective_node_control_proxy_secret
     if configured_proxy_secret is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

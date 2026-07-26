@@ -206,6 +206,28 @@ def test_ssl_context_loads_control_ca_and_node_identity(monkeypatch):
     ]
 
 
+def test_client_reads_node_token_from_private_file(monkeypatch, tmp_path):
+    token_file = tmp_path / "token"
+    token_file.write_text("file-token\n")
+    monkeypatch.setattr("app.control_client.settings.control_token", None)
+    monkeypatch.setattr(
+        "app.control_client.settings.control_token_file",
+        str(token_file),
+    )
+    monkeypatch.setattr(
+        "app.control_client.settings.control_urls",
+        "https://control.example",
+    )
+    monkeypatch.setattr(
+        "app.control_client.build_ssl_context",
+        lambda **kwargs: object(),
+    )
+
+    client = ControlClient.from_settings()
+
+    assert client.headers["Authorization"] == "Bearer file-token"
+
+
 async def test_ack_and_telemetry_use_authenticated_control_endpoints():
     calls: list[tuple[str, str, dict]] = []
 

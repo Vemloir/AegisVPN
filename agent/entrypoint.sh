@@ -4,6 +4,7 @@ set -e
 ENV_FILE="/data/agent.env"
 XRAY_CONFIG="${XRAY_CONFIG_PATH:-/etc/xray/config.json}"
 XRAY_RUN_MODE="${XRAY_RUN_MODE:-external}"
+AGENT_BIND_HOST="${AGENT_BIND_HOST:-0.0.0.0}"
 TEMPLATE_FILE="/app/template.json"
 
 # --- split topology: the xray container runs ONLY the data plane -------------
@@ -347,7 +348,7 @@ if [ "$XRAY_RUN_MODE" = "internal" ]; then
         while true; do
             echo "Starting Agent API..."
             set +e
-            uvicorn app.main:app --host 0.0.0.0 --port 8444
+            uvicorn app.main:app --host "$AGENT_BIND_HOST" --port 8444
             set -e
             echo "uvicorn exited, restarting in 1s..."
             sleep 1
@@ -375,4 +376,4 @@ if [ "$XRAY_RUN_MODE" != "agent-only" ]; then
 fi
 
 echo "Starting Agent API..."
-exec uvicorn app.main:app --host 0.0.0.0 --port 8444
+exec uvicorn app.main:app --host "$AGENT_BIND_HOST" --port 8444

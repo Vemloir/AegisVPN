@@ -3,6 +3,7 @@ import json
 import ssl
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import aiohttp
@@ -91,11 +92,16 @@ class ControlClient:
 
     @classmethod
     def from_settings(cls) -> "ControlClient":
-        if settings.control_token is None:
-            raise ValueError("CONTROL_TOKEN is required when control mode is enabled")
+        token = (
+            settings.control_token.get_secret_value()
+            if settings.control_token is not None
+            else Path(settings.control_token_file).read_text().strip()
+        )
+        if not token:
+            raise ValueError("node control token is empty")
         return cls(
             urls=settings.control_url_list,
-            token=settings.control_token.get_secret_value(),
+            token=token,
             ssl_context=build_ssl_context(
                 ca_path=settings.control_ca_cert,
                 cert_path=settings.control_client_cert,
