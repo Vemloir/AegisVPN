@@ -204,3 +204,43 @@ def test_ssl_context_loads_control_ca_and_node_identity(monkeypatch):
         ("ca", "/control/ca.crt"),
         ("identity", "/control/client.crt", "/control/client.key"),
     ]
+
+
+async def test_ack_and_telemetry_use_authenticated_control_endpoints():
+    calls: list[tuple[str, str, dict]] = []
+
+    async def request(method, url, **kwargs):
+        calls.append((method, url, kwargs))
+        return _response({"status": "ok"})
+
+    client = ControlClient(
+        urls=["https://control.example"],
+        token="node-secret",
+        ssl_context=object(),
+        requester=request,
+    )
+    await client.ack(
+        generation=4,
+        digest="4" * 64,
+        success=True,
+        error=None,
+    )
+    await client.send_telemetry(
+        sequence=9,
+        payload={"online": 2},
+    )
+
+    assert [call[1] for call in calls] == [
+        "https://control.example/api/node/v1/ack",
+        "https://control.example/api/node/v1/telemetry",
+    ]
+    assert calls[0][2]["json"] == {
+        "generation": 4,
+        "digest": "4" * 64,
+        "success": True,
+        "error": None,
+    }
+    assert calls[1][2]["json"] == {
+        "sequence": 9,
+        "payload": {"online": 2},
+    }

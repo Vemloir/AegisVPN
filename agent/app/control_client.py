@@ -279,3 +279,47 @@ class ControlClient:
             )
         except ValidationError as exc:
             raise ControlProtocolError("invalid desired snapshot") from exc
+
+    async def ack(
+        self,
+        *,
+        generation: int,
+        digest: str,
+        success: bool,
+        error: str | None,
+    ) -> None:
+        response = await self._request_with_failover(
+            "POST",
+            "/api/node/v1/ack",
+            json_body={
+                "generation": generation,
+                "digest": digest,
+                "success": success,
+                "error": error,
+            },
+            max_bytes=64 * 1024,
+        )
+        if response.status != 200:
+            raise ControlRequestError(
+                f"control acknowledgement rejected with status {response.status}"
+            )
+
+    async def send_telemetry(
+        self,
+        *,
+        sequence: int,
+        payload: dict,
+    ) -> None:
+        response = await self._request_with_failover(
+            "POST",
+            "/api/node/v1/telemetry",
+            json_body={
+                "sequence": sequence,
+                "payload": payload,
+            },
+            max_bytes=64 * 1024,
+        )
+        if response.status != 200:
+            raise ControlRequestError(
+                f"control telemetry rejected with status {response.status}"
+            )

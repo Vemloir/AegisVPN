@@ -5,6 +5,7 @@ limiter in :mod:`app.connlimit`, and auth in :mod:`app.security`.
 """
 
 import asyncio
+from contextlib import suppress
 from urllib.parse import quote, urlencode
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -13,6 +14,7 @@ from fastapi.responses import PlainTextResponse
 from . import hysteria
 from .config import settings
 from .connlimit import conn_limit_loop, set_override
+from .control_loop import start_control_task
 from .models import ClientAddRequest, ClientRemoveRequest, ConnLimitRequest, Hy2AuthRequest
 from .security import verify_token
 from .xray import (
@@ -32,10 +34,12 @@ from .xray import (
 )
 
 app = FastAPI(title="Aegis VPN Agent")
+_control_task: asyncio.Task | None = None
 
 
 @app.on_event("startup")
 async def _start_background_tasks() -> None:
+    global _control_task
     # Always run the loop: even with the node default disabled (conn_limit=0),
     # per-user overrides pushed by the bot must still be enforced.
     asyncio.create_task(conn_limit_loop())
@@ -43,6 +47,18 @@ async def _start_background_tasks() -> None:
     # Populate the Hysteria2 user set from the on-disk xray config so auth works
     # immediately. No-op (empty set) on nodes without any vless clients.
     await hysteria.refresh()
+    _control_task = start_control_task()
+
+
+@app.on_event("shutdown")
+async def _stop_background_tasks() -> None:
+    global _control_task
+    if _control_task is None:
+        return
+    _control_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await _control_task
+    _control_task = None
 
 
 @app.get("/health")
