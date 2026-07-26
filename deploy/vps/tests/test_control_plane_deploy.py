@@ -451,7 +451,7 @@ def test_stability_rollout_validates_candidate_before_restart(monkeypatch):
 
     candidate_path, candidate_text, candidate_mode = writes[0]
     candidate = json.loads(candidate_text)
-    assert candidate_path == update_script.REMOTE_XRAY_CONFIG + ".candidate"
+    assert candidate_path == update_script.REMOTE_XRAY_CONFIG + ".candidate.json"
     assert candidate_mode == 0o600
     assert candidate["inbounds"] == live["inbounds"]
     assert candidate["outbounds"] == live["outbounds"]
