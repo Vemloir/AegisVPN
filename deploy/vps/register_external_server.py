@@ -78,6 +78,11 @@ def main() -> None:
     # available_transports key on tcp_port); 0/empty -> NULL (xhttp-only node).
     _tcp_raw = env_optional("TCP_PORT", "0")
     tcp_port = int(_tcp_raw) if _tcp_raw.lstrip("-").isdigit() and int(_tcp_raw) > 0 else None
+    control_mode = env_optional("CONTROL_MODE", "push") or "push"
+    if control_mode not in {"push", "observe", "pull"}:
+        raise SystemExit(f"Invalid CONTROL_MODE: {control_mode}")
+    control_token_hash = env_optional("CONTROL_TOKEN_HASH") or None
+    control_cert_fingerprint = env_optional("CONTROL_CERT_FINGERPRINT").lower() or None
 
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -101,9 +106,10 @@ def main() -> None:
             INSERT INTO servers (
                 name, flag, host, port, public_key, short_id, agent_url, agent_token,
                 access_mode, subscription_group, is_active, tcp_port, country_code,
-                display_order, created_at
+                display_order, control_mode, control_token_hash,
+                control_cert_fingerprint, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 server_name,
@@ -120,6 +126,9 @@ def main() -> None:
                 tcp_port,
                 country_code,
                 display_order,
+                control_mode,
+                control_token_hash,
+                control_cert_fingerprint,
                 created_at,
             ),
         )
@@ -133,7 +142,10 @@ def main() -> None:
                 agent_token = ?, access_mode = ?, subscription_group = ?, is_active = ?,
                 tcp_port = ?,
                 country_code = COALESCE(?, country_code),
-                display_order = ?
+                display_order = ?,
+                control_mode = ?,
+                control_token_hash = COALESCE(?, control_token_hash),
+                control_cert_fingerprint = COALESCE(?, control_cert_fingerprint)
             WHERE id = ?
             """,
             (
@@ -150,6 +162,9 @@ def main() -> None:
                 tcp_port,
                 country_code,
                 display_order,
+                control_mode,
+                control_token_hash,
+                control_cert_fingerprint,
                 server_id,
             ),
         )
@@ -166,7 +181,13 @@ def main() -> None:
     synced = 0
     for subscription_id, user_id, client_uuid in subscriptions:
         email = f"user_{user_id}_sub_{subscription_id}"
-        is_synced = 1 if add_client(agent_url, agent_token, client_uuid, email) else 0
+        push_enabled = control_mode in {"push", "observe"}
+        is_synced = (
+            1
+            if push_enabled
+            and add_client(agent_url, agent_token, client_uuid, email)
+            else 0
+        )
         # Push the sub's per-device UUIDs too. Each device fetches its OWN
         # /sub/<device-uuid>; a node that never got the device UUID 404s that
         # fetch and the LOCATION is silently dropped from that device's config.
@@ -176,7 +197,8 @@ def main() -> None:
             "AND is_active = 1 AND is_suspended = 0",
             (subscription_id,),
         ).fetchall():
-            add_client(agent_url, agent_token, dev_uuid, f"{email}_dev_{dev_id}")
+            if push_enabled:
+                add_client(agent_url, agent_token, dev_uuid, f"{email}_dev_{dev_id}")
         created_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat(sep=" ")
         cur.execute(
             """

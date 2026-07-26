@@ -1,0 +1,18 @@
+# Copy this file to data/control/server/control.caddy only after CONTROL_DOMAIN
+# resolves to the control VPS. Caddy then obtains the public server certificate,
+# while every node must present a client certificate signed by client-ca.crt.
+{$CONTROL_DOMAIN} {
+    tls {
+        client_auth {
+            mode require_and_verify
+            trust_pool file /etc/caddy/control/client-ca.crt
+        }
+    }
+
+    reverse_proxy 127.0.0.1:8000 {
+        header_up -X-Aegis-Proxy-Secret
+        header_up -X-Aegis-Node-Fingerprint
+        header_up X-Aegis-Proxy-Secret {file./etc/caddy/control/proxy-secret}
+        header_up X-Aegis-Node-Fingerprint {tls_client_fingerprint}
+    }
+}

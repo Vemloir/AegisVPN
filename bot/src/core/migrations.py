@@ -95,6 +95,33 @@ MIGRATIONS: dict[str, list[Column]] = {
     ],
     "servers": [
         Column(
+            "control_mode",
+            "VARCHAR(16) DEFAULT 'push'",
+            "VARCHAR(16) DEFAULT 'push'",
+            post_sql="UPDATE servers SET control_mode = 'push' WHERE control_mode IS NULL",
+        ),
+        Column("control_token_hash", "VARCHAR(64)", "VARCHAR(64)"),
+        Column("control_cert_fingerprint", "VARCHAR(128)", "VARCHAR(128)"),
+        Column("control_previous_token_hash", "VARCHAR(64)", "VARCHAR(64)"),
+        Column(
+            "control_previous_cert_fingerprint",
+            "VARCHAR(128)",
+            "VARCHAR(128)",
+        ),
+        Column(
+            "control_previous_credential_expires_at",
+            "TIMESTAMP",
+            "TIMESTAMP",
+        ),
+        Column("desired_generation", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
+        Column("applied_generation", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
+        Column("applied_digest", "VARCHAR(64)", "VARCHAR(64)"),
+        Column("control_last_seen_at", "TIMESTAMP", "TIMESTAMP"),
+        Column("control_last_reconciled_at", "TIMESTAMP", "TIMESTAMP"),
+        Column("control_last_error", "VARCHAR(512)", "VARCHAR(512)"),
+        Column("control_agent_version", "VARCHAR(64)", "VARCHAR(64)"),
+        Column("control_capabilities", "JSON", "JSONB"),
+        Column(
             "subscription_group",
             "VARCHAR(16) DEFAULT 'safe'",
             "VARCHAR(16) DEFAULT 'safe'",

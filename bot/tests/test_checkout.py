@@ -12,10 +12,9 @@ from sqlalchemy import select
 
 from src.api.auth import issue_session
 from src.api.main import app
-from src.core.database import async_session_maker
+from src.core.database import async_session_maker, engine
 from src.core.terms import TERMS_VERSION
 from src.models.base import Base
-from src.core.database import engine
 from src.models.payment import Payment
 from src.models.plan import Plan
 from src.models.user import User

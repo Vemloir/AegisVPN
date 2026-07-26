@@ -1,6 +1,7 @@
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, Boolean, Integer, String
+from sqlalchemy import JSON, BigInteger, Boolean, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -22,6 +23,32 @@ class Server(Base):
     short_id: Mapped[str] = mapped_column(String(255))
     agent_url: Mapped[str] = mapped_column(String(255))
     agent_token: Mapped[str] = mapped_column(String(255))
+    # Node-initiated control plane. Existing nodes remain on "push" until a
+    # canary has observed and then applied an exact desired-state snapshot.
+    control_mode: Mapped[str] = mapped_column(String(16), default="push")
+    control_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    control_cert_fingerprint: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, unique=True
+    )
+    # Rotation overlap accepts either complete credential pair for a bounded
+    # window. Certificate/token halves are never mix-and-matched.
+    control_previous_token_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    control_previous_cert_fingerprint: Mapped[str | None] = mapped_column(
+        String(128), nullable=True
+    )
+    control_previous_credential_expires_at: Mapped[datetime | None] = mapped_column(
+        nullable=True
+    )
+    desired_generation: Mapped[int] = mapped_column(BigInteger, default=0)
+    applied_generation: Mapped[int] = mapped_column(BigInteger, default=0)
+    applied_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    control_last_seen_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    control_last_reconciled_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    control_last_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    control_agent_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    control_capabilities: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Website presentation only — never used to route or connect. ISO 3166-1
     # alpha-2 ("FI"). The site derives the globe outline, the camera target and
     # the region filter from it; a node without it is served by the bot but not

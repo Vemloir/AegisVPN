@@ -7,7 +7,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base, utcnow
 
 if TYPE_CHECKING:
-    from .server import Server
     from .subscription import Subscription
 
 

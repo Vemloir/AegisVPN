@@ -17,6 +17,7 @@ from src.core.logger import logger
 from src.models import Device, Server, ServerTransportPref, Subscription, SubscriptionServer
 from src.services import geoip
 from src.services.agent_client import AgentClient
+from src.services.node_control_service import NodeControlService
 from src.services.server_access_service import ServerAccessService
 
 _UA_VERSION_RE = re.compile(r"/[\d.]+")
@@ -525,6 +526,8 @@ class SubscriptionService:
         ]
 
         async def sync_to_server(server: Server) -> tuple[int, bool]:
+            if not NodeControlService.pushes_to(server):
+                return server.id, False
             client = AgentClient(server.agent_url, server.agent_token)
             try:
                 success = await client.bulk_add(clients)
@@ -557,6 +560,11 @@ class SubscriptionService:
                     is_synced=is_synced,
                 )
             )
+        await session.flush()
+        await NodeControlService.publish_for_servers(
+            session,
+            set(sync_results),
+        )
 
     @staticmethod
     async def _collect_links(
@@ -621,6 +629,23 @@ class SubscriptionService:
         hy2_server_ids = await SubscriptionService._hy2_servers_for_user(
             session, sub.user_id, server_ids
         )
+        # AsyncSession cannot run concurrent queries. Resolve pull-node templates
+        # sequentially before the network fetches below are gathered.
+        pull_links: dict[int, str | None] = {}
+        for server in servers:
+            if server.control_mode != "pull":
+                continue
+            target_profile = (
+                SubscriptionService.FAST_PROFILE
+                if server.subscription_group == SubscriptionService.FAST_PROFILE
+                else SubscriptionService.SAFE_PROFILE
+            )
+            pull_links[server.id] = await NodeControlService.build_subscription_uri(
+                session,
+                server,
+                effective_uuid,
+                profile=target_profile,
+            )
 
         async def fetch_link(server: Server) -> str:
             # Hy2-picked location: emit a hysteria2:// link directly. xray-core
@@ -635,14 +660,20 @@ class SubscriptionService:
                     return hy2
                 # Capability lost between pref-resolution and emission: fall back
                 # to a vless link rather than ship nothing.
-            client = AgentClient(server.agent_url, server.agent_token)
             target_profile = (
                 SubscriptionService.FAST_PROFILE
                 if server.subscription_group == SubscriptionService.FAST_PROFILE
                 else SubscriptionService.SAFE_PROFILE
             )
             try:
-                text = await client.get_subscription(effective_uuid, profile=target_profile)
+                if server.control_mode == "pull":
+                    text = pull_links.get(server.id)
+                else:
+                    client = AgentClient(server.agent_url, server.agent_token)
+                    text = await client.get_subscription(
+                        effective_uuid,
+                        profile=target_profile,
+                    )
                 if text:
                     return SubscriptionService.normalize_vless_uri(
                         text,
@@ -857,6 +888,8 @@ class SubscriptionService:
         uuids = [sub.client_uuid, *device_uuids]
 
         async def remove_from_server(server: Server) -> None:
+            if not NodeControlService.pushes_to(server):
+                return
             client = AgentClient(server.agent_url, server.agent_token)
             for client_uuid in uuids:
                 try:
@@ -865,6 +898,11 @@ class SubscriptionService:
                     logger.error(f"Failed to remove client {client_uuid} from server {server.id}: {exc}")
 
         await asyncio.gather(*(remove_from_server(server) for server in servers))
+        await session.flush()
+        await NodeControlService.publish_for_servers(
+            session,
+            {server.id for server in servers},
+        )
 
     # ------------------------------------------------------------------
     # Device management
@@ -1017,20 +1055,30 @@ class SubscriptionService:
             .join(SubscriptionServer)
             .where(
                 SubscriptionServer.subscription_id == sub.id,
-                SubscriptionServer.is_synced == True,  # noqa: E712
                 Server.is_active == True,  # noqa: E712
+                or_(
+                    SubscriptionServer.is_synced == True,  # noqa: E712
+                    Server.control_mode.in_(("observe", "pull")),
+                ),
             )
         )
         servers = result.scalars().all()
         email = f"user_{sub.user_id}_sub_{sub.id}_dev_{device.id}"
 
         async def _add(server: Server) -> None:
+            if not NodeControlService.pushes_to(server):
+                return
             try:
                 await AgentClient(server.agent_url, server.agent_token).add_client(device.uuid, email)
             except Exception as exc:
                 logger.error("device sync to server %s failed: %s", server.id, exc)
 
         await asyncio.gather(*(_add(s) for s in servers))
+        await session.flush()
+        await NodeControlService.publish_for_servers(
+            session,
+            {server.id for server in servers},
+        )
 
     @staticmethod
     async def suspend_device(
@@ -1044,15 +1092,22 @@ class SubscriptionService:
             .where(SubscriptionServer.subscription_id == sub.id)
         )
         servers = result.scalars().all()
+        device.is_suspended = True
+        await session.flush()
 
         async def _remove(server: Server) -> None:
+            if not NodeControlService.pushes_to(server):
+                return
             try:
                 await AgentClient(server.agent_url, server.agent_token).remove_client(device.uuid)
             except Exception as exc:
                 logger.error("device suspend on server %s failed: %s", server.id, exc)
 
         await asyncio.gather(*(_remove(s) for s in servers))
-        device.is_suspended = True
+        await NodeControlService.publish_for_servers(
+            session,
+            {server.id for server in servers},
+        )
 
     @staticmethod
     async def resume_device(
@@ -1060,8 +1115,9 @@ class SubscriptionService:
         sub: "Subscription",
         device: "Device",
     ) -> None:
-        await SubscriptionService._sync_device_to_servers(session, sub, device)
         device.is_suspended = False
+        await session.flush()
+        await SubscriptionService._sync_device_to_servers(session, sub, device)
 
     @staticmethod
     async def remove_device(
@@ -1075,15 +1131,22 @@ class SubscriptionService:
             .where(SubscriptionServer.subscription_id == sub.id)
         )
         servers = result.scalars().all()
+        device.is_active = False
+        await session.flush()
 
         async def _remove(server: Server) -> None:
+            if not NodeControlService.pushes_to(server):
+                return
             try:
                 await AgentClient(server.agent_url, server.agent_token).remove_client(device.uuid)
             except Exception as exc:
                 logger.error("device remove from server %s failed: %s", server.id, exc)
 
         await asyncio.gather(*(_remove(s) for s in servers))
-        device.is_active = False
+        await NodeControlService.publish_for_servers(
+            session,
+            {server.id for server in servers},
+        )
 
     @staticmethod
     async def get_active_devices(session: AsyncSession, sub: "Subscription") -> list["Device"]:
