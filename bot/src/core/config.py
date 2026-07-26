@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     bot_token: SecretStr
     admin_ids: list[int]
     bot_public_url: str | None = None
+    support_public_url: str = "https://t.me/AegisVPNsupportBot"
     premium_bot_url: str = "https://t.me/PremiumBot"
     subscription_public_base_url: str | None = None
 
@@ -16,7 +17,7 @@ class Settings(BaseSettings):
     # Where the public website lives — the apex domain only (the Telegram Login
     # Widget works on the ONE domain registered via BotFather). Used as the
     # return/failure URL a payment provider sends the payer back to.
-    site_public_url: str | None = None
+    site_public_url: str = "https://aegisvpn.org"
     telegram_mode: str = "webhook"
 
     database_url: str | None = None
