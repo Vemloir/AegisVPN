@@ -54,8 +54,10 @@ from __future__ import annotations
 import argparse
 import base64
 import copy
+import hashlib
 import json
 import posixpath
+import re
 import shlex
 import stat
 import time
@@ -84,6 +86,51 @@ except ImportError:  # Direct execution: python deploy/vps/update.py
 ROOT = Path(__file__).resolve().parents[2]
 AGENT_DIR = ROOT / "agent"
 BOT_DIR = ROOT / "bot"
+RUNTIME_VERSIONS_FILE = ROOT / "deploy/vps/runtime-versions.env"
+
+_REQUIRED_RUNTIME_KEYS = {
+    "PYTHON_IMAGE",
+    "UV_IMAGE",
+    "XRAY_VERSION",
+    "XRAY_SHA256",
+    "HYSTERIA_VERSION",
+    "HYSTERIA_IMAGE",
+    "CADDY_IMAGE",
+    "MTG_IMAGE",
+}
+
+
+def verify_runtime_pins(
+    runtime_file: Path = RUNTIME_VERSIONS_FILE,
+    xray_archive: Path | None = None,
+) -> dict[str, str]:
+    """Validate immutable runtime references and optionally an Xray archive."""
+    values: dict[str, str] = {}
+    for raw_line in runtime_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, separator, value = line.partition("=")
+        if not separator or not key or not value:
+            raise ValueError(f"invalid runtime manifest line: {raw_line!r}")
+        values[key] = value
+
+    missing = sorted(_REQUIRED_RUNTIME_KEYS - values.keys())
+    if missing:
+        raise ValueError(f"runtime manifest missing: {', '.join(missing)}")
+    for key in ("PYTHON_IMAGE", "UV_IMAGE", "HYSTERIA_IMAGE", "CADDY_IMAGE", "MTG_IMAGE"):
+        if not re.search(r"@sha256:[0-9a-f]{64}$", values[key]):
+            raise ValueError(f"{key} is not pinned by sha256 digest")
+    if not re.fullmatch(r"[0-9a-f]{64}", values["XRAY_SHA256"]):
+        raise ValueError("XRAY_SHA256 is not a sha256 digest")
+
+    if xray_archive is not None:
+        actual = hashlib.sha256(xray_archive.read_bytes()).hexdigest()
+        if actual != values["XRAY_SHA256"]:
+            raise ValueError(
+                f"Xray checksum mismatch: expected {values['XRAY_SHA256']}, got {actual}"
+            )
+    return values
 
 
 # ---------------------------------------------------------------------------
@@ -1459,6 +1506,23 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--main-password", required=False)
     p.add_argument("--bot", action="store_true", help="Update the bot on the main VPS")
     p.add_argument("--nodes", action="store_true", help="Update agent on --node targets")
+    p.add_argument(
+        "--verify-runtime-pins",
+        action="store_true",
+        help="Validate runtime-versions.env and optionally --xray-archive, then exit.",
+    )
+    p.add_argument(
+        "--runtime-versions",
+        type=Path,
+        default=RUNTIME_VERSIONS_FILE,
+        help=argparse.SUPPRESS,
+    )
+    p.add_argument(
+        "--xray-archive",
+        type=Path,
+        default=None,
+        help="Optional downloaded Xray archive to checksum during pin verification.",
+    )
     control_rollout = p.add_mutually_exclusive_group()
     control_rollout.add_argument(
         "--promote-pull",
@@ -1569,13 +1633,22 @@ def main() -> None:
                 args.mtproxy, args.set_network,
                 args.split_migrate, args.provision_stack, args.renew_hy2_cert,
                 args.enable_hy2,
-                args.promote_pull, args.rollback_observe)):
+                args.promote_pull, args.rollback_observe,
+                args.verify_runtime_pins)):
         raise SystemExit(
             "Specify --bot, --nodes, --patch-dns, --patch-stability, --mtproxy, "
             "--set-network, --split-migrate, --provision-stack, "
             "--renew-hy2-cert, --enable-hy2, --promote-pull, and/or "
-            "--rollback-observe"
+            "--rollback-observe, --verify-runtime-pins"
         )
+    if args.verify_runtime_pins:
+        verify_runtime_pins(args.runtime_versions, args.xray_archive)
+        print("Runtime pins verified.")
+        if not any((args.bot, args.nodes, args.patch_dns, args.patch_stability,
+                    args.mtproxy, args.set_network, args.split_migrate,
+                    args.provision_stack, args.renew_hy2_cert, args.enable_hy2,
+                    args.promote_pull, args.rollback_observe)):
+            return
     if args.promote_pull or args.rollback_observe:
         if not args.main_password or args.server_id is None:
             raise SystemExit(

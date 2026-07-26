@@ -1,13 +1,17 @@
-FROM python:3.14-slim AS builder
+ARG PYTHON_IMAGE=python:3.14.6-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.32@sha256:df4cae8f3a96d175e2e5f992e597550000edbe78fdc2594d5cd8de1a217f504c
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+FROM ${UV_IMAGE} AS uv
+FROM ${PYTHON_IMAGE} AS builder
+
+COPY --from=uv /uv /uvx /bin/
 
 WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-FROM python:3.14-slim
+FROM ${PYTHON_IMAGE}
 
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv

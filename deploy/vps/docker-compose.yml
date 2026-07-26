@@ -95,7 +95,7 @@ services:
       - ./data/bot:/main-data:ro
 
   mtg:
-    image: ghcr.io/9seconds/mtg:2
+    image: ghcr.io/9seconds/mtg:2@sha256:c082586a19886e4822f92aa8c1949a771df3519053d64b1b5505a9a280a3929d
     container_name: aegis-mtg
     restart: unless-stopped
     network_mode: host
@@ -104,7 +104,7 @@ services:
       - mtproxy
 
   caddy:
-    image: caddy:2
+    image: caddy:2.11.4@sha256:af5fdcd76f2db5e4e974ee92f96ee8c0fc3edb55bd4ba5032547cbf3f65e486d
     container_name: aegis-caddy
     restart: unless-stopped
     network_mode: host
@@ -126,9 +126,9 @@ services:
   # lifecycle drives it like xray. Config + self-signed cert + secrets are
   # generated per node into ./data/hysteria/ (never in the repo).
   hysteria:
-    # tobyxdd/hysteria:latest is the verified Hysteria v2 image. The previously
-    # used ghcr.io/apernet/hysteria:latest 403s on pull from these nodes.
-    image: tobyxdd/hysteria:latest
+    # Digest captured from the working v2.10.0 canary. The previously used
+    # ghcr.io/apernet/hysteria image 403s on pull from these nodes.
+    image: tobyxdd/hysteria@sha256:97a8deb6c57765a72d4251420481dc8124222590d8e1b5af564e0858859cfe09
     container_name: aegis-hysteria
     restart: unless-stopped
     network_mode: host
