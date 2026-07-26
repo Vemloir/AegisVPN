@@ -52,6 +52,7 @@ Usage examples:
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import posixpath
 import shlex
@@ -210,6 +211,183 @@ REMOTE_COMPOSE = "/root/aegis/deploy/vps/docker-compose.yml"
 # The running xray config. Rendered from template.json ONCE, at first boot, and
 # never again — it carries the node's live client list.
 REMOTE_XRAY_CONFIG = "/root/aegis/deploy/vps/data/vpn/xray-config.json"
+# agent.env is generated on the persistent data volume; vpn.env is Compose's
+# host-side environment. Keep both aligned so no later Agent recreate can
+# silently restore an obsolete runtime value.
+REMOTE_AGENT_ENV = "/root/aegis/deploy/vps/data/vpn/agent.env"
+REMOTE_VPN_ENV = "/root/aegis/deploy/vps/vpn.env"
+
+
+def apply_stability_profile(live: dict, template: dict) -> dict:
+    """Apply latency/stability settings without touching node identity or users."""
+    patched = copy.deepcopy(live)
+    desired_level = template["policy"]["levels"]["0"]
+    level = (
+        patched.setdefault("policy", {})
+        .setdefault("levels", {})
+        .setdefault("0", {})
+    )
+    level["handshake"] = desired_level["handshake"]
+    level["connIdle"] = desired_level["connIdle"]
+    patched["dns"] = copy.deepcopy(template["dns"])
+
+    routing = patched.setdefault("routing", {})
+    routing["domainStrategy"] = template["routing"]["domainStrategy"]
+
+    def is_removed_rule(rule: dict) -> bool:
+        blocks_quic = (
+            rule.get("outboundTag") == "block"
+            and rule.get("network") == "udp"
+            and str(rule.get("port")) == "443"
+        )
+        redundant_ru_direct = rule.get("outboundTag") == "direct" and (
+            "geoip:ru" in rule.get("ip", [])
+            or "geosite:category-ru" in rule.get("domain", [])
+        )
+        return blocks_quic or redundant_ru_direct
+
+    routing["rules"] = [
+        rule for rule in routing.get("rules", []) if not is_removed_rule(rule)
+    ]
+    return patched
+
+
+def update_env_values(blob: str, updates: dict[str, str]) -> str:
+    """Replace selected env values while preserving comments and ordering."""
+    remaining = dict(updates)
+    output: list[str] = []
+    for line in blob.splitlines():
+        key = line.split("=", 1)[0].strip() if "=" in line else ""
+        if key in remaining:
+            output.append(f"{key}={remaining.pop(key)}")
+        else:
+            output.append(line)
+    output.extend(f"{key}={value}" for key, value in remaining.items())
+    return "\n".join(output) + "\n"
+
+
+def _read_remote_text(c: paramiko.SSHClient, path: str) -> str:
+    with get_sftp(c).open(path, "r") as handle:
+        data = handle.read()
+    return data.decode() if isinstance(data, bytes) else data
+
+
+def _write_remote_text_atomic(
+    c: paramiko.SSHClient,
+    path: str,
+    text: str,
+    mode: int = 0o600,
+) -> None:
+    sftp = get_sftp(c)
+    temporary = f"{path}.tmp-{time.time_ns()}"
+    with sftp.open(temporary, "w") as handle:
+        handle.write(text)
+    sftp.chmod(temporary, mode)
+    sftp.posix_rename(temporary, path)
+
+
+def patch_node_stability(c: paramiko.SSHClient, host: str) -> None:
+    """Atomically apply the stable policy/routing/DNS profile to a live node."""
+    template = json.loads((AGENT_DIR / "template.json").read_text())
+    live = json.loads(_read_remote_text(c, REMOTE_XRAY_CONFIG))
+    patched = apply_stability_profile(live, template)
+
+    # These are the data-plane identity and authorization boundaries. Abort
+    # locally before uploading if the patch would alter either one.
+    if patched.get("inbounds") != live.get("inbounds"):
+        raise SystemExit(f"[{host}] stability patch changed inbounds; aborting")
+    if patched.get("outbounds") != live.get("outbounds"):
+        raise SystemExit(f"[{host}] stability patch changed outbounds; aborting")
+
+    candidate_path = REMOTE_XRAY_CONFIG + ".candidate"
+    backup_path = (
+        REMOTE_XRAY_CONFIG
+        + ".backup-"
+        + datetime.now().strftime("%Y%m%dT%H%M%SZ")
+    )
+    agent_env = _read_remote_text(c, REMOTE_AGENT_ENV)
+    vpn_env = _read_remote_text(c, REMOTE_VPN_ENV)
+
+    _write_remote_text_atomic(
+        c,
+        candidate_path,
+        json.dumps(patched, indent=2) + "\n",
+    )
+    run(
+        c,
+        f"cp --preserve=mode,ownership,timestamps "
+        f"{shlex.quote(REMOTE_XRAY_CONFIG)} {shlex.quote(backup_path)}",
+        "backup live xray config",
+    )
+    run(
+        c,
+        "docker exec aegis-xray xray run -test "
+        "-c /data/xray-config.json.candidate",
+        "validate stability candidate",
+        timeout=60,
+    )
+
+    activated = False
+    try:
+        run(
+            c,
+            f"mv {shlex.quote(candidate_path)} {shlex.quote(REMOTE_XRAY_CONFIG)}",
+            "activate stability candidate",
+        )
+        activated = True
+        _write_remote_text_atomic(
+            c,
+            REMOTE_AGENT_ENV,
+            update_env_values(agent_env, {"XRAY_CONN_IDLE": "300"}),
+        )
+        _write_remote_text_atomic(
+            c,
+            REMOTE_VPN_ENV,
+            update_env_values(vpn_env, {"XRAY_CONN_IDLE": "300"}),
+        )
+        run(
+            c,
+            "cd /root/aegis/deploy/vps && "
+            "docker compose restart xray 2>&1 | tail -3",
+            "restart xray",
+            timeout=120,
+        )
+        health = run(
+            c,
+            "for attempt in $(seq 1 20); do "
+            "curl -fsS --max-time 2 http://127.0.0.1:8444/health && exit 0; "
+            "sleep 1; "
+            "done; exit 1",
+            "post-stability health",
+            timeout=60,
+        )
+    except BaseException:
+        if activated:
+            _write_remote_text_atomic(c, REMOTE_AGENT_ENV, agent_env)
+            _write_remote_text_atomic(c, REMOTE_VPN_ENV, vpn_env)
+            run(
+                c,
+                f"cp --preserve=mode,ownership,timestamps "
+                f"{shlex.quote(backup_path)} {shlex.quote(REMOTE_XRAY_CONFIG)}",
+                "restore xray config",
+            )
+            run(
+                c,
+                "cd /root/aegis/deploy/vps && "
+                "docker compose restart xray 2>&1 | tail -3",
+                "restart restored xray",
+                timeout=120,
+            )
+        raise
+
+    client_count = sum(
+        len(inbound.get("settings", {}).get("clients", []))
+        for inbound in patched.get("inbounds", [])
+    )
+    print(
+        f"  [{host}] stability profile active; "
+        f"{client_count} client records preserved; health={health.strip()}"
+    )
 
 
 def _upload_agent_sources(c: paramiko.SSHClient, host: str) -> None:
@@ -501,10 +679,6 @@ def split_migrate(c: paramiko.SSHClient, host: str) -> None:
 # Transport switch (xhttp <-> tcp)
 # ---------------------------------------------------------------------------
 
-# agent.env lives on the host via the vpn service's ./data/vpn:/data volume.
-REMOTE_AGENT_ENV = "/root/aegis/deploy/vps/data/vpn/agent.env"
-
-
 def _parse_env(blob: str) -> dict[str, str]:
     env: dict[str, str] = {}
     for line in blob.splitlines():
@@ -544,7 +718,7 @@ def set_network(
     if network == "xhttp":
         env.setdefault("XHTTP_PATH", "/")
         env["XHTTP_MODE"] = xhttp_mode
-        env.setdefault("XRAY_CONN_IDLE", "60")
+        env["XRAY_CONN_IDLE"] = "300"
     # ONE keypair per node, whatever the transport: entrypoint.sh builds every
     # inbound from PRIVATE_KEY/SHORT_ID. Selecting *_TCP here (as this used to for
     # tcp) published a public key whose private half the node never signs with —
@@ -650,7 +824,7 @@ def set_db_keys(main_c: paramiko.SSHClient, host: str, pubkey: str, sid: str) ->
 #   8765        mtg MTProto listen        (RESERVED — see provision_mtproxy)
 #
 XRAY_TCP_PORT = 2053
-XRAY_CONN_IDLE = 30
+XRAY_CONN_IDLE = 300
 # Hy2 now listens on UDP 443 with NO obfs, NO port hopping, BBR congestion (see
 # hysteria/config.template.yaml). The old high-port + salamander + Brutal setup
 # was dropped on RU mobile and bufferbloated CS latency.
@@ -1196,6 +1370,14 @@ def parse_args() -> argparse.Namespace:
              "on each patched node.",
     )
     p.add_argument(
+        "--patch-stability",
+        action="store_true",
+        help="Atomically apply the tested policy/routing/DNS stability profile "
+             "to each live Xray config, preserving clients and Reality identity. "
+             "Validates a candidate and keeps a rollback backup before one brief "
+             "Xray restart.",
+    )
+    p.add_argument(
         "--node", action="append", dest="nodes_list", metavar="IP:PASSWORD",
         help="Node to update (repeatable). Format: ip:password",
     )
@@ -1253,12 +1435,15 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    if not any((args.bot, args.nodes, args.patch_dns, args.mtproxy, args.set_network,
+    if not any((args.bot, args.nodes, args.patch_dns, args.patch_stability,
+                args.mtproxy, args.set_network,
                 args.split_migrate, args.provision_stack, args.renew_hy2_cert,
                 args.promote_pull, args.rollback_observe)):
-        raise SystemExit("Specify --bot, --nodes, --patch-dns, --mtproxy, --set-network, "
-                         "--split-migrate, --provision-stack, --renew-hy2-cert, "
-                         "--promote-pull, and/or --rollback-observe")
+        raise SystemExit(
+            "Specify --bot, --nodes, --patch-dns, --patch-stability, --mtproxy, "
+            "--set-network, --split-migrate, --provision-stack, "
+            "--renew-hy2-cert, --promote-pull, and/or --rollback-observe"
+        )
     if args.promote_pull or args.rollback_observe:
         if not args.main_password or args.server_id is None:
             raise SystemExit(
@@ -1287,8 +1472,16 @@ def main() -> None:
         raise SystemExit("--provision-stack requires at least one --node IP:PASSWORD")
     if args.provision_stack and not args.main_password:
         raise SystemExit("--provision-stack requires --main-password (to update the bot DB)")
-    if (args.nodes or args.mtproxy or args.patch_dns) and not args.nodes_list:
-        raise SystemExit("--nodes/--mtproxy/--patch-dns requires at least one --node")
+    if (
+        args.nodes
+        or args.mtproxy
+        or args.patch_dns
+        or args.patch_stability
+    ) and not args.nodes_list:
+        raise SystemExit(
+            "--nodes/--mtproxy/--patch-dns/--patch-stability requires at least "
+            "one --node"
+        )
     if args.mtproxy and not args.main_password:
         raise SystemExit("--mtproxy requires --main-password (to update the bot DB)")
     if args.split_migrate and not args.nodes_list:
@@ -1432,7 +1625,7 @@ def main() -> None:
 
     main_c: paramiko.SSHClient | None = None
 
-    if args.nodes or args.mtproxy or args.patch_dns:
+    if args.nodes or args.mtproxy or args.patch_dns or args.patch_stability:
         for node_str in args.nodes_list:
             parts = node_str.split(":")
             if args.mtproxy:
@@ -1454,6 +1647,8 @@ def main() -> None:
                     update_agent(c, ip)
                 if args.patch_dns:
                     patch_node_dns(c, ip)
+                if args.patch_stability:
+                    patch_node_stability(c, ip)
                 if args.mtproxy:
                     if main_c is None:
                         main_c = connect(args.main_host, args.main_password)
