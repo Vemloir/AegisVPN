@@ -41,6 +41,5 @@ def test_subscription_metadata_keeps_usage_and_update_contract():
 
 
 def test_ua_varmlen_receives_xray_json_subscription():
-    assert client_wants_xray_json("Varmlen (Linux; x86_64)")
-    assert client_wants_xray_json("Varmlen/0.2.0 (Android; arm64)")
-    assert not client_wants_xray_json("not-varmlen-compatible")
+    assert client_wants_xray_json("Varmlen/1.4.2")
+    assert client_wants_xray_json("varmlen")

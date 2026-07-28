@@ -164,17 +164,12 @@ _XRAY_JSON_CLIENTS = (
     "nekoray",
     "streisand",
     "foxray",
+    "varmlen",
 )
 
 
 def client_wants_xray_json(user_agent: str) -> bool:
-    normalized = user_agent.strip().lower()
-    # Current Varmlen has a stable, versionless UA; keep the legacy product
-    # token for already-installed clients. Anchor both forms so unrelated
-    # strings containing "varmlen" do not accidentally opt into Xray JSON.
-    if normalized.startswith(("varmlen ", "varmlen/")):
-        return True
-    return any(client in normalized for client in _XRAY_JSON_CLIENTS)
+    return any(client in user_agent.lower() for client in _XRAY_JSON_CLIENTS)
 
 
 async def subscription_response(request: web.Request, profile: str) -> web.Response:
