@@ -164,7 +164,7 @@ _XRAY_JSON_CLIENTS = (
     "nekoray",
     "streisand",
     "foxray",
-    "varmlen",
+    "ua varmlen",
 )
 
 
