@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+umask 077
 
 ENV_FILE="/data/agent.env"
 XRAY_CONFIG="${XRAY_CONFIG_PATH:-/etc/xray/config.json}"
@@ -72,7 +73,10 @@ if [ -z "$PUBLIC_KEY_TCP" ]; then
 fi
 SHORT_ID_TCP=$(python -c "import secrets; print(secrets.token_hex(8))")
 
-    cat <<EOF > "$ENV_FILE"
+    mkdir -p "$(dirname "$ENV_FILE")"
+    ENV_TEMP=$(mktemp "$(dirname "$ENV_FILE")/.agent.env.XXXXXX")
+    trap 'rm -f "$ENV_TEMP"' EXIT
+    cat <<EOF > "$ENV_TEMP"
 AGENT_TOKEN=$AGENT_TOKEN
 SHORT_ID=$SHORT_ID
 PRIVATE_KEY=$PRIVATE_KEY
@@ -94,8 +98,12 @@ XRAY_GRPC_PORT=$XRAY_GRPC_PORT
 XRAY_GRPC_SERVICE=$XRAY_GRPC_SERVICE
 XRAY_CONN_IDLE=$XRAY_CONN_IDLE
 EOF
+    chmod 600 "$ENV_TEMP"
+    sync -f "$ENV_TEMP"
+    mv -f "$ENV_TEMP" "$ENV_FILE"
+    sync -f "$(dirname "$ENV_FILE")"
+    trap - EXIT
 
-    echo "=== AGENT TOKEN: $AGENT_TOKEN ==="
     echo "=== PUBLIC KEY: $PUBLIC_KEY ==="
     echo "=== SHORT ID: $SHORT_ID ==="
 fi
@@ -108,12 +116,19 @@ mkdir -p "$(dirname "$XRAY_CONFIG")"
 
 # Keep existing config to preserve current clients across restarts.
 if [ ! -f "$XRAY_CONFIG" ]; then
+    CONFIG_TEMP=$(mktemp "$(dirname "$XRAY_CONFIG")/.config.json.XXXXXX")
+    trap 'rm -f "$CONFIG_TEMP"' EXIT
     sed -e "s/\"\$XRAY_PORT\"/$XRAY_PORT/g" \
         -e "s/\$REALITY_DEST/$REALITY_DEST/g" \
         -e "s/\$REALITY_SERVER_NAME/$REALITY_SERVER_NAME/g" \
         -e "s/\$PRIVATE_KEY/$PRIVATE_KEY/g" \
         -e "s/\$SHORT_ID/$SHORT_ID/g" \
-        "$TEMPLATE_FILE" > "$XRAY_CONFIG"
+        "$TEMPLATE_FILE" > "$CONFIG_TEMP"
+    chmod 600 "$CONFIG_TEMP"
+    sync -f "$CONFIG_TEMP"
+    mv -f "$CONFIG_TEMP" "$XRAY_CONFIG"
+    sync -f "$(dirname "$XRAY_CONFIG")"
+    trap - EXIT
 fi
 
 export XRAY_CONFIG
@@ -122,6 +137,7 @@ python - <<'PY'
 import copy
 import json
 import os
+import tempfile
 
 config_path = os.environ.get("XRAY_CONFIG") or os.environ.get("XRAY_CONFIG_PATH") or "/etc/xray/config.json"
 network = os.environ.get("XRAY_NETWORK", "tcp").strip().lower() or "tcp"
@@ -346,8 +362,26 @@ def ensure_warp(cfg: dict) -> None:
 
 ensure_warp(config)
 
-with open(config_path, "w", encoding="utf-8") as fh:
-    json.dump(config, fh, indent=2)
+config_directory = os.path.dirname(config_path) or "."
+descriptor, temporary_path = tempfile.mkstemp(prefix=".config-", dir=config_directory)
+try:
+    with os.fdopen(descriptor, "w", encoding="utf-8") as fh:
+        json.dump(config, fh, indent=2)
+        fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.chmod(temporary_path, 0o600)
+    os.replace(temporary_path, config_path)
+    directory = os.open(config_directory, os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+finally:
+    try:
+        os.unlink(temporary_path)
+    except FileNotFoundError:
+        pass
 PY
 
 if [ "$XRAY_RUN_MODE" = "internal" ]; then

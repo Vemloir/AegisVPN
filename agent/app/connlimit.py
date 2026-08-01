@@ -8,6 +8,7 @@ block rule, rebuilt every cycle so IPs that drop below the limit are released.
 import asyncio
 import json
 import os
+import tempfile
 
 from . import hysteria
 from .config import settings
@@ -40,15 +41,22 @@ def _load_overrides() -> None:
 
 
 def _write_overrides(values: dict[int, int]) -> None:
-    os.makedirs(os.path.dirname(_OVERRIDES_PATH), exist_ok=True)
-    tmp = _OVERRIDES_PATH + ".tmp"
+    directory_path = os.path.dirname(_OVERRIDES_PATH) or "."
+    os.makedirs(directory_path, mode=0o700, exist_ok=True)
+    descriptor, tmp = tempfile.mkstemp(prefix=".conn-limits-", dir=directory_path)
     try:
-        with open(tmp, "w") as fh:
+        with os.fdopen(descriptor, "w") as fh:
             json.dump({str(k): v for k, v in values.items()}, fh)
+            fh.write("\n")
             fh.flush()
             os.fsync(fh.fileno())
         os.chmod(tmp, 0o600)
         os.replace(tmp, _OVERRIDES_PATH)
+        directory = os.open(directory_path, os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     finally:
         try:
             os.remove(tmp)
