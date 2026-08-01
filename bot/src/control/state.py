@@ -2,7 +2,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -183,6 +183,18 @@ async def publish_snapshot(
 ) -> NodeSnapshot:
     if page_size < 1:
         raise ValueError("page_size must be positive")
+
+    # SQLite ignores SELECT ... FOR UPDATE. A no-op UPDATE acquires its single
+    # writer lock before generation/digest are read; PostgreSQL takes the row
+    # lock as well. This serializes the bot and siteapi publisher processes.
+    locked = await session.execute(
+        update(Server)
+        .where(Server.id == server_id)
+        .values(desired_generation=Server.desired_generation)
+        .returning(Server.id)
+    )
+    if locked.scalar_one_or_none() is None:
+        raise LookupError(f"server {server_id} does not exist")
 
     server = (await session.execute(select(Server).where(Server.id == server_id).with_for_update())).scalar_one()
     items = await build_desired_items(session, server_id)
