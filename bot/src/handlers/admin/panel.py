@@ -102,7 +102,7 @@ async def cq_admin_download_db(call: CallbackQuery):
     data = archive.read_bytes()
     await call.message.answer_document(  # type: ignore
         BufferedInputFile(data, filename=archive.name),
-        caption=f"Бекапп {datetime.now(UTC):%d.%m.%Y %H:%M} UTC ({len(data) // 1024} KiB)",
+        caption=f"Зашифрованный бэкап {datetime.now(UTC):%d.%m.%Y %H:%M} UTC ({len(data) // 1024} KiB)",
     )
 
 
