@@ -121,9 +121,7 @@ async def cq_admin_server_active_toggle(call: CallbackQuery, state: FSMContext):
     assert rendered is not None
     text, keyboard = rendered
     await call.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)  # type: ignore
-    await call.answer(
-        "Локация включена" if target else "Локация отключена — убрана у всех пользователей"
-    )
+    await call.answer("Локация включена" if target else "Локация отключена — убрана у всех пользователей")
 
 
 @router.callback_query(F.data.startswith("admin_server_allow_start:"))

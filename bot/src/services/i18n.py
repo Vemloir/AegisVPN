@@ -81,10 +81,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "locations_title": "Локации",
         "locations_intro": "Выберите локацию, чтобы настроить протокол и транспорт.",
         "locations_none": "Сейчас для вашей подписки нет доступных локаций.",
-        "location_no_alt": (
-            "Для этой локации доступен только стандартный транспорт. "
-            "Настройка появится позже."
-        ),
+        "location_no_alt": ("Для этой локации доступен только стандартный транспорт. Настройка появится позже."),
         "location_settings_title": "Настройки локации: {name}",
         "location_protocol_label": "Протокол",
         "location_transport_label": "Тип транспорта",
@@ -269,10 +266,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "locations_title": "Locations",
         "locations_intro": "Pick a location to configure its protocol and transport.",
         "locations_none": "There are currently no locations available for your subscription.",
-        "location_no_alt": (
-            "This location only offers the standard transport. "
-            "Configuration will be available later."
-        ),
+        "location_no_alt": ("This location only offers the standard transport. Configuration will be available later."),
         "location_settings_title": "Location settings: {name}",
         "location_protocol_label": "Protocol",
         "location_transport_label": "Transport type",
@@ -306,7 +300,7 @@ TEXTS: dict[str, dict[str, str]] = {
             "How to connect:\n\n"
             "1. Install an app: Happ, v2rayTun, v2rayNG, or another compatible (Xray-core) client.\n\n"
             "2. Open /subscription and copy your subscription link.\n\n"
-            "3. In the app, choose \"Add subscription\" (import by URL) and paste the link.\n\n"
+            '3. In the app, choose "Add subscription" (import by URL) and paste the link.\n\n'
             "4. Import the locations and connect.\n\n"
             "5. If the locations don't appear right away, refresh the subscription inside the app."
         ),

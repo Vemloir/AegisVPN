@@ -22,12 +22,8 @@ class ServerTransportPref(Base):
 
     __tablename__ = "server_transport_prefs"
 
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
-    )
-    server_id: Mapped[int] = mapped_column(
-        ForeignKey("servers.id", ondelete="CASCADE"), primary_key=True
-    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    server_id: Mapped[int] = mapped_column(ForeignKey("servers.id", ondelete="CASCADE"), primary_key=True)
     # "vless" (default) | "hy2" (future; never emitted until a Hy2 backend exists).
     protocol: Mapped[str] = mapped_column(String(16), default="vless")
     # "xhttp" (default) | "tcp". Only meaningful for protocol == "vless".

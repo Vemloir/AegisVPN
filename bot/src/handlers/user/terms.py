@@ -130,11 +130,7 @@ async def cmd_info(message: Message):
         return
     language = await get_user_language(message.from_user.id)
     github_link = f'<a href="{GITHUB_URL}">{t(language, "info_github_label")}</a>'
-    text = (
-        f"{t(language, 'info_about')}\n\n"
-        f"{await doc_links_block(language)}\n\n"
-        f"{github_link}"
-    )
+    text = f"{t(language, 'info_about')}\n\n{await doc_links_block(language)}\n\n{github_link}"
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=t(language, "info_site_button"), web_app=WebAppInfo(url=SITE_URL))],

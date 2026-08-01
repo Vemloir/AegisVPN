@@ -95,9 +95,7 @@ async def test_stale_tcp_pref_on_xhttp_only_server_is_omitted():
     user_id, server_id = await _seed(alt=False)
     async with async_session_maker() as session:
         # Set the pref directly (set_transport_pref would also store it).
-        session.add(
-            ServerTransportPref(user_id=user_id, server_id=server_id, protocol="vless", transport="tcp")
-        )
+        session.add(ServerTransportPref(user_id=user_id, server_id=server_id, protocol="vless", transport="tcp"))
         await session.commit()
     async with async_session_maker() as session:
         mapping = await SubscriptionService._transport_prefs_for_user(session, user_id, [server_id])

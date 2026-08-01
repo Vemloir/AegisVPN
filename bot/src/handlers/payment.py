@@ -180,9 +180,7 @@ async def pay_sbp(call: CallbackQuery):
         if not plan or not plan.is_active or not plan.rub_price:
             await call.answer(t(language, "plan_unavailable"), show_alert=True)
             return
-        user = (
-            await session.execute(select(User).where(User.tg_id == call.from_user.id))
-        ).scalar_one_or_none()
+        user = (await session.execute(select(User).where(User.tg_id == call.from_user.id))).scalar_one_or_none()
         if user is None:
             await call.answer(t(language, "plan_unavailable"), show_alert=True)
             return

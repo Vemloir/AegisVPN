@@ -205,18 +205,12 @@ class ServerAccessService:
                 for server in allowed_servers
             )
 
-            if (
-                link.is_synced
-                and NodeControlService.pushes_to(link.server)
-                and not shared_agent_still_allowed
-            ):
+            if link.is_synced and NodeControlService.pushes_to(link.server) and not shared_agent_still_allowed:
                 device_uuids = (
-                    await session.execute(
-                        select(Device.uuid).where(
-                            Device.subscription_id == subscription.id
-                        )
-                    )
-                ).scalars().all()
+                    (await session.execute(select(Device.uuid).where(Device.subscription_id == subscription.id)))
+                    .scalars()
+                    .all()
+                )
                 for client_uuid in (
                     subscription.client_uuid,
                     *device_uuids,

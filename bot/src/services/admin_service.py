@@ -50,13 +50,15 @@ class AdminService:
                 or 0
             )
             all_servers = (
-                await session.execute(select(Server).where(Server.is_active == True))  # noqa: E712
-            ).scalars().all()
+                (
+                    await session.execute(select(Server).where(Server.is_active == True))  # noqa: E712
+                )
+                .scalars()
+                .all()
+            )
             telemetry_payloads = {
                 telemetry.server_id: dict(telemetry.payload or {})
-                for telemetry in (
-                    await session.execute(select(NodeTelemetry))
-                ).scalars().all()
+                for telemetry in (await session.execute(select(NodeTelemetry))).scalars().all()
             }
 
         # Per-location traffic, read straight off the server row (accumulated by
@@ -88,7 +90,15 @@ class AdminService:
         xray_results = list(await asyncio.gather(*(fetch_xray_online(s) for s in all_servers)))
         nodes_online = sorted(xray_results, key=lambda x: x[1])
 
-        return AdminStats(users_count, active_subs, banned_users, nodes_online, traffic_per_server, traffic_total_up, traffic_total_down)
+        return AdminStats(
+            users_count,
+            active_subs,
+            banned_users,
+            nodes_online,
+            traffic_per_server,
+            traffic_total_up,
+            traffic_total_down,
+        )
 
     @staticmethod
     async def count_active_non_lifetime_subscriptions() -> int:

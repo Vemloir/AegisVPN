@@ -226,9 +226,7 @@ async def test_pull_subscription_link_is_built_from_outbound_telemetry(monkeypat
 
     assert len(pairs) == 1
     _, link = pairs[0]
-    assert link.startswith(
-        "vless://40000000-0000-0000-0000-000000000001@203.0.113.50:443?"
-    )
+    assert link.startswith("vless://40000000-0000-0000-0000-000000000001@203.0.113.50:443?")
     assert "pbk=public-key" in link
     assert "sid=short-id" in link
 

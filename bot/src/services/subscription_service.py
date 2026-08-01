@@ -39,9 +39,14 @@ _UA_MAC_VER_RE = re.compile(r"Mac OS X[/ ]([\d_]+)", re.IGNORECASE)
 # geosite:category-ru / geosite:cn (those .dat files blow the iOS 50 MB cap).
 # National TLDs + a couple of big RU services that aren't on a .ru TLD.
 _RU_CN_DIRECT_DOMAINS = [
-    "domain:ru", "domain:su", "domain:рф", "domain:moscow",
-    "domain:cn", "domain:中国",
-    "domain:vk.com", "domain:yandex.net",
+    "domain:ru",
+    "domain:su",
+    "domain:рф",
+    "domain:moscow",
+    "domain:cn",
+    "domain:中国",
+    "domain:vk.com",
+    "domain:yandex.net",
 ]
 
 # Split DNS. The rule that matters: a name whose traffic rides the tunnel must be
@@ -82,19 +87,31 @@ _XRAY_CLEAN_DNS = {
 }
 _XRAY_CLEAN_INBOUNDS = [
     {
-        "tag": "socks", "listen": "127.0.0.1", "port": 10808, "protocol": "socks",
+        "tag": "socks",
+        "listen": "127.0.0.1",
+        "port": 10808,
+        "protocol": "socks",
         "settings": {"auth": "noauth", "udp": True},
         "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"]},
     },
     {
-        "tag": "http", "listen": "127.0.0.1", "port": 10809, "protocol": "http",
+        "tag": "http",
+        "listen": "127.0.0.1",
+        "port": 10809,
+        "protocol": "http",
         "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"]},
     },
 ]
 # Private/reserved ranges as explicit CIDRs so the config never loads geoip.dat.
 _PRIVATE_CIDRS = [
-    "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
-    "169.254.0.0/16", "::1/128", "fc00::/7", "fe80::/10",
+    "127.0.0.0/8",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "169.254.0.0/16",
+    "::1/128",
+    "fc00::/7",
+    "fe80::/10",
 ]
 _XRAY_CLEAN_ROUTING = {
     # AsIs: never resolve a domain to an IP for matching, so geoip.dat is never
@@ -116,18 +133,12 @@ def _cascade_visible_servers(
 ) -> list[Server]:
     # An entry-only node must never be emitted as a direct exit. It appears only
     # after its enabled route has been acknowledged by the entry and all exits.
-    return [
-        server
-        for server in servers
-        if server.node_role != "entry" or server.id in route_labels_by_entry
-    ]
+    return [server for server in servers if server.node_role != "entry" or server.id in route_labels_by_entry]
 
 
 def _replace_link_label(link: str, label: str) -> str:
     parts = urlsplit(link)
-    return urlunsplit(
-        (parts.scheme, parts.netloc, parts.path, parts.query, label.strip())
-    )
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, label.strip()))
 
 
 class SubscriptionService:
@@ -160,10 +171,7 @@ class SubscriptionService:
     @staticmethod
     def resolve_protocol(server: Server, protocol: str | None) -> str:
         """Emit Hy2 only when both the user selected it and the node can serve it."""
-        if (
-            protocol == SubscriptionService.PROTOCOL_HY2
-            and getattr(server, "hy2_capable", False)
-        ):
+        if protocol == SubscriptionService.PROTOCOL_HY2 and getattr(server, "hy2_capable", False):
             return SubscriptionService.PROTOCOL_HY2
         return SubscriptionService.PROTOCOL_VLESS
 
@@ -229,9 +237,7 @@ class SubscriptionService:
         return urlunsplit(("https", "t.me", "/proxy", urlencode(query), ""))
 
     @staticmethod
-    async def get_transport_pref(
-        session: AsyncSession, user_id: int, server_id: int
-    ) -> tuple[str, str]:
+    async def get_transport_pref(session: AsyncSession, user_id: int, server_id: int) -> tuple[str, str]:
         """The stored (protocol, transport) for one location, or the default
         (vless, xhttp) when no row exists."""
         pref = await session.get(ServerTransportPref, (user_id, server_id))
@@ -250,10 +256,7 @@ class SubscriptionService:
         """Upsert a per-location preference. Selecting the plain default
         (vless/xhttp) deletes the row so 'no preference' stays the canonical
         representation of default behavior."""
-        if (
-            protocol == SubscriptionService.DEFAULT_PROTOCOL
-            and transport == SubscriptionService.DEFAULT_TRANSPORT
-        ):
+        if protocol == SubscriptionService.DEFAULT_PROTOCOL and transport == SubscriptionService.DEFAULT_TRANSPORT:
             await SubscriptionService.reset_transport_pref(session, user_id, server_id)
             return
         pref = await session.get(ServerTransportPref, (user_id, server_id))
@@ -283,9 +286,7 @@ class SubscriptionService:
         await session.commit()
 
     @staticmethod
-    async def _transport_prefs_for_user(
-        session: AsyncSession, user_id: int, server_ids: list[int]
-    ) -> dict[int, str]:
+    async def _transport_prefs_for_user(session: AsyncSession, user_id: int, server_ids: list[int]) -> dict[int, str]:
         """Map ``server_id -> concrete VLESS transport`` for this user's stored
         preferences, restricted to ``server_ids``. Only includes servers whose
         resolved transport differs from the byte-identical default, so the map is
@@ -295,13 +296,17 @@ class SubscriptionService:
         if not server_ids:
             return {}
         rows = (
-            await session.execute(
-                select(ServerTransportPref).where(
-                    ServerTransportPref.user_id == user_id,
-                    ServerTransportPref.server_id.in_(server_ids),
+            (
+                await session.execute(
+                    select(ServerTransportPref).where(
+                        ServerTransportPref.user_id == user_id,
+                        ServerTransportPref.server_id.in_(server_ids),
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         result: dict[int, str] = {}
         for pref in rows:
             server = await session.get(Server, pref.server_id)
@@ -313,9 +318,7 @@ class SubscriptionService:
         return result
 
     @staticmethod
-    async def _hy2_servers_for_user(
-        session: AsyncSession, user_id: int, server_ids: list[int]
-    ) -> set[int]:
+    async def _hy2_servers_for_user(session: AsyncSession, user_id: int, server_ids: list[int]) -> set[int]:
         """The subset of ``server_ids`` whose stored preference resolves to Hy2.
 
         A server is included only when the user picked protocol=hy2 AND the
@@ -325,23 +328,24 @@ class SubscriptionService:
         if not server_ids:
             return set()
         rows = (
-            await session.execute(
-                select(ServerTransportPref).where(
-                    ServerTransportPref.user_id == user_id,
-                    ServerTransportPref.server_id.in_(server_ids),
-                    ServerTransportPref.protocol == SubscriptionService.PROTOCOL_HY2,
+            (
+                await session.execute(
+                    select(ServerTransportPref).where(
+                        ServerTransportPref.user_id == user_id,
+                        ServerTransportPref.server_id.in_(server_ids),
+                        ServerTransportPref.protocol == SubscriptionService.PROTOCOL_HY2,
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         result: set[int] = set()
         for pref in rows:
             server = await session.get(Server, pref.server_id)
             if server is None:
                 continue
-            if (
-                SubscriptionService.resolve_protocol(server, pref.protocol)
-                == SubscriptionService.PROTOCOL_HY2
-            ):
+            if SubscriptionService.resolve_protocol(server, pref.protocol) == SubscriptionService.PROTOCOL_HY2:
                 result.add(pref.server_id)
         return result
 
@@ -533,19 +537,20 @@ class SubscriptionService:
         # devices, only the bare sub UUID synced, so existing devices created
         # before the node lost that location.)
         devices = (
-            await session.execute(
-                select(Device).where(
-                    Device.subscription_id == sub.id,
-                    Device.is_active == True,  # noqa: E712
-                    Device.is_suspended == False,  # noqa: E712
+            (
+                await session.execute(
+                    select(Device).where(
+                        Device.subscription_id == sub.id,
+                        Device.is_active == True,  # noqa: E712
+                        Device.is_suspended == False,  # noqa: E712
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         clients = [{"uuid": sub.client_uuid, "email": email, "expire_ms": 0}]
-        clients += [
-            {"uuid": d.uuid, "email": f"{email}_dev_{d.id}", "expire_ms": 0}
-            for d in devices
-        ]
+        clients += [{"uuid": d.uuid, "email": f"{email}_dev_{d.id}", "expire_ms": 0} for d in devices]
 
         async def sync_to_server(server: Server) -> tuple[int, bool]:
             if not NodeControlService.pushes_to(server):
@@ -554,9 +559,7 @@ class SubscriptionService:
             try:
                 success = await client.bulk_add(clients)
             except Exception as exc:
-                logger.error(
-                    f"Failed to sync sub {sub.id} ({len(clients)} clients) to server {server.id}: {exc}"
-                )
+                logger.error(f"Failed to sync sub {sub.id} ({len(clients)} clients) to server {server.id}: {exc}")
                 success = False
             return server.id, success
 
@@ -634,15 +637,11 @@ class SubscriptionService:
             session,
             {server.id for server in servers if server.node_role == "entry"},
         )
-        route_labels_by_entry = {
-            route.entry_server_id: route.label for route in routes
-        }
+        route_labels_by_entry = {route.entry_server_id: route.label for route in routes}
         servers = _cascade_visible_servers(servers, route_labels_by_entry)
 
         servers = sorted(servers, key=SubscriptionService.server_sort_key)
-        server_name_counts = Counter(
-            SubscriptionService.server_display_name(server).casefold() for server in servers
-        )
+        server_name_counts = Counter(SubscriptionService.server_display_name(server).casefold() for server in servers)
         duplicate_name_keys = {name for name, count in server_name_counts.items() if count > 1}
 
         effective_uuid = device_uuid or sub.client_uuid
@@ -651,15 +650,11 @@ class SubscriptionService:
         # the default (vless/xhttp) — i.e. byte-identical to the legacy path —
         # so an empty map leaves every server on its default transport.
         server_ids = [server.id for server in servers]
-        transport_by_server = await SubscriptionService._transport_prefs_for_user(
-            session, sub.user_id, server_ids
-        )
+        transport_by_server = await SubscriptionService._transport_prefs_for_user(session, sub.user_id, server_ids)
         # Locations the user pinned to Hysteria2 (only those that are actually
         # Hy2-capable; a stale/misconfigured pref is dropped so the vless path
         # below runs instead).
-        hy2_server_ids = await SubscriptionService._hy2_servers_for_user(
-            session, sub.user_id, server_ids
-        )
+        hy2_server_ids = await SubscriptionService._hy2_servers_for_user(session, sub.user_id, server_ids)
         # Cascade is deliberately client-facing VLESS only. Per-location Hy2
         # remains authoritative for direct locations and is ignored for entry
         # routes until a separate UDP cascade is designed.
@@ -688,9 +683,7 @@ class SubscriptionService:
             # /sub endpoint. Same auth (effective_uuid = device or sub UUID) as
             # vless, so suspension / conn-limit / re-issue key identically.
             if server.id in hy2_server_ids:
-                hy2 = SubscriptionService.build_hy2_link(
-                    server, effective_uuid, duplicate_name_keys
-                )
+                hy2 = SubscriptionService.build_hy2_link(server, effective_uuid, duplicate_name_keys)
                 if hy2:
                     return hy2
                 # Capability lost between pref-resolution and emission: fall back
@@ -922,10 +915,8 @@ class SubscriptionService:
         # authenticated, so revoke/expiry didn't actually cut off access. Pull
         # all device UUIDs (regardless of active/suspended) so nothing lingers.
         device_uuids = (
-            await session.execute(
-                select(Device.uuid).where(Device.subscription_id == sub.id)
-            )
-        ).scalars().all()
+            (await session.execute(select(Device.uuid).where(Device.subscription_id == sub.id))).scalars().all()
+        )
         uuids = [sub.client_uuid, *device_uuids]
 
         async def remove_from_server(server: Server) -> None:
@@ -1128,9 +1119,7 @@ class SubscriptionService:
         device: "Device",
     ) -> None:
         result = await session.execute(
-            select(Server)
-            .join(SubscriptionServer)
-            .where(SubscriptionServer.subscription_id == sub.id)
+            select(Server).join(SubscriptionServer).where(SubscriptionServer.subscription_id == sub.id)
         )
         servers = result.scalars().all()
         device.is_suspended = True
@@ -1167,9 +1156,7 @@ class SubscriptionService:
         device: "Device",
     ) -> None:
         result = await session.execute(
-            select(Server)
-            .join(SubscriptionServer)
-            .where(SubscriptionServer.subscription_id == sub.id)
+            select(Server).join(SubscriptionServer).where(SubscriptionServer.subscription_id == sub.id)
         )
         servers = result.scalars().all()
         device.is_active = False

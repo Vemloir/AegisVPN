@@ -32,8 +32,12 @@ async def set_base_plan(session: AsyncSession, plan_id: int) -> Plan | None:
 
 async def get_base_plan(session: AsyncSession) -> Plan | None:
     return (
-        await session.execute(select(Plan).where(Plan.is_base == True))  # noqa: E712
-    ).scalars().first()
+        (
+            await session.execute(select(Plan).where(Plan.is_base == True))  # noqa: E712
+        )
+        .scalars()
+        .first()
+    )
 
 
 def monthly_price(plan: Plan, *, stars: bool = False) -> float | None:

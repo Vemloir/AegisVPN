@@ -36,9 +36,7 @@ async def authenticate_node(request: Request) -> Server:
         )
 
     proxy_secret = request.headers.get("X-Aegis-Proxy-Secret", "")
-    fingerprint = normalize_fingerprint(
-        request.headers.get("X-Aegis-Node-Fingerprint", "")
-    )
+    fingerprint = normalize_fingerprint(request.headers.get("X-Aegis-Node-Fingerprint", ""))
     authorization = request.headers.get("Authorization", "")
     scheme, _, token = authorization.partition(" ")
     if not (

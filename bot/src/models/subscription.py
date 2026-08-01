@@ -33,9 +33,7 @@ class Subscription(Base):
     servers: Mapped[list["SubscriptionServer"]] = relationship(
         back_populates="subscription", cascade="all, delete-orphan"
     )
-    devices: Mapped[list["Device"]] = relationship(
-        back_populates="subscription", cascade="all, delete-orphan"
-    )
+    devices: Mapped[list["Device"]] = relationship(back_populates="subscription", cascade="all, delete-orphan")
 
 
 class SubscriptionServer(Base):

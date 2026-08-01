@@ -35,9 +35,7 @@ def test_subscription_metadata_keeps_usage_and_update_contract():
     assert headers["Profile-Title"] == "AegisVPN"
     assert headers["Profile-Update-Interval"] == "1"
     assert headers["Subscription-Ping-Onopen-Enabled"] == "1"
-    assert headers["Subscription-Userinfo"].startswith(
-        "upload=123; download=456; total=0; expire="
-    )
+    assert headers["Subscription-Userinfo"].startswith("upload=123; download=456; total=0; expire=")
 
 
 def test_ua_varmlen_receives_xray_json_subscription():

@@ -13,9 +13,7 @@ async def _column_names(table: str) -> set[str]:
 
 async def _table_names() -> set[str]:
     async with async_session_maker() as session:
-        result = await session.execute(
-            text("SELECT name FROM sqlite_master WHERE type = 'table'")
-        )
+        result = await session.execute(text("SELECT name FROM sqlite_master WHERE type = 'table'"))
         return {row[0] for row in result.fetchall()}
 
 

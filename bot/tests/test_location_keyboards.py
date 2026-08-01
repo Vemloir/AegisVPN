@@ -59,9 +59,7 @@ def test_protocol_chooser_enables_hy2_only_on_capable_node():
     ]
     assert "(текущий)" in _texts(capable)[0]
 
-    unavailable = location_protocol_keyboard(
-        "ru", 7, "vless", hy2_capable=False
-    )
+    unavailable = location_protocol_keyboard("ru", 7, "vless", hy2_capable=False)
     assert _callbacks(unavailable) == [
         "loc_proto_set:7:vless",
         "loc_hy2:7",
