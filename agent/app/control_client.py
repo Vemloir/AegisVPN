@@ -73,6 +73,8 @@ class ControlClient:
         timeout_seconds: float = 40,
         max_page_bytes: int = 1_048_576,
         max_snapshot_bytes: int = 64 * 1_048_576,
+        max_pages: int = 4096,
+        max_items: int = 1_000_000,
         agent_version: str = "0.1.0",
         capabilities: list[str] | None = None,
     ):
@@ -83,6 +85,8 @@ class ControlClient:
             raise ValueError("control URLs must use https")
         if max_page_bytes < 1 or max_snapshot_bytes < max_page_bytes:
             raise ValueError("invalid control response byte limits")
+        if max_pages < 1 or max_items < 1:
+            raise ValueError("invalid control snapshot count limits")
 
         self.urls = normalized_urls
         self.headers = {"Authorization": f"Bearer {token}"}
@@ -90,6 +94,8 @@ class ControlClient:
         self.timeout_seconds = timeout_seconds
         self.max_page_bytes = max_page_bytes
         self.max_snapshot_bytes = max_snapshot_bytes
+        self.max_pages = max_pages
+        self.max_items = max_items
         self.agent_version = agent_version
         self.capabilities = capabilities or []
         self._session: aiohttp.ClientSession | None = None
@@ -116,6 +122,8 @@ class ControlClient:
             timeout_seconds=settings.control_timeout_seconds,
             max_page_bytes=settings.control_max_page_bytes,
             max_snapshot_bytes=settings.control_max_snapshot_bytes,
+            max_pages=settings.control_max_pages,
+            max_items=settings.control_max_items,
             capabilities=["cascade-v2"],
         )
 
@@ -184,9 +192,7 @@ class ControlClient:
                 if len(response.body) > max_bytes:
                     raise ControlProtocolError("control response exceeds byte limit")
                 if response.status >= 500:
-                    last_error = ControlRequestError(
-                        f"control endpoint returned {response.status}"
-                    )
+                    last_error = ControlRequestError(f"control endpoint returned {response.status}")
                     continue
                 self._preferred_url = base_url
                 return response
@@ -205,10 +211,7 @@ class ControlClient:
 
     @staticmethod
     def _validate_schema_version(payload: Any) -> None:
-        if (
-            not isinstance(payload, dict)
-            or payload.get("schema_version") not in {1, 2}
-        ):
+        if not isinstance(payload, dict) or payload.get("schema_version") not in {1, 2}:
             raise ControlProtocolError("unsupported schema version")
 
     async def sync(self, applied: AppliedState) -> DesiredSnapshot | None:
@@ -226,9 +229,7 @@ class ControlClient:
         if response.status == 204:
             return None
         if response.status != 200:
-            raise ControlRequestError(
-                f"control sync rejected with status {response.status}"
-            )
+            raise ControlRequestError(f"control sync rejected with status {response.status}")
 
         manifest_payload = self._parse_json(response)
         self._validate_schema_version(manifest_payload)
@@ -236,6 +237,15 @@ class ControlClient:
             manifest = SnapshotManifest.model_validate(manifest_payload)
         except ValidationError as exc:
             raise ControlProtocolError("invalid snapshot manifest") from exc
+        if manifest.page_count > self.max_pages:
+            raise ControlProtocolError("snapshot page count exceeds limit")
+        if manifest.item_count > self.max_items:
+            raise ControlProtocolError("snapshot item count exceeds limit")
+        expected_pages = (
+            (manifest.item_count + manifest.page_size - 1) // manifest.page_size if manifest.item_count else 0
+        )
+        if manifest.page_count != expected_pages:
+            raise ControlProtocolError("snapshot pagination is inconsistent")
 
         items: list[dict] = []
         total_bytes = 0
@@ -243,17 +253,12 @@ class ControlClient:
         for page_index in range(manifest.page_count):
             page_response = await self._request_with_failover(
                 "GET",
-                (
-                    f"/api/node/v1/snapshots/{manifest.generation}"
-                    f"/pages/{page_index}"
-                ),
+                (f"/api/node/v1/snapshots/{manifest.generation}/pages/{page_index}"),
                 json_body=None,
                 max_bytes=self.max_page_bytes,
             )
             if page_response.status != 200:
-                raise ControlRequestError(
-                    f"snapshot page rejected with status {page_response.status}"
-                )
+                raise ControlRequestError(f"snapshot page rejected with status {page_response.status}")
             page_payload = self._parse_json(page_response)
             self._validate_schema_version(page_payload)
             try:
@@ -268,9 +273,7 @@ class ControlClient:
                 raise ControlProtocolError("snapshot page identity mismatch")
 
             page_items = [item.model_dump(mode="json") for item in page.items]
-            actual_page_digest = hashlib.sha256(
-                _canonical_json(page_items)
-            ).hexdigest()
+            actual_page_digest = hashlib.sha256(_canonical_json(page_items)).hexdigest()
             if actual_page_digest != page.page_digest:
                 raise ControlProtocolError("snapshot page digest mismatch")
             for item in page.items:
@@ -318,9 +321,7 @@ class ControlClient:
             max_bytes=64 * 1024,
         )
         if response.status != 200:
-            raise ControlRequestError(
-                f"control acknowledgement rejected with status {response.status}"
-            )
+            raise ControlRequestError(f"control acknowledgement rejected with status {response.status}")
 
     async def send_telemetry(
         self,
@@ -338,9 +339,7 @@ class ControlClient:
             max_bytes=64 * 1024,
         )
         if response.status != 200:
-            raise ControlRequestError(
-                f"control telemetry rejected with status {response.status}"
-            )
+            raise ControlRequestError(f"control telemetry rejected with status {response.status}")
 
     async def get_hy2_certificate(self) -> dict[str, str] | None:
         response = await self._request_with_failover(
@@ -352,9 +351,7 @@ class ControlClient:
         if response.status == 404:
             return None
         if response.status != 200:
-            raise ControlRequestError(
-                f"certificate endpoint rejected with status {response.status}"
-            )
+            raise ControlRequestError(f"certificate endpoint rejected with status {response.status}")
         payload = self._parse_json(response)
         required = {"certificate", "private_key", "hostname", "fingerprint"}
         if (

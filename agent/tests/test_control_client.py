@@ -240,6 +240,49 @@ async def test_client_fails_over_and_bounds_response_bytes():
         await bounded.sync(AppliedState(generation=0, digest=None))
 
 
+@pytest.mark.parametrize(
+    ("page_count", "item_count", "page_size", "message"),
+    [
+        (1001, 1001, 1, "page count"),
+        (1, 1_000_001, 1_000_001, "item count"),
+        (2, 1, 1, "pagination"),
+    ],
+)
+async def test_client_rejects_unbounded_or_inconsistent_manifest_before_fanout(
+    page_count,
+    item_count,
+    page_size,
+    message,
+):
+    calls: list[str] = []
+
+    async def request(_method, url, **_kwargs):
+        calls.append(url)
+        return _response(
+            {
+                "schema_version": 1,
+                "generation": 1,
+                "digest": "0" * 64,
+                "item_count": item_count,
+                "page_count": page_count,
+                "page_size": page_size,
+            }
+        )
+
+    client = ControlClient(
+        urls=["https://control.example"],
+        token="node-secret",
+        ssl_context=object(),
+        requester=request,
+        max_pages=1000,
+        max_items=1_000_000,
+    )
+
+    with pytest.raises(ControlProtocolError, match=message):
+        await client.sync(AppliedState(generation=0, digest=None))
+    assert len(calls) == 1
+
+
 def test_ssl_context_loads_control_ca_and_node_identity(monkeypatch):
     calls: list[tuple] = []
 

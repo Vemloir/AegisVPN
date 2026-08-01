@@ -64,6 +64,8 @@ class Settings(BaseSettings):
     control_timeout_seconds: int = 40
     control_max_page_bytes: int = 1_048_576
     control_max_snapshot_bytes: int = 64 * 1_048_576
+    control_max_pages: int = 4096
+    control_max_items: int = 1_000_000
 
     @field_validator(
         "xray_tcp_port",
