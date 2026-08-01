@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 from datetime import UTC, datetime, timedelta
 
@@ -8,6 +9,7 @@ from src.core.database import async_session_maker, engine
 from src.models import (
     Base,
     Device,
+    NodeSnapshot,
     NodeSnapshotPage,
     Server,
     Subscription,
@@ -169,9 +171,42 @@ async def test_snapshot_is_stable_paginated_and_changes_generation():
 
     assert changed.generation == 2
     assert all(len(page.items) <= 2 for page in pages)
-    assert all(
-        page.page_digest == hashlib.sha256(canonical_json(page.items)).hexdigest()
-        for page in pages
-    )
+    assert all(page.page_digest == hashlib.sha256(canonical_json(page.items)).hexdigest() for page in pages)
     all_items = [item for page in pages for item in page.items]
     assert changed.digest == hashlib.sha256(canonical_json(all_items)).hexdigest()
+
+
+async def test_concurrent_publishers_serialize_on_sqlite(monkeypatch):
+    server_id, _, _, _ = await _seed_state()
+    original = build_desired_items
+    second_reader = asyncio.Event()
+    readers = 0
+
+    async def overlap_readers(session, target_server_id):
+        nonlocal readers
+        readers += 1
+        if readers == 1:
+            try:
+                await asyncio.wait_for(second_reader.wait(), timeout=0.05)
+            except TimeoutError:
+                pass
+        else:
+            second_reader.set()
+        return await original(session, target_server_id)
+
+    monkeypatch.setattr("src.control.state.build_desired_items", overlap_readers)
+
+    async def publish_once():
+        async with async_session_maker() as session:
+            snapshot = await publish_snapshot(session, server_id, page_size=2)
+            await session.commit()
+            return snapshot.generation
+
+    results = await asyncio.gather(publish_once(), publish_once(), return_exceptions=True)
+
+    assert results == [1, 1]
+    async with async_session_maker() as session:
+        snapshots = (
+            (await session.execute(select(NodeSnapshot).where(NodeSnapshot.server_id == server_id))).scalars().all()
+        )
+    assert [snapshot.generation for snapshot in snapshots] == [1]
