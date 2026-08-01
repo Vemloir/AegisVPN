@@ -23,7 +23,11 @@ device's subscription. Pass --tcp-port 0 for an xhttp-only node.
 from __future__ import annotations
 
 import argparse
+import base64
+import getpass
+import hashlib
 import posixpath
+import secrets
 import stat
 import tempfile
 import time
@@ -66,81 +70,149 @@ REMOTE_RESYNC_SCRIPT = "/root/aegis/resync_server_by_id.py"
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Provision + register a new Aegis VPN server.")
+    p = argparse.ArgumentParser(
+        description="Provision + register a new Aegis VPN server."
+    )
     p.add_argument("--main-host", required=True, help="Main VPS holding the bot SQLite")
-    p.add_argument("--main-password", required=True)
+    p.add_argument("--main-username", default="root")
+    p.add_argument(
+        "--main-key-file",
+        type=Path,
+        help="SSH private key; otherwise prompt for password",
+    )
+    p.add_argument(
+        "--main-host-fingerprint", help="Expected SHA256 SSH host-key fingerprint"
+    )
     p.add_argument("--new-host", required=True, help="Fresh VPS IP/hostname")
-    p.add_argument("--new-password", required=True)
-    p.add_argument("--new-username", default="root",
-                   help="SSH user on the fresh VPS (default root). Cloud images that "
-                        "ship a non-root sudo account instead (e.g. OVH's 'ubuntu') are "
-                        "handled by bootstrapping root login from it first: root's password "
-                        "is set to --new-password and password SSH is enabled, then the rest "
-                        "of the provisioning runs as root unchanged.")
-    p.add_argument("--server-name", required=True,
-                   help="Display name with flag emoji at the start, e.g. '🇯🇵 Japan | Tokyo'")
-    p.add_argument("--server-domain", required=True,
-                   help="IP/hostname the client connects to (use bare IP, not sslip.io)")
+    p.add_argument(
+        "--new-key-file",
+        type=Path,
+        help="SSH private key; otherwise prompt for password",
+    )
+    p.add_argument(
+        "--new-host-fingerprint", help="Expected SHA256 SSH host-key fingerprint"
+    )
+    p.add_argument(
+        "--known-hosts",
+        type=Path,
+        default=Path("~/.ssh/known_hosts"),
+        help="OpenSSH known_hosts file (default: ~/.ssh/known_hosts)",
+    )
+    p.add_argument(
+        "--new-username",
+        default="root",
+        help="SSH user on the fresh VPS (default root). Non-root cloud users "
+        "are supported through sudo; root/password SSH is never enabled.",
+    )
+    p.add_argument(
+        "--server-name",
+        required=True,
+        help="Display name with flag emoji at the start, e.g. '🇯🇵 Japan | Tokyo'",
+    )
+    p.add_argument(
+        "--server-domain",
+        required=True,
+        help="IP/hostname the client connects to (use bare IP, not sslip.io)",
+    )
     p.add_argument("--agent-url", help="Defaults to http://<new-host>:8444")
     p.add_argument(
         "--control-url",
         action="append",
         required=True,
         help="Outbound node-control URL; repeat for failover. Must be HTTPS on "
-             "standard TCP/443, for example https://control.example.com.",
+        "standard TCP/443, for example https://control.example.com.",
     )
     p.add_argument(
         "--control-ca-dir",
         required=True,
         type=Path,
         help="Operator-only directory containing client-ca.crt/client-ca.key. "
-             "It is created on first use and must be kept outside the repository.",
+        "It is created on first use and must be kept outside the repository.",
     )
     # Everything below is a field the bot reads about a node. They used to be
     # unreachable from this script, so every new node silently landed on the
     # schema default and differed from the nodes already in service.
-    p.add_argument("--country-code", metavar="XX",
-                   help="ISO 3166-1 alpha-2 (FI, SE, DE, JP, US). The website's globe "
-                        "draws a location only if this is set; the bot serves it either way.")
-    p.add_argument("--subscription-group", default="safe", choices=["safe", "fast", "both"],
-                   help="Which subscription profile(s) show this node (default: safe). Match "
-                        "the nodes already in service — a mismatch here means the new location "
-                        "simply never appears for users on the other profile.")
-    p.add_argument("--access-mode", default="public", choices=["public", "restricted"],
-                   help="public = everyone; restricted = only users with an explicit grant "
-                        "(default: public)")
-    p.add_argument("--display-order", type=int, default=0,
-                   help="Sort position in the location list (default 0 = alphabetical fallback)")
-    p.add_argument("--xhttp-port", "--xray-port", dest="xhttp_port", default="443",
-                   help="XHTTP (primary VLESS+REALITY) inbound port; registered as the "
-                        "server's connect port in the bot DB (default 443). On a fresh IP "
-                        "whose :443 proves unreliable (common on flagged US/datacenter "
-                        "ranges — the reality ClientHello gets reset), set an alt-HTTPS port "
-                        "like 2083: the same port class as --tcp-port 2053, which connects "
-                        "reliably. (--xray-port is a back-compat alias.)")
-    p.add_argument("--reality-dest", required=True,
-                   help="REALITY dest, e.g. csc.fi:443 — a geo-matched, China-reachable "
-                        "TLS1.3 site. NO default (gateway.icloud.com is implausible on a "
-                        "datacenter IP and gets РКН-probed).")
-    p.add_argument("--reality-server-name", required=True,
-                   help="REALITY serverName / SNI, e.g. csc.fi — the geo-SNI for this "
-                        "node's location. No default.")
-    p.add_argument("--xray-network", default="xhttp", choices=["xhttp", "tcp"],
-                   help="Transport protocol for the primary inbound (default: xhttp)")
-    p.add_argument("--tcp-port", default="2053",
-                   help="TCP+VISION (alt VLESS+REALITY) inbound port on the SAME "
-                        "reality keypair (flow=xtls-rprx-vision), registered as the "
-                        "server's tcp_port in the bot DB (default 2053). Every fleet "
-                        "node serves this second transport; setting it makes the bot "
-                        "offer a transport choice for the node. Free to pick any port "
-                        "(it must differ from --xhttp-port). Use '0' to disable "
-                        "(xhttp-only node, the odd one out).")
-    p.add_argument("--no-warp", action="store_true",
-                   help="Skip registering a per-location Cloudflare WARP account "
-                        "(by default each node gets its own, used to route AI "
-                        "domains around VPS-range blocks).")
-    p.add_argument("--no-mtproxy", action="store_true",
-                   help="Skip setting up MTProxy (Telegram proxy) on this node.")
+    p.add_argument(
+        "--country-code",
+        metavar="XX",
+        help="ISO 3166-1 alpha-2 (FI, SE, DE, JP, US). The website's globe "
+        "draws a location only if this is set; the bot serves it either way.",
+    )
+    p.add_argument(
+        "--subscription-group",
+        default="safe",
+        choices=["safe", "fast", "both"],
+        help="Which subscription profile(s) show this node (default: safe). Match "
+        "the nodes already in service — a mismatch here means the new location "
+        "simply never appears for users on the other profile.",
+    )
+    p.add_argument(
+        "--access-mode",
+        default="public",
+        choices=["public", "restricted"],
+        help="public = everyone; restricted = only users with an explicit grant "
+        "(default: public)",
+    )
+    p.add_argument(
+        "--display-order",
+        type=int,
+        default=0,
+        help="Sort position in the location list (default 0 = alphabetical fallback)",
+    )
+    p.add_argument(
+        "--xhttp-port",
+        "--xray-port",
+        dest="xhttp_port",
+        default="443",
+        help="XHTTP (primary VLESS+REALITY) inbound port; registered as the "
+        "server's connect port in the bot DB (default 443). On a fresh IP "
+        "whose :443 proves unreliable (common on flagged US/datacenter "
+        "ranges — the reality ClientHello gets reset), set an alt-HTTPS port "
+        "like 2083: the same port class as --tcp-port 2053, which connects "
+        "reliably. (--xray-port is a back-compat alias.)",
+    )
+    p.add_argument(
+        "--reality-dest",
+        required=True,
+        help="REALITY dest, e.g. csc.fi:443 — a geo-matched, China-reachable "
+        "TLS1.3 site. NO default (gateway.icloud.com is implausible on a "
+        "datacenter IP and gets РКН-probed).",
+    )
+    p.add_argument(
+        "--reality-server-name",
+        required=True,
+        help="REALITY serverName / SNI, e.g. csc.fi — the geo-SNI for this "
+        "node's location. No default.",
+    )
+    p.add_argument(
+        "--xray-network",
+        default="xhttp",
+        choices=["xhttp", "tcp"],
+        help="Transport protocol for the primary inbound (default: xhttp)",
+    )
+    p.add_argument(
+        "--tcp-port",
+        default="2053",
+        help="TCP+VISION (alt VLESS+REALITY) inbound port on the SAME "
+        "reality keypair (flow=xtls-rprx-vision), registered as the "
+        "server's tcp_port in the bot DB (default 2053). Every fleet "
+        "node serves this second transport; setting it makes the bot "
+        "offer a transport choice for the node. Free to pick any port "
+        "(it must differ from --xhttp-port). Use '0' to disable "
+        "(xhttp-only node, the odd one out).",
+    )
+    p.add_argument(
+        "--no-warp",
+        action="store_true",
+        help="Skip registering a per-location Cloudflare WARP account "
+        "(by default each node gets its own, used to route AI "
+        "domains around VPS-range blocks).",
+    )
+    p.add_argument(
+        "--no-mtproxy",
+        action="store_true",
+        help="Skip setting up MTProxy (Telegram proxy) on this node.",
+    )
     return p.parse_args()
 
 
@@ -158,9 +230,46 @@ def parse_args() -> argparse.Namespace:
 _dir_cache: dict[int, set[str]] = {}  # sftp_id -> set of paths we've already ensured
 
 
-def connect(host: str, password: str, attempts: int = 6, username: str = "root") -> paramiko.SSHClient:
-    """Open an SSH session (root by default), retrying past rate-limit drops with
-    exponential backoff."""
+def _sha256_host_fingerprint(key) -> str:
+    digest = (
+        base64.b64encode(hashlib.sha256(key.asbytes()).digest()).decode().rstrip("=")
+    )
+    return f"SHA256:{digest}"
+
+
+class PinnedHostKeyPolicy:
+    """Accept an unknown host only when its out-of-band SHA-256 pin matches."""
+
+    def __init__(self, expected_fingerprint: str):
+        value = expected_fingerprint.strip()
+        self.expected = value if value.startswith("SHA256:") else f"SHA256:{value}"
+
+    def missing_host_key(self, client, hostname: str, key) -> None:
+        actual = _sha256_host_fingerprint(key)
+        if not secrets.compare_digest(actual, self.expected):
+            raise HostKeyVerificationError(
+                f"SSH host key fingerprint mismatch for {hostname}: expected {self.expected}, got {actual}"
+            )
+        if client is not None:
+            client.get_host_keys().add(hostname, key.get_name(), key)
+
+
+class HostKeyVerificationError(RuntimeError):
+    pass
+
+
+def connect(
+    host: str,
+    password: str | None,
+    attempts: int = 6,
+    username: str = "root",
+    *,
+    key_file: Path | None = None,
+    known_hosts: Path | None = None,
+    expected_fingerprint: str | None = None,
+    sudo_password: str | None = None,
+) -> paramiko.SSHClient:
+    """Open a host-key-verified SSH session, retrying rate-limit drops."""
     if paramiko is None:
         raise SystemExit(
             "paramiko is required for deploy/vps/add_server.py. Install it first, "
@@ -170,38 +279,87 @@ def connect(host: str, password: str, attempts: int = 6, username: str = "root")
     last: Exception | None = None
     for attempt in range(1, attempts + 1):
         client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.load_system_host_keys()
+        if known_hosts is not None:
+            resolved_known_hosts = known_hosts.expanduser()
+            if resolved_known_hosts.exists():
+                client.load_host_keys(str(resolved_known_hosts))
+        if expected_fingerprint:
+            client.set_missing_host_key_policy(
+                PinnedHostKeyPolicy(expected_fingerprint)
+            )
+        else:
+            client.set_missing_host_key_policy(paramiko.RejectPolicy())
         try:
             client.connect(
-                hostname=host, username=username, password=password,
-                timeout=60, banner_timeout=60, auth_timeout=60,
+                hostname=host,
+                username=username,
+                password=password,
+                key_filename=str(key_file.expanduser()) if key_file else None,
+                look_for_keys=key_file is None and password is None,
+                allow_agent=key_file is None and password is None,
+                timeout=60,
+                banner_timeout=60,
+                auth_timeout=60,
             )
+            client._aegis_username = username  # type: ignore[attr-defined]
+            client._aegis_sudo_password = sudo_password  # type: ignore[attr-defined]
             return client
+        except HostKeyVerificationError as exc:
+            client.close()
+            raise SystemExit(str(exc)) from exc
+        except paramiko.BadHostKeyException as exc:
+            client.close()
+            raise SystemExit(
+                f"SSH host key verification failed for {host}: {exc}"
+            ) from exc
         except (paramiko.SSHException, EOFError, OSError) as exc:
             last = exc
             try:
                 client.close()
             except Exception:
                 pass
+            if "known_hosts" in str(exc):
+                raise SystemExit(
+                    f"SSH host {host} is unknown. Add it to {known_hosts} only after verification "
+                    "or pass its provider-supplied --*-host-fingerprint."
+                ) from exc
             if attempt == attempts:
                 break
-            print(f"    ssh retry {attempt}/{attempts - 1} after {exc} (sleep {delay:.0f}s)")
+            print(
+                f"    ssh retry {attempt}/{attempts - 1} after {exc} (sleep {delay:.0f}s)"
+            )
             time.sleep(delay)
             delay = min(delay * 1.7, 45.0)
     raise SystemExit(f"could not reach {host} after {attempts} attempts: {last}")
 
 
-def exec_command(client: paramiko.SSHClient, command: str, timeout: int = 120) -> tuple[int, str, str]:
+def exec_command(
+    client: paramiko.SSHClient, command: str, timeout: int = 120
+) -> tuple[int, str, str]:
+    username = getattr(client, "_aegis_username", "root")
+    stdin_data: str | None = None
+    if username != "root":
+        command = f"sudo -S -p '' -- sh -c {shell_quote(command)}"
+        stdin_data = (getattr(client, "_aegis_sudo_password", None) or "") + "\n"
     stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
+    if stdin_data is not None:
+        stdin.write(stdin_data)
+        stdin.flush()
+        stdin.channel.shutdown_write()
     out = stdout.read().decode("utf-8", errors="replace")
     err = stderr.read().decode("utf-8", errors="replace")
     return stdout.channel.recv_exit_status(), out, err
 
 
-def run_or_die(client: paramiko.SSHClient, command: str, label: str, timeout: int = 120) -> str:
+def run_or_die(
+    client: paramiko.SSHClient, command: str, label: str, timeout: int = 120
+) -> str:
     code, out, err = exec_command(client, command, timeout=timeout)
     if code != 0:
-        raise SystemExit(f"{label} failed (exit {code}):\n{(err or out).strip()[-1000:]}")
+        raise SystemExit(
+            f"{label} failed (exit {code}):\n{(err or out).strip()[-1000:]}"
+        )
     return out
 
 
@@ -234,6 +392,22 @@ def ensure_remote_dir(sftp: paramiko.SFTPClient, remote_dir: str) -> None:
 
 def upload_file(client: paramiko.SSHClient, local_path: Path, remote_path: str) -> None:
     sftp = get_sftp(client)
+    if getattr(client, "_aegis_username", "root") != "root":
+        temp_path = f"/tmp/.aegis-upload-{secrets.token_hex(12)}"
+        sftp.put(str(local_path), temp_path)
+        mode = 0o755 if local_path.stat().st_mode & stat.S_IXUSR else 0o600
+        try:
+            run_or_die(
+                client,
+                f"install -D -m {mode:o} {shell_quote(temp_path)} {shell_quote(remote_path)}",
+                f"install {remote_path}",
+            )
+        finally:
+            try:
+                sftp.remove(temp_path)
+            except OSError:
+                pass
+        return
     ensure_remote_dir(sftp, posixpath.dirname(remote_path))
     sftp.put(str(local_path), remote_path)
     if local_path.stat().st_mode & stat.S_IXUSR:
@@ -242,6 +416,22 @@ def upload_file(client: paramiko.SSHClient, local_path: Path, remote_path: str) 
 
 def write_remote_script(client: paramiko.SSHClient, path: str, content: str) -> None:
     sftp = get_sftp(client)
+    if getattr(client, "_aegis_username", "root") != "root":
+        temp_path = f"/tmp/.aegis-script-{secrets.token_hex(12)}"
+        with sftp.file(temp_path, "w") as remote_file:
+            remote_file.write(content)
+        try:
+            run_or_die(
+                client,
+                f"install -D -m 0755 {shell_quote(temp_path)} {shell_quote(path)}",
+                f"install {path}",
+            )
+        finally:
+            try:
+                sftp.remove(temp_path)
+            except OSError:
+                pass
+        return
     ensure_remote_dir(sftp, posixpath.dirname(path))
     with sftp.file(path, "w") as remote_file:
         remote_file.write(content)
@@ -249,6 +439,7 @@ def write_remote_script(client: paramiko.SSHClient, path: str, content: str) -> 
 
 
 # --- agent payload ---------------------------------------------------------
+
 
 def upload_agent(client: paramiko.SSHClient) -> None:
     """Upload everything the agent's Dockerfile build context needs.
@@ -272,9 +463,6 @@ def upload_agent(client: paramiko.SSHClient) -> None:
 # --- docker bootstrap ------------------------------------------------------
 
 DOCKER_BOOTSTRAP = """#!/bin/sh
-# Install docker if not present. The official get.docker.com installer is the
-# safe choice across Debian 11/12/13 and Ubuntu — distro packages lag and
-# don't ship `docker compose` v2 (we need the plugin, not docker-compose).
 set -eu
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
     echo "docker already installed: $(docker --version)"
@@ -282,12 +470,40 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
 fi
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq curl ca-certificates >/dev/null
-curl -fsSL https://get.docker.com | sh >/tmp/get-docker.log 2>&1 || {
-    echo "docker install failed; tail of /tmp/get-docker.log:"
-    tail -20 /tmp/get-docker.log
-    exit 1
-}
+apt-get install -y -qq ca-certificates curl gpg >/dev/null
+. /etc/os-release
+SUITE=${UBUNTU_CODENAME:-$VERSION_CODENAME}
+case "$ID:$SUITE" in
+    debian:trixie) DIST_SUFFIX='debian.13~trixie' ;;
+    ubuntu:noble) DIST_SUFFIX='ubuntu.24.04~noble' ;;
+    ubuntu:resolute) DIST_SUFFIX='ubuntu.26.04~resolute' ;;
+    *) echo "unsupported Docker package target: $ID $VERSION_ID ($SUITE)" >&2; exit 1 ;;
+esac
+
+install -m 0755 -d /etc/apt/keyrings
+KEY_TMP=$(mktemp)
+trap 'rm -f "$KEY_TMP"' EXIT
+curl -fsSL "https://download.docker.com/linux/$ID/gpg" -o "$KEY_TMP"
+FINGERPRINT=$(gpg --batch --show-keys --with-colons "$KEY_TMP" | awk -F: '$1 == "fpr" {print $10; exit}')
+[ "$FINGERPRINT" = '9DC858229FC7DD38854AE2D88D81803C0EBFCD88' ] || {
+    echo "unexpected Docker repository signing key: $FINGERPRINT" >&2; exit 1; }
+install -m 0644 "$KEY_TMP" /etc/apt/keyrings/docker.asc
+cat > /etc/apt/sources.list.d/docker.sources <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/$ID
+Suites: $SUITE
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+apt-get update -qq
+apt-get install -y -qq --no-install-recommends \
+    "docker-ce=5:29.7.1-1~$DIST_SUFFIX" \
+    "docker-ce-cli=5:29.7.1-1~$DIST_SUFFIX" \
+    "containerd.io=2.2.6-1~$DIST_SUFFIX" \
+    "docker-buildx-plugin=0.36.0-1~$DIST_SUFFIX" \
+    "docker-compose-plugin=5.3.1-1~$DIST_SUFFIX" >/dev/null
+apt-mark hold docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null
 systemctl enable --now docker >/dev/null 2>&1 || true
 docker --version
 """
@@ -409,6 +625,7 @@ ls -la /root/aegis/deploy/vps/data/vpn/agent.env
 
 # --- parsing ---------------------------------------------------------------
 
+
 def parse_env(content: str) -> dict[str, str]:
     values: dict[str, str] = {}
     for line in content.splitlines():
@@ -418,7 +635,9 @@ def parse_env(content: str) -> dict[str, str]:
     return values
 
 
-def pick_reality_keys(env: dict[str, str], xray_network: str = "xhttp") -> tuple[str, str]:
+def pick_reality_keys(
+    env: dict[str, str], xray_network: str = "xhttp"
+) -> tuple[str, str]:
     """The node signs REALITY with ONE keypair, whatever the transport.
 
     entrypoint.sh builds every inbound — xhttp and tcp alike — from PRIVATE_KEY /
@@ -439,6 +658,7 @@ def pick_reality_keys(env: dict[str, str], xray_network: str = "xhttp") -> tuple
 
 # --- name/flag parsing -----------------------------------------------------
 
+
 def split_flag(name: str) -> tuple[str, str]:
     """Split a leading country-flag emoji from the server name.
 
@@ -446,14 +666,17 @@ def split_flag(name: str) -> tuple[str, str]:
     Returns (flag, display_name) — e.g. ('🇯🇵', 'Japan | Tokyo').
     If no flag is found the flag is empty and name is returned as-is."""
     s = name.strip()
-    if (len(s) >= 2
-            and 0x1F1E6 <= ord(s[0]) <= 0x1F1FF
-            and 0x1F1E6 <= ord(s[1]) <= 0x1F1FF):
+    if (
+        len(s) >= 2
+        and 0x1F1E6 <= ord(s[0]) <= 0x1F1FF
+        and 0x1F1E6 <= ord(s[1]) <= 0x1F1FF
+    ):
         return s[:2], s[2:].lstrip()
     return "", s
 
 
 # --- env exporting ---------------------------------------------------------
+
 
 def shell_quote(s: str) -> str:
     """Single-quote a string for /bin/sh. Handles emoji etc. without going
@@ -462,28 +685,36 @@ def shell_quote(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
 
 
-def enable_root_command(password: str) -> str:
-    """Shell command (run as a non-root sudo user) that gives us root SSH: set
-    root's password to ``password``, enable PermitRootLogin + PasswordAuthentication
-    (in sshd_config AND any cloud-init drop-in that overrides them), and restart
-    sshd. Idempotent. Piping the password into ``sudo -S`` works whether the sudo
-    account needs a password or is NOPASSWD (then the piped line is just ignored)."""
-    inner = (
-        f"echo {shell_quote('root:' + password)} | chpasswd && "
-        "sed -i 's/^#\\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && "
-        "sed -i 's/^#\\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && "
-        "find /etc/ssh/sshd_config.d -type f -exec sed -i "
-        "'s/^#\\?PasswordAuthentication.*/PasswordAuthentication yes/; "
-        "s/^#\\?PermitRootLogin.*/PermitRootLogin yes/' {} + 2>/dev/null; "
-        "(systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null)"
-    )
-    return f"echo {shell_quote(password)} | sudo -S -p '' sh -c {shell_quote(inner)}"
-
-
 # --- main flow -------------------------------------------------------------
+
 
 def main() -> int:
     args = parse_args()
+    known_hosts = args.known_hosts.expanduser()
+    main_password = None
+    if args.main_key_file is None:
+        main_password = getpass.getpass(
+            f"SSH password for {args.main_username}@{args.main_host}: "
+        )
+    new_password = None
+    if args.new_key_file is None:
+        new_password = getpass.getpass(
+            f"SSH password for {args.new_username}@{args.new_host}: "
+        )
+    main_sudo_password = None
+    if args.main_username != "root":
+        entered = getpass.getpass(
+            f"sudo password for {args.main_username}@{args.main_host} "
+            "(blank to reuse SSH password or for NOPASSWD): "
+        )
+        main_sudo_password = entered or main_password
+    new_sudo_password = None
+    if args.new_username != "root":
+        entered = getpass.getpass(
+            f"sudo password for {args.new_username}@{args.new_host} "
+            "(blank to reuse SSH password or for NOPASSWD): "
+        )
+        new_sudo_password = entered or new_password
     try:
         main_control_ip = ip_address(args.main_host)
     except ValueError as exc:
@@ -519,38 +750,46 @@ def main() -> int:
     # Open ONE session per host and hold it for the entire flow. The naive
     # version reconnected 4× (twice per host); fresh VPS sshd / fail2ban
     # would rate-limit the second connect within ~30s and the script died.
-    # Cloud images with a non-root sudo account (OVH 'ubuntu' etc.): bootstrap
-    # root SSH from it first, then everything below runs as root unchanged.
-    if args.new_username != "root":
-        print(f"[0/6] bootstrapping root login from {args.new_username}@{args.new_host}…")
-        boot_client = connect(args.new_host, args.new_password, username=args.new_username)
-        try:
-            run_or_die(boot_client, enable_root_command(args.new_password), "enable root", timeout=90)
-        finally:
-            try:
-                boot_client.close()
-            except Exception:
-                pass
-        time.sleep(2)  # let sshd finish restarting before the root connect
-
     print(f"[1/6] connecting to new VPS {args.new_host}…")
-    new_client = connect(args.new_host, args.new_password)
+    new_client = connect(
+        args.new_host,
+        new_password,
+        username=args.new_username,
+        key_file=args.new_key_file,
+        known_hosts=known_hosts,
+        expected_fingerprint=args.new_host_fingerprint,
+        sudo_password=new_sudo_password,
+    )
     main_client: paramiko.SSHClient | None = None
     server_id: int | None = None
     try:
         print("[2/6] installing docker + tuning host network (BBR/fq/PMTU)…")
-        write_remote_script(new_client, "/root/aegis/install_docker.sh", DOCKER_BOOTSTRAP)
-        out = run_or_die(new_client, "sh /root/aegis/install_docker.sh", "docker install", timeout=600)
+        write_remote_script(
+            new_client, "/root/aegis/install_docker.sh", DOCKER_BOOTSTRAP
+        )
+        out = run_or_die(
+            new_client,
+            "sh /root/aegis/install_docker.sh",
+            "docker install",
+            timeout=600,
+        )
         print("     " + out.strip().splitlines()[-1])
         write_remote_script(new_client, "/root/aegis/net_tuning.sh", NET_TUNING)
         # Best-effort: BBR may be unavailable on an exotic kernel; don't abort.
-        code, tout, terr = exec_command(new_client, "sh /root/aegis/net_tuning.sh", timeout=60)
-        print("     " + ((tout or terr).strip().splitlines() or ["(net tuning skipped)"])[-1])
+        code, tout, terr = exec_command(
+            new_client, "sh /root/aegis/net_tuning.sh", timeout=60
+        )
+        print(
+            "     "
+            + ((tout or terr).strip().splitlines() or ["(net tuning skipped)"])[-1]
+        )
 
         print("[3/6] uploading agent source + compose…")
         run_or_die(new_client, "mkdir -p /root/aegis/deploy/vps/data/vpn", "mkdir")
         upload_agent(new_client)
-        upload_file(new_client, COMPOSE_FILE, "/root/aegis/deploy/vps/docker-compose.yml")
+        upload_file(
+            new_client, COMPOSE_FILE, "/root/aegis/deploy/vps/docker-compose.yml"
+        )
         run_or_die(
             new_client,
             "install -d -m 0700 /root/aegis/deploy/vps/data/control/node",
@@ -596,9 +835,15 @@ def main() -> int:
             "restrict observe-mode Agent API",
         )
 
-        out = run_or_die(new_client, "cat /root/aegis/deploy/vps/data/vpn/agent.env", "read agent.env")
+        out = run_or_die(
+            new_client,
+            "cat /root/aegis/deploy/vps/data/vpn/agent.env",
+            "read agent.env",
+        )
         remote_env = parse_env(out)
-        public_key, short_id = pick_reality_keys(remote_env, xray_network=args.xray_network)
+        public_key, short_id = pick_reality_keys(
+            remote_env, xray_network=args.xray_network
+        )
         agent_token = remote_env.get("AGENT_TOKEN")
         if not agent_token:
             raise SystemExit("agent.env missing AGENT_TOKEN")
@@ -606,15 +851,27 @@ def main() -> int:
 
         if not args.no_warp:
             print("     registering a per-location WARP account…")
-            write_remote_script(new_client, "/root/aegis/warp_register.sh", WARP_REGISTER_SCRIPT)
+            write_remote_script(
+                new_client, "/root/aegis/warp_register.sh", WARP_REGISTER_SCRIPT
+            )
             # Best-effort: a WARP failure must not abort the deploy. The final
             # restart picks up agent.env's WARP_* via entrypoint ensure_warp().
-            code, wout, werr = exec_command(new_client, "sh /root/aegis/warp_register.sh", timeout=120)
+            code, wout, werr = exec_command(
+                new_client, "sh /root/aegis/warp_register.sh", timeout=120
+            )
             tail = (wout or werr).strip().splitlines()[-1:] or ["(no output)"]
             print("     " + tail[0])
 
         print(f"[5/6] registering server on main VPS {args.main_host}…")
-        main_client = connect(args.main_host, args.main_password)
+        main_client = connect(
+            args.main_host,
+            main_password,
+            username=args.main_username,
+            key_file=args.main_key_file,
+            known_hosts=known_hosts,
+            expected_fingerprint=args.main_host_fingerprint,
+            sudo_password=main_sudo_password,
+        )
         upload_file(main_client, MAIN_REGISTER_SCRIPT, REMOTE_REGISTER_SCRIPT)
         # All env values shell-quoted so emoji flags / spaces in names work
         # unchanged in the DB (no json.dumps escapes).
@@ -650,15 +907,23 @@ def main() -> int:
                 break
 
         if server_id is None:
-            print("[warn] couldn't parse server_id from register output; "
-                  "resync + restart still needs to happen manually.")
+            print(
+                "[warn] couldn't parse server_id from register output; "
+                "resync + restart still needs to happen manually."
+            )
             return 0
 
-        print(f"[6/6] resync user UUIDs to server {server_id}; live Xray API "
-              "keeps existing sessions intact…")
+        print(
+            f"[6/6] resync user UUIDs to server {server_id}; live Xray API "
+            "keeps existing sessions intact…"
+        )
         upload_file(main_client, MAIN_RESYNC_SCRIPT, REMOTE_RESYNC_SCRIPT)
-        out = run_or_die(main_client, f"python3 {REMOTE_RESYNC_SCRIPT} {server_id}",
-                         "resync", timeout=300)
+        out = run_or_die(
+            main_client,
+            f"python3 {REMOTE_RESYNC_SCRIPT} {server_id}",
+            "resync",
+            timeout=300,
+        )
         print("     " + out.strip())
 
         _, out, _ = exec_command(
@@ -686,7 +951,8 @@ def main() -> int:
                     f"cd /root/aegis/deploy/vps && "
                     f"docker compose --profile mtproxy run -d --name aegis-mtg "
                     f"--no-deps mtg run {mtproxy_secret} --bind 0.0.0.0:80 2>&1 | tail -2",
-                    "start mtg", timeout=60,
+                    "start mtg",
+                    timeout=60,
                 )
                 # Store secret AND port in the bot DB. Server.mtproxy_capable
                 # requires both — writing only the secret left mtproxy_port NULL,
@@ -696,16 +962,20 @@ def main() -> int:
                 update_cmd = (
                     f"docker exec aegis-bot python3 -c "
                     f"'import asyncio; from sqlalchemy import text; from src.core.database import async_session_maker\n"
-                    f"exec(\"\"\"async def q():\\n"
+                    f'exec("""async def q():\\n'
                     f"    async with async_session_maker() as s:\\n"
-                    f"        await s.execute(text(\\\"UPDATE servers SET mtproxy_secret=\\\\\\\"{mtproxy_secret}\\\\\\\", mtproxy_port=80 WHERE id={server_id}\\\"))\\n"
+                    f'        await s.execute(text(\\"UPDATE servers SET mtproxy_secret=\\\\\\"{mtproxy_secret}\\\\\\", mtproxy_port=80 WHERE id={server_id}\\"))\\n'
                     f"        await s.commit()\\n"
-                    f"        print(\\\"ok\\\")\\n"
-                    f"asyncio.run(q())\"\"\")'"
+                    f'        print(\\"ok\\")\\n'
+                    f'asyncio.run(q())""")\''
                 )
-                run_or_die(main_client, update_cmd, "save mtproxy_secret + port", timeout=30)
+                run_or_die(
+                    main_client, update_cmd, "save mtproxy_secret + port", timeout=30
+                )
                 print(f"     MTProxy ready — secret={mtproxy_secret[:8]}…")
-                print(f"     Link: https://t.me/proxy?server={args.server_domain}&port=80&secret={mtproxy_secret}")
+                print(
+                    f"     Link: https://t.me/proxy?server={args.server_domain}&port=80&secret={mtproxy_secret}"
+                )
             else:
                 print("     [warn] failed to generate MTProxy secret, skipping.")
     finally:
@@ -722,7 +992,9 @@ def main() -> int:
 
     print("\n✓ Done.")
     print(f"   Name: {server_flag} {server_name}")
-    print(f"   Host: {args.server_domain}:{args.xhttp_port}  (xhttp)  +  tcp+vision: {args.tcp_port}")
+    print(
+        f"   Host: {args.server_domain}:{args.xhttp_port}  (xhttp)  +  tcp+vision: {args.tcp_port}"
+    )
     print(f"   Agent URL: {agent_url}")
     print(f"   Server ID in bot DB: {server_id}")
     return 0

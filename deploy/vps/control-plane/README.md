@@ -51,9 +51,9 @@ certificate fingerprint in the bot database:
 ```bash
 python3 deploy/vps/add_server.py \
   --main-host 203.0.113.10 \
-  --main-password '...' \
+  --main-host-fingerprint SHA256:MAIN_HOST_KEY \
   --new-host 198.51.100.20 \
-  --new-password '...' \
+  --new-host-fingerprint SHA256:NEW_HOST_KEY \
   --server-name '🇫🇮 Finland | Helsinki' \
   --server-domain 198.51.100.20 \
   --country-code FI \
@@ -62,6 +62,12 @@ python3 deploy/vps/add_server.py \
   --control-url https://control.example.com \
   --control-ca-dir /secure/operator/aegis-control-ca
 ```
+
+The script prompts for passwords with `getpass`; SSH keys can be supplied with
+`--main-key-file` and `--new-key-file`. Unknown SSH host keys are rejected unless
+their SHA-256 fingerprint is explicitly pinned from the provider. A non-root
+`--new-username` is elevated per-command with `sudo`; provisioning never changes
+`PermitRootLogin` or `PasswordAuthentication`.
 
 The fixed `--main-host` IPv4 address is the only source permitted to reach the
 temporary Agent TCP/8444 endpoint. Xray TCP/443 and Hysteria UDP ports are not

@@ -251,9 +251,9 @@ Example:
 ```bash
 python deploy/vps/add_server.py \
   --main-host MAIN_SERVER_IP \
-  --main-password YOUR_MAIN_ROOT_PASSWORD \
+  --main-host-fingerprint SHA256:MAIN_HOST_KEY \
   --new-host NEW_SERVER_IP \
-  --new-password YOUR_NEW_ROOT_PASSWORD \
+  --new-host-fingerprint SHA256:NEW_HOST_KEY \
   --server-name "🇩🇪 Germany" \
   --server-domain NEW_SERVER_IP \
   --reality-dest example.org:443 \
@@ -261,6 +261,13 @@ python deploy/vps/add_server.py \
   --control-url https://control.example.com \
   --control-ca-dir /secure/operator/aegis-control-ca
 ```
+
+SSH passwords are requested through a hidden `getpass` prompt and never appear
+in argv or shell history. Prefer `--main-key-file` and `--new-key-file`. Host-key
+fingerprints must come from the VPS provider or another authenticated channel;
+an existing verified `~/.ssh/known_hosts` entry can be used instead. Cloud-image
+users such as `ubuntu` are supported through `sudo` without enabling root login
+or password authentication.
 
 The flag emoji prefix in `--server-name` is parsed automatically.
 
