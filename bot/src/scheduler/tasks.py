@@ -503,26 +503,57 @@ async def _probe_xray_port(host: str, port: int, timeout: float = 4.0) -> bool:
         return False
 
 
-async def _check_one(server: Server) -> tuple[bool, str, int | None]:
+async def _check_one(
+    server: Server,
+    *,
+    telemetry: NodeTelemetry | None = None,
+    now: datetime | None = None,
+) -> tuple[bool, str, int | None]:
     """Return (ok, reason, clients) for a single server."""
-    client = AgentClient(server.agent_url, server.agent_token)
-    agent_ok = False
-    clients = None
-    reason = ""
-    try:
-        health = await client.get_health()
-        agent_ok = health.get("status") == "ok"
-        clients = health.get("clients")
-        if not agent_ok:
-            reason = f"agent status={health.get('status')!r}"
-    except Exception as exc:
-        reason = f"agent unreachable ({type(exc).__name__})"
+    clients: int | None = None
+    reasons: list[str] = []
+    if server.control_mode == "pull":
+        current_time = now or datetime.now(UTC).replace(tzinfo=None)
+        observed_times = [
+            value
+            for value in (
+                server.control_last_seen_at,
+                telemetry.received_at if telemetry is not None else None,
+            )
+            if value is not None
+        ]
+        freshest = max(observed_times) if observed_times else None
+        max_age = timedelta(seconds=max(1.0, settings.node_control_health_max_age_seconds))
+        if freshest is None or current_time - freshest > max_age:
+            reasons.append("control heartbeat/telemetry stale")
+        if int(server.desired_generation or 0) != int(server.applied_generation or 0):
+            reasons.append(
+                f"generation desired={server.desired_generation or 0} applied={server.applied_generation or 0}"
+            )
+        if server.control_last_error:
+            reasons.append(f"control error={server.control_last_error}")
+        if telemetry is not None:
+            online = (telemetry.payload or {}).get("online_emails")
+            if isinstance(online, list):
+                clients = len(online)
+        agent_ok = not reasons
+    else:
+        client = AgentClient(server.agent_url, server.agent_token)
+        agent_ok = False
+        try:
+            health = await client.get_health()
+            agent_ok = health.get("status") == "ok"
+            clients = health.get("clients")
+            if not agent_ok:
+                reasons.append(f"agent status={health.get('status')!r}")
+        except Exception as exc:
+            reasons.append(f"agent unreachable ({type(exc).__name__})")
 
     xray_ok = await _probe_xray_port(server.host, server.port)
     if not xray_ok:
-        reason = (reason + "; " if reason else "") + f"xray port {server.port} closed"
+        reasons.append(f"xray port {server.port} closed")
 
-    return agent_ok and xray_ok, reason, clients
+    return agent_ok and xray_ok, "; ".join(reasons), clients
 
 
 async def check_servers_health(bot: Bot):
@@ -530,16 +561,30 @@ async def check_servers_health(bot: Bot):
     async with async_session_maker() as session:
         result = await session.execute(select(Server).where(Server.is_active == True))
         servers = result.scalars().all()
+        telemetry_by_server = {
+            row.server_id: row
+            for row in (
+                await session.execute(
+                    select(NodeTelemetry).where(NodeTelemetry.server_id.in_([server.id for server in servers]))
+                )
+            )
+            .scalars()
+            .all()
+        }
 
-    for server in servers:
-        ok, reason, clients = await _check_one(server)
+    semaphore = asyncio.Semaphore(8)
 
-        # On first failure do an immediate retry after a short pause to avoid
-        # alerting on transient blips (brief network hiccup, sshd rate-limit).
-        if not ok:
-            await asyncio.sleep(3)
-            ok, reason, clients = await _check_one(server)
+    async def check_with_retry(server: Server) -> tuple[Server, bool, str, int | None]:
+        async with semaphore:
+            telemetry = telemetry_by_server.get(server.id)
+            ok, reason, clients = await _check_one(server, telemetry=telemetry)
+            if not ok:
+                await asyncio.sleep(3)
+                ok, reason, clients = await _check_one(server, telemetry=telemetry)
+            return server, ok, reason, clients
 
+    results = await asyncio.gather(*(check_with_retry(server) for server in servers))
+    for server, ok, reason, clients in results:
         was_down = server.id in _down_servers
         if ok:
             _fail_counts.pop(server.id, None)
