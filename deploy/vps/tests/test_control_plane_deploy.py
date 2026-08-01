@@ -343,6 +343,7 @@ def test_warp_routes_microsoft_services_on_every_config_rebuild():
     assert '"geosite:category-games"' in legacy_setup
     assert "rules.insert(api_idx + 1, games_direct_rule)" in entrypoint
     assert "rules.insert(api_idx + 2, warp_domains_rule)" in entrypoint
+    assert "elif existing_warp is not None:" in entrypoint
 
 
 def test_stability_patch_preserves_data_plane_identity_and_clients():
