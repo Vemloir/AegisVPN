@@ -337,6 +337,25 @@ def test_update_client_rejects_unknown_ssh_hosts():
     assert "AutoAddPolicy" not in jump_source
 
 
+def test_agent_update_refuses_legacy_topology_before_upload(monkeypatch):
+    uploaded = False
+
+    def fake_run(*_args, **_kwargs):
+        return "missing\n"
+
+    def fake_upload(*_args, **_kwargs):
+        nonlocal uploaded
+        uploaded = True
+
+    monkeypatch.setattr(update_script, "run", fake_run)
+    monkeypatch.setattr(update_script, "_upload_agent_sources", fake_upload)
+
+    with pytest.raises(SystemExit, match="split-migrate"):
+        update_script.update_agent(object(), "203.0.113.10")
+
+    assert uploaded is False
+
+
 def test_warp_routes_microsoft_services_on_every_config_rebuild():
     entrypoint = (ROOT / "agent/entrypoint.sh").read_text()
     legacy_setup = (ROOT / "deploy/vps/setup_warp.py").read_text()
@@ -452,21 +471,24 @@ def test_agent_update_uploads_current_compose_before_recreate(monkeypatch):
         update_script,
         "run",
         lambda actual_client, command, label="", timeout=120: (
-            events.append(("run", actual_client, command, label, timeout)) or ""
+            events.append(("run", actual_client, command, label, timeout))
+            or ("split" if label == "check split topology" else "")
         ),
     )
 
     update_script.update_agent(client, "192.0.2.10")
 
-    assert events[0] == ("agent_sources", client, "192.0.2.10")
-    assert events[1] == (
+    assert events[0][0] == "run"
+    assert events[0][3] == "check split topology"
+    assert events[1] == ("agent_sources", client, "192.0.2.10")
+    assert events[2] == (
         "upload",
         client,
         update_script.COMPOSE_LOCAL,
         update_script.REMOTE_COMPOSE,
     )
-    assert events[2][0] == "run"
-    assert events[2][3] == "agent rebuild"
+    assert events[3][0] == "run"
+    assert events[3][3] == "agent rebuild"
 
 
 def test_stability_rollout_validates_candidate_before_restart(monkeypatch):

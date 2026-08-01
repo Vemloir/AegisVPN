@@ -597,6 +597,18 @@ def update_agent(c: paramiko.SSHClient, host: str) -> None:
     `up --no-deps agent` still does not touch Xray or unrelated services. Run
     --split-migrate once first to create the split.
     """
+    topology = run(
+        c,
+        "docker inspect aegis-xray >/dev/null 2>&1 && printf split || printf missing",
+        "check split topology",
+        timeout=30,
+    ).strip()
+    if topology != "split":
+        raise SystemExit(
+            f"[{host}] refusing agent-only update: split Xray container is missing; "
+            "run --split-migrate first"
+        )
+
     _upload_agent_sources(c, host)
     print(f"  [{host}] uploading current docker-compose.yml…")
     upload(c, COMPOSE_LOCAL, REMOTE_COMPOSE)
