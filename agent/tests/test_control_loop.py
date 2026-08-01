@@ -121,6 +121,34 @@ async def test_apply_acknowledges_only_successful_reconciliation(monkeypatch, tm
     ]
 
 
+async def test_successful_cycle_records_control_activity(monkeypatch, tmp_path):
+    stop = asyncio.Event()
+    client = FakeClient(snapshot=None, stop_event=stop)
+    monkeypatch.setattr(
+        loop_module,
+        "_runtime_status",
+        loop_module.ControlRuntimeStatus(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        loop_module,
+        "_TELEMETRY_SEQUENCE_PATH",
+        str(tmp_path / "sequence"),
+    )
+
+    await loop_module.control_loop(
+        stop,
+        client=client,
+        mode="apply",
+        telemetry_builder=lambda result: _async_value({}),
+    )
+
+    status = loop_module.control_readiness()
+    assert status["last_sync_at"] is not None
+    assert status["last_telemetry_at"] is not None
+    assert status["last_error_type"] is None
+
+
 async def test_errors_back_off_with_jitter_and_do_not_log_details(
     monkeypatch,
     capsys,
@@ -205,6 +233,33 @@ async def test_cached_snapshot_is_reconciled_when_control_is_unavailable(
     assert reconciled == [5]
 
 
+async def test_cached_applied_state_cannot_reauthorize_pending_revocation(
+    monkeypatch,
+):
+    cached = AppliedState(
+        generation=5,
+        digest="5" * 64,
+        items=_snapshot().items,
+    )
+    reconciled: list[int] = []
+    monkeypatch.setattr(loop_module, "load_applied_state", lambda: cached)
+    monkeypatch.setattr(
+        loop_module,
+        "load_pending_revocations",
+        lambda: {"user_1_sub_1"},
+        raising=False,
+    )
+
+    async def fake_reconcile(snapshot, *, observe):
+        reconciled.append(snapshot.generation)
+        raise AssertionError("stale applied state must not be reconciled")
+
+    monkeypatch.setattr(loop_module, "reconcile_snapshot", fake_reconcile)
+
+    assert await loop_module._reconcile_cached_state("apply") is None
+    assert reconciled == []
+
+
 async def _async_value(value):
     return value
 
@@ -212,6 +267,42 @@ async def _async_value(value):
 async def test_off_mode_starts_no_control_task(monkeypatch):
     monkeypatch.setattr(loop_module.settings, "control_mode", "off")
     assert loop_module.start_control_task() is None
+
+
+async def test_supervisor_restarts_after_unexpected_control_loop_failure(
+    monkeypatch,
+):
+    stop = asyncio.Event()
+    calls = 0
+    sleeps: list[float] = []
+
+    async def runner(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ValueError("invalid control credentials")
+        stop.set()
+
+    async def sleep(delay):
+        sleeps.append(delay)
+
+    monkeypatch.setattr(
+        loop_module,
+        "_runtime_status",
+        loop_module.ControlRuntimeStatus(),
+        raising=False,
+    )
+
+    await loop_module.supervise_control_loop(
+        stop,
+        mode="apply",
+        sleep=sleep,
+        runner=runner,
+    )
+
+    assert calls == 2
+    assert sleeps == [1.0]
+    assert loop_module.control_readiness()["last_error_type"] == "ValueError"
 
 
 def test_runtime_state_is_outside_read_only_credential_mount():
@@ -266,10 +357,7 @@ async def test_telemetry_carries_safe_and_fast_subscription_templates(monkeypatc
 
     payload = await loop_module._build_telemetry(None)
 
-    templates = {
-        template["profile"]: template
-        for template in payload["subscription_templates"]
-    }
+    templates = {template["profile"]: template for template in payload["subscription_templates"]}
     assert templates["safe"]["port"] == 443
     assert ["type", "xhttp"] in templates["safe"]["query"]
     assert templates["fast"]["port"] == 2053

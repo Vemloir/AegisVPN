@@ -26,6 +26,7 @@ from .xray import (
 )
 
 _APPLIED_STATE_PATH = "/data/node-control/applied-state.json"
+_PENDING_REVOCATIONS_PATH = "/data/node-control/pending-revocations.json"
 
 
 class ReconcileError(RuntimeError):
@@ -88,6 +89,57 @@ def save_applied_state(state: AppliedState) -> None:
     )
 
 
+def load_pending_revocations() -> set[str]:
+    try:
+        with open(_PENDING_REVOCATIONS_PATH) as file:
+            payload = json.load(file)
+    except FileNotFoundError:
+        return set()
+    except (OSError, ValueError, TypeError) as exc:
+        raise ReconcileError("invalid pending revocations journal") from exc
+    emails = payload.get("emails") if isinstance(payload, dict) else None
+    if not isinstance(emails, list) or not all(isinstance(email, str) and email for email in emails):
+        raise ReconcileError("invalid pending revocations journal")
+    return set(emails)
+
+
+def save_pending_revocations(values: set[str]) -> None:
+    _atomic_write_json(
+        _PENDING_REVOCATIONS_PATH,
+        {"emails": sorted(values)},
+    )
+
+
+def _configured_emails(config: dict) -> set[str]:
+    return {
+        str(email)
+        for inbound in list_vless_inbounds(config)
+        for record in inbound.get("settings", {}).get("clients", [])
+        if (email := record.get("email"))
+    }
+
+
+async def retry_pending_revocations(config: dict | None = None) -> bool:
+    """Retry durable Hysteria kicks that are safe under current auth state.
+
+    An email still present in the current Xray config is authorized and must not
+    be cleared from the journal by a kick: it could immediately reconnect. Such
+    entries remain pending until an authoritative reconcile removes them or a
+    newer desired state explicitly re-authorizes them.
+    """
+    pending = load_pending_revocations()
+    if not pending:
+        return True
+    current = config if config is not None else await get_xray_config()
+    hysteria.refresh_from_config(current)
+    safe_to_kick = pending - _configured_emails(current)
+    if safe_to_kick and not await hysteria.kick(sorted(safe_to_kick)):
+        return False
+    remaining = pending - safe_to_kick
+    save_pending_revocations(remaining)
+    return not remaining
+
+
 def _record_projection(record: dict) -> dict:
     projected = {
         "id": record.get("id"),
@@ -119,11 +171,7 @@ def _desired_parts(
             )
         elif isinstance(item, DesiredCascadeRoute):
             routes.append(item)
-    overrides = {
-        item.user_id: item.limit
-        for item in snapshot.items
-        if isinstance(item, DesiredConnLimit)
-    }
+    overrides = {item.user_id: item.limit for item in snapshot.items if isinstance(item, DesiredConnLimit)}
     return clients, overrides, routes
 
 
@@ -141,6 +189,9 @@ async def reconcile_snapshot(
 
     async with config_lock:
         config = await get_xray_config()
+        desired_emails = {client.email for client in desired_clients}
+        pending_revocations = load_pending_revocations()
+        effective_pending = pending_revocations - desired_emails
         cascade_changed = cascade.apply_cascade_routes(config, desired_routes)
         additions: list[tuple[dict, dict]] = []
         removals: list[tuple[str, str]] = []
@@ -148,26 +199,14 @@ async def reconcile_snapshot(
         config_changed = cascade_changed
 
         for inbound in list_vless_inbounds(config):
-            existing = list(
-                inbound.setdefault("settings", {}).setdefault("clients", [])
-            )
-            existing_by_uuid = {
-                record.get("id"): record
-                for record in existing
-                if record.get("id")
-            }
-            desired_records = [
-                build_client_record(item.uuid, item.email, inbound)
-                for item in desired_clients
-            ]
+            existing = list(inbound.setdefault("settings", {}).setdefault("clients", []))
+            existing_by_uuid = {record.get("id"): record for record in existing if record.get("id")}
+            desired_records = [build_client_record(item.uuid, item.email, inbound) for item in desired_clients]
             desired_by_uuid = {record["id"]: record for record in desired_records}
 
             for uuid, record in existing_by_uuid.items():
                 desired_record = desired_by_uuid.get(uuid)
-                if (
-                    desired_record is not None
-                    and _record_projection(record) == desired_record
-                ):
+                if desired_record is not None and _record_projection(record) == desired_record:
                     continue
                 email = record.get("email")
                 tag = inbound.get("tag")
@@ -177,10 +216,7 @@ async def reconcile_snapshot(
 
             for uuid, desired_record in desired_by_uuid.items():
                 existing_record = existing_by_uuid.get(uuid)
-                if (
-                    existing_record is not None
-                    and _record_projection(existing_record) == desired_record
-                ):
+                if existing_record is not None and _record_projection(existing_record) == desired_record:
                     continue
                 additions.append((inbound, desired_record))
 
@@ -195,7 +231,13 @@ async def reconcile_snapshot(
             or previous.digest != snapshot.digest
             or previous.items != snapshot.items
         )
-        changed = config_changed or override_changed or state_changed
+        changed = (
+            config_changed
+            or override_changed
+            or state_changed
+            or bool(effective_pending)
+            or effective_pending != pending_revocations
+        )
         result = ReconcileResult(
             success=True,
             changed=changed,
@@ -205,6 +247,11 @@ async def reconcile_snapshot(
         )
         if observe or not changed:
             return result
+
+        newly_revoked = removed_emails - desired_emails
+        pending_revocations = effective_pending | newly_revoked
+        if pending_revocations != load_pending_revocations():
+            save_pending_revocations(pending_revocations)
 
         if config_changed:
             await save_xray_config(config)
@@ -222,10 +269,8 @@ async def reconcile_snapshot(
             if not await wait_for_xray_ready():
                 raise ReconcileError("live Xray reconciliation failed")
 
-        if config_changed:
-            hysteria.refresh_from_config(config)
-            if removed_emails and not await hysteria.kick(sorted(removed_emails)):
-                raise ReconcileError("Hysteria session removal failed")
+        if pending_revocations and not await retry_pending_revocations(config):
+            raise ReconcileError("Hysteria session removal failed")
 
         try:
             if override_changed:

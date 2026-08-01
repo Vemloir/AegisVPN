@@ -1,3 +1,6 @@
+import asyncio
+
+from app import xray
 from app.xray import _parse_online_users, build_client_record, build_subscription_query, get_transport_type
 
 
@@ -106,6 +109,16 @@ def test_parse_online_users_list_of_strings():
     assert set(_parse_online_users(raw)) == {"a@x", "b@x"}
 
 
+def test_parse_online_users_normalizes_pinned_stat_names():
+    raw = b'{"users":["user>>>user_1_sub_2_dev_3>>>online"]}'
+    assert _parse_online_users(raw) == ["user_1_sub_2_dev_3"]
+
+
+def test_parse_online_users_discards_malformed_stat_names():
+    raw = b'{"users":["user>>>secret>>>traffic", "a>>>b>>>c>>>d"]}'
+    assert _parse_online_users(raw) == []
+
+
 def test_parse_online_users_list_of_records():
     raw = b'{"users": [{"email": "a@x"}, {"user": "b@x"}]}'
     assert set(_parse_online_users(raw)) == {"a@x", "b@x"}
@@ -116,3 +129,40 @@ def test_parse_online_users_empty_or_garbage():
     assert _parse_online_users(b"not json") == []
     assert _parse_online_users(b'{"users": null}') == []
     assert _parse_online_users(b"{}") == []
+
+
+async def test_run_process_kills_and_reaps_after_timeout(monkeypatch):
+    class HangingProcess:
+        returncode = None
+
+        def __init__(self):
+            self.communicate_calls = 0
+            self.killed = False
+
+        async def communicate(self):
+            self.communicate_calls += 1
+            if self.communicate_calls == 1:
+                await asyncio.sleep(60)
+            self.returncode = -9
+            return b"reaped", b""
+
+        def kill(self):
+            self.killed = True
+
+    process = HangingProcess()
+
+    async def create_process(*args, **kwargs):
+        return process
+
+    monkeypatch.setattr(xray.asyncio, "create_subprocess_exec", create_process)
+
+    returncode, stdout, stderr = await xray._run_process(
+        ["xray", "api", "statsquery"],
+        timeout=0.01,
+    )
+
+    assert returncode == 124
+    assert stdout == b"reaped"
+    assert stderr == b""
+    assert process.killed is True
+    assert process.communicate_calls == 2
