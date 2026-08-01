@@ -47,6 +47,13 @@ AI_DOMAINS = [
     "geosite:google-gemini",
     "geosite:microsoft",
 ]
+GAME_DOMAINS = [
+    "geosite:category-games",
+    "domain:callofduty.com",
+    "domain:activision.com",
+    "domain:activisionblizzard.com",
+    "domain:demonware.net",
+]
 
 
 def main() -> int:
@@ -142,8 +149,9 @@ def main() -> int:
         "r=[x for x in r if x.get('outboundTag')!='warp' and x.get('inboundTag')!=['warptest']];"
         "r.insert(0,{'type':'field','inboundTag':['warptest'],'outboundTag':'warp'});"
         "r.insert(0,{'type':'field','domain':%s,'outboundTag':'warp'});"
+        "r.insert(0,{'type':'field','domain':%s,'outboundTag':'direct'});"
         "c['routing']['rules']=r;json.dump(c,open(p,'w'),indent=2);print('patched')"
-        % (REMOTE_D, json.dumps(warp), json.dumps(AI_DOMAINS))
+        % (REMOTE_D, json.dumps(warp), json.dumps(AI_DOMAINS), json.dumps(GAME_DOMAINS))
     )
     print(run(f"python3 -c {json.dumps(patch)}").strip())
     recreate()
