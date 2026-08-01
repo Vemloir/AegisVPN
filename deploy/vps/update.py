@@ -199,6 +199,7 @@ def connect_via_jump(
         "direct-tcpip",
         (host, 22),
         ("127.0.0.1", 0),
+        timeout=30,
     )
     client = paramiko.SSHClient()
     client.load_system_host_keys()
