@@ -111,9 +111,7 @@ async def test_disabled_or_hostname_mismatched_node_cannot_receive_bundle():
         await session.commit()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        assert (
-            await client.get("/api/node/v1/hy2-certificate", headers=_headers())
-        ).status_code == 404
+        assert (await client.get("/api/node/v1/hy2-certificate", headers=_headers())).status_code == 404
 
     async with async_session_maker() as session:
         node = await session.get(Server, 1)
@@ -122,6 +120,34 @@ async def test_disabled_or_hostname_mismatched_node_cannot_receive_bundle():
         await session.commit()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        assert (
-            await client.get("/api/node/v1/hy2-certificate", headers=_headers())
-        ).status_code == 409
+        assert (await client.get("/api/node/v1/hy2-certificate", headers=_headers())).status_code == 409
+
+
+async def test_shared_legacy_bundle_is_rejected_when_sni_is_used_by_multiple_nodes():
+    async with async_session_maker() as session:
+        session.add(
+            Server(
+                name="Second certificate node",
+                flag="C",
+                host="203.0.113.89",
+                port=443,
+                public_key="pk2",
+                short_id="sid2",
+                agent_url="http://127.0.0.1:8444",
+                agent_token="legacy2",
+                control_mode="observe",
+                control_token_hash=hashlib.sha256(b"other-token").hexdigest(),
+                control_cert_fingerprint="eeff1122ccdd3344",
+                is_active=True,
+                hy2_enabled=True,
+                hy2_port=443,
+                hy2_sni=HOSTNAME,
+            )
+        )
+        await session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/node/v1/hy2-certificate", headers=_headers())
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Per-node Hy2 certificate required"

@@ -58,6 +58,7 @@ import hashlib
 import json
 import posixpath
 import re
+import secrets
 import shlex
 import stat
 import time
@@ -1058,7 +1059,7 @@ def provision_hysteria(
     """B) Provision Hysteria2 on the node. Returns "" (obfs no longer used).
 
     Idempotent end to end:
-      * data/hysteria/{key,cert}.pem self-signed PLACEHOLDER generated only if
+      * data/hysteria/current/{key,cert}.pem self-signed PLACEHOLDER generated only if
         absent (CN = geo_sni); provision_stack overwrites it with the real LE
         cert via install_hy2_cert.
       * config.yaml rendered from the repo template (only the agent.env stats
@@ -1085,18 +1086,26 @@ def provision_hysteria(
         "sysctl udp buffers", timeout=30)
 
     # --- self-signed cert (idempotent) ---
-    key_pem = f"{REMOTE_HY2_DIR}/key.pem"
-    cert_pem = f"{REMOTE_HY2_DIR}/cert.pem"
+    key_pem = f"{REMOTE_HY2_DIR}/current/key.pem"
+    cert_pem = f"{REMOTE_HY2_DIR}/current/cert.pem"
     if _remote_exists(c, key_pem) and _remote_exists(c, cert_pem):
         print(f"  [{host}] hysteria: cert present, keeping it")
     else:
         print(f"  [{host}] hysteria: generating self-signed cert (CN={geo_sni})")
-        run(c,
-            f"cd {REMOTE_HY2_DIR} && "
-            f"openssl ecparam -genkey -name prime256v1 -out key.pem && "
-            f"openssl req -new -x509 -days 3650 -key key.pem -out cert.pem "
-            f"-subj '/CN={geo_sni}'",
-            "openssl cert", timeout=60)
+        version = f"bootstrap-{secrets.token_hex(8)}"
+        run(
+            c,
+            f"cd {REMOTE_HY2_DIR} && mkdir -p versions/{version} && "
+            f"chmod 700 versions/{version} && "
+            f"openssl ecparam -genkey -name prime256v1 -out versions/{version}/key.pem && "
+            f"openssl req -new -x509 -days 3650 -key versions/{version}/key.pem "
+            f"-out versions/{version}/cert.pem -subj '/CN={geo_sni}' && "
+            f"chmod 600 versions/{version}/cert.pem versions/{version}/key.pem && "
+            f"ln -s versions/{version} .current-{version} && "
+            f"mv -Tf .current-{version} current",
+            "openssl cert",
+            timeout=60,
+        )
 
     # --- render config.yaml from the repo template (only the stats secret) ---
     template = HY2_TEMPLATE_LOCAL.read_text(encoding="utf-8")
@@ -1245,29 +1254,39 @@ def renew_hy2_cert_acme(main_c: paramiko.SSHClient) -> tuple[str, str, str]:
 
 
 def install_hy2_cert(c: paramiko.SSHClient, host: str, cert_b64: str, key_b64: str) -> None:
-    """Write the LE cert + key into the node's hysteria dir (verifying the key
-    matches the cert) and restart hysteria so it serves the fresh cert."""
+    """Atomically activate a verified LE cert/key pair and restart Hysteria."""
     cert_pem = base64.b64decode(cert_b64, validate=True).decode("ascii")
     key_pem = base64.b64decode(key_b64, validate=True).decode("ascii")
+    version = secrets.token_hex(8)
+    version_dir = f"{REMOTE_HY2_DIR}/versions/{version}"
+    run(c, f"install -d -m 700 {version_dir}", "prepare cert version", timeout=30)
     _write_remote_text_atomic(
         c,
-        f"{REMOTE_HY2_DIR}/cert.pem",
+        f"{version_dir}/cert.pem",
         cert_pem,
-        mode=0o644,
+        mode=0o600,
     )
     _write_remote_text_atomic(
         c,
-        f"{REMOTE_HY2_DIR}/key.pem",
+        f"{version_dir}/key.pem",
         key_pem,
         mode=0o600,
     )
     match = run(c,
-        f"openssl x509 -in {REMOTE_HY2_DIR}/cert.pem -noout -pubkey > /tmp/_aegcp 2>/dev/null; "
-        f"openssl ec -in {REMOTE_HY2_DIR}/key.pem -pubout > /tmp/_aegkp 2>/dev/null; "
+        f"openssl x509 -in {version_dir}/cert.pem -noout -pubkey > /tmp/_aegcp 2>/dev/null; "
+        f"openssl pkey -in {version_dir}/key.pem -pubout > /tmp/_aegkp 2>/dev/null; "
         f"if diff -q /tmp/_aegcp /tmp/_aegkp >/dev/null 2>&1; then echo MATCH; else echo MISMATCH; fi; "
         f"rm -f /tmp/_aegcp /tmp/_aegkp", "cert/key match", timeout=30).strip()
     if "MATCH" not in match:
         raise SystemExit(f"[{host}] cert/key mismatch after install — aborting (NOT restarting)")
+    run(
+        c,
+        f"cd {REMOTE_HY2_DIR} && "
+        f"ln -s versions/{version} .current-{version} && "
+        f"mv -Tf .current-{version} current",
+        "activate cert pair",
+        timeout=30,
+    )
     run(c, "cd /root/aegis/deploy/vps && docker compose restart hysteria 2>&1 | tail -1",
         "restart hysteria", timeout=120)
     print(f"  [{host}] cert installed + hysteria restarted")

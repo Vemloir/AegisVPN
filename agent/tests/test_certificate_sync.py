@@ -7,6 +7,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
+from app import certificate_sync as sync_module
 from app.certificate_sync import CertificateSynchronizer
 
 HOSTNAME = "hy2.example.test"
@@ -60,18 +61,19 @@ async def test_new_certificate_is_installed_atomically_and_notified_once(tmp_pat
     notifications = []
     sync = CertificateSynchronizer(
         FakeClient(_bundle(cert, key)),
-        certificate_path=tmp_path / "cert.pem",
-        private_key_path=tmp_path / "key.pem",
+        certificate_path=tmp_path / "current/cert.pem",
+        private_key_path=tmp_path / "current/key.pem",
         restart_notifier=lambda: notifications.append("restart"),
     )
 
     result = await sync.check_once()
 
     assert result.status == "updated"
-    assert (tmp_path / "cert.pem").read_text() == cert
-    assert (tmp_path / "key.pem").read_text() == key
-    assert os.stat(tmp_path / "cert.pem").st_mode & 0o777 == 0o600
-    assert os.stat(tmp_path / "key.pem").st_mode & 0o777 == 0o600
+    assert (tmp_path / "current").is_symlink()
+    assert (tmp_path / "current/cert.pem").read_text() == cert
+    assert (tmp_path / "current/key.pem").read_text() == key
+    assert os.stat(tmp_path / "current/cert.pem").st_mode & 0o777 == 0o600
+    assert os.stat(tmp_path / "current/key.pem").st_mode & 0o777 == 0o600
     assert notifications == ["restart"]
 
     assert (await sync.check_once()).status == "unchanged"
@@ -80,30 +82,72 @@ async def test_new_certificate_is_installed_atomically_and_notified_once(tmp_pat
 
 async def test_invalid_or_expiring_bundle_never_replaces_working_files(tmp_path):
     old_cert, old_key = _pair()
-    (tmp_path / "cert.pem").write_text(old_cert)
-    (tmp_path / "key.pem").write_text(old_key)
+    live = tmp_path / "current"
+    await CertificateSynchronizer(
+        FakeClient(_bundle(old_cert, old_key)),
+        certificate_path=live / "cert.pem",
+        private_key_path=live / "key.pem",
+        restart_notifier=lambda: None,
+    ).check_once()
     new_cert, _ = _pair(days=1)
     _, wrong_key = _pair()
 
     for bundle in (_bundle(new_cert, old_key), _bundle(old_cert, wrong_key)):
         sync = CertificateSynchronizer(
             FakeClient(bundle),
-            certificate_path=tmp_path / "cert.pem",
-            private_key_path=tmp_path / "key.pem",
+            certificate_path=live / "cert.pem",
+            private_key_path=live / "key.pem",
             restart_notifier=lambda: pytest.fail("must not restart"),
             minimum_validity=timedelta(days=7),
         )
         with pytest.raises(ValueError):
             await sync.check_once()
-        assert (tmp_path / "cert.pem").read_text() == old_cert
-        assert (tmp_path / "key.pem").read_text() == old_key
+        assert (live / "cert.pem").read_text() == old_cert
+        assert (live / "key.pem").read_text() == old_key
+
+
+async def test_failed_live_symlink_swap_keeps_the_old_complete_pair(monkeypatch, tmp_path):
+    old_cert, old_key = _pair()
+    new_cert, new_key = _pair()
+    live = tmp_path / "current"
+    await CertificateSynchronizer(
+        FakeClient(_bundle(old_cert, old_key)),
+        certificate_path=live / "cert.pem",
+        private_key_path=live / "key.pem",
+        restart_notifier=lambda: None,
+    ).check_once()
+    sync = CertificateSynchronizer(
+        FakeClient(_bundle(new_cert, new_key)),
+        certificate_path=live / "cert.pem",
+        private_key_path=live / "key.pem",
+        restart_notifier=lambda: pytest.fail("must not restart"),
+    )
+    replace = sync_module.os.replace
+
+    def fail_live_swap(source, destination):
+        if destination == live:
+            raise OSError("simulated crash before live swap")
+        replace(source, destination)
+
+    monkeypatch.setattr(sync_module.os, "replace", fail_live_swap)
+
+    with pytest.raises(OSError, match="simulated"):
+        await sync.check_once()
+
+    assert (live / "cert.pem").read_text() == old_cert
+    assert (live / "key.pem").read_text() == old_key
+
+
+def test_certificate_poll_delay_has_bounded_jitter():
+    assert sync_module._certificate_poll_delay(100, random_value=0.0) == 90
+    assert sync_module._certificate_poll_delay(100, random_value=1.0) == 110
 
 
 async def test_disabled_certificate_endpoint_is_a_noop(tmp_path):
     sync = CertificateSynchronizer(
         FakeClient(None),
-        certificate_path=tmp_path / "cert.pem",
-        private_key_path=tmp_path / "key.pem",
+        certificate_path=tmp_path / "current/cert.pem",
+        private_key_path=tmp_path / "current/key.pem",
         restart_notifier=lambda: pytest.fail("must not restart"),
     )
     assert (await sync.check_once()).status == "disabled"

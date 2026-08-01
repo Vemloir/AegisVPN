@@ -31,8 +31,8 @@ quic:
   disablePathMTUDiscovery: false
 
 tls:
-  cert: /etc/hysteria/cert.pem
-  key: /etc/hysteria/key.pem
+  cert: /etc/hysteria/current/cert.pem
+  key: /etc/hysteria/current/key.pem
 
 auth:
   type: http
