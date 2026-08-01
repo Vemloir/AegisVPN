@@ -21,6 +21,8 @@ def test_all_runtime_inputs_are_immutable_and_locked():
     assert "latest" not in compose.lower()
     assert "releases/latest" not in dockerfiles[0]
     assert "sha256sum -c -" in dockerfiles[0]
+    assert '"amd64") XRAY_ARCH="64"' in dockerfiles[0]
+    assert '"arm64") XRAY_ARCH="arm64-v8a"' in dockerfiles[0]
     for dockerfile in dockerfiles:
         assert "uv.lock" in dockerfile
         assert "uv sync --frozen" in dockerfile
@@ -38,6 +40,9 @@ def test_runtime_manifest_matches_the_pinned_sources():
 
     assert values["XRAY_VERSION"] == "v26.3.27"
     assert values["XRAY_SHA256"] == "23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae"
+    assert values["XRAY_ARM64_SHA256"] == (
+        "4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c"
+    )
     assert values["HYSTERIA_VERSION"] == "v2.10.0"
 
 
@@ -53,6 +58,7 @@ def test_runtime_verifier_accepts_matching_archive_and_rejects_mismatch(tmp_path
                 "UV_IMAGE=ghcr.io/astral-sh/uv:0.11.32@sha256:" + "b" * 64,
                 "XRAY_VERSION=v26.3.27",
                 f"XRAY_SHA256={digest}",
+                "XRAY_ARM64_SHA256=" + "f" * 64,
                 "HYSTERIA_VERSION=v2.10.0",
                 "HYSTERIA_IMAGE=tobyxdd/hysteria@sha256:" + "c" * 64,
                 "CADDY_IMAGE=caddy:2.11.4@sha256:" + "d" * 64,

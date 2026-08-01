@@ -95,6 +95,7 @@ _REQUIRED_RUNTIME_KEYS = {
     "UV_IMAGE",
     "XRAY_VERSION",
     "XRAY_SHA256",
+    "XRAY_ARM64_SHA256",
     "HYSTERIA_VERSION",
     "HYSTERIA_IMAGE",
     "CADDY_IMAGE",
@@ -125,6 +126,8 @@ def verify_runtime_pins(
             raise ValueError(f"{key} is not pinned by sha256 digest")
     if not re.fullmatch(r"[0-9a-f]{64}", values["XRAY_SHA256"]):
         raise ValueError("XRAY_SHA256 is not a sha256 digest")
+    if not re.fullmatch(r"[0-9a-f]{64}", values["XRAY_ARM64_SHA256"]):
+        raise ValueError("XRAY_ARM64_SHA256 is not a sha256 digest")
 
     if xray_archive is not None:
         actual = hashlib.sha256(xray_archive.read_bytes()).hexdigest()
