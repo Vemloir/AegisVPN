@@ -240,6 +240,7 @@ async def check_expired_subscriptions(bot: Bot):
 
 async def remind_expiring_subscriptions(bot: Bot):
     logger.info("Running task: remind_expiring_subscriptions")
+    reminders: list[tuple[int, str, str]] = []
     async with async_session_maker() as session:
         now = datetime.now(UTC).replace(tzinfo=None)
         reminder_windows = [
@@ -250,29 +251,29 @@ async def remind_expiring_subscriptions(bot: Bot):
         for target_delta, window, text_key in reminder_windows:
             end_time = now + target_delta
             start_time = end_time - window
-            result = await session.execute(
-                select(Subscription).where(
-                    Subscription.expires_at > start_time,
-                    Subscription.expires_at <= end_time,
-                    Subscription.is_active == True,
-                )
-            )
-            subscriptions = result.scalars().all()
-
-            for sub in subscriptions:
-                user_result = await session.execute(select(User).where(User.id == sub.user_id))
-                user = user_result.scalar_one_or_none()
-                if not user or user.is_banned:
-                    continue
-
-                try:
-                    await bot.send_message(
-                        user.tg_id,
-                        t(user.language, text_key),
-                        reply_markup=renewal_keyboard(user.language),
+            rows = (
+                await session.execute(
+                    select(User.tg_id, User.language)
+                    .join(Subscription, Subscription.user_id == User.id)
+                    .where(
+                        Subscription.expires_at > start_time,
+                        Subscription.expires_at <= end_time,
+                        Subscription.is_active == True,
+                        User.is_banned == False,
                     )
-                except Exception as exc:
-                    logger.error(f"Failed to send renewal reminder to {user.tg_id}: {exc}")
+                )
+            ).all()
+            reminders.extend((tg_id, language, text_key) for tg_id, language in rows)
+
+    for tg_id, language, text_key in reminders:
+        try:
+            await bot.send_message(
+                tg_id,
+                t(language, text_key),
+                reply_markup=renewal_keyboard(language),
+            )
+        except Exception as exc:
+            logger.error("Failed to send renewal reminder to %s: %s", tg_id, exc)
 
 
 async def retry_unsynced_servers():
