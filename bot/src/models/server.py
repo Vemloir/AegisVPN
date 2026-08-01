@@ -27,20 +27,12 @@ class Server(Base):
     # canary has observed and then applied an exact desired-state snapshot.
     control_mode: Mapped[str] = mapped_column(String(16), default="push")
     control_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    control_cert_fingerprint: Mapped[str | None] = mapped_column(
-        String(128), nullable=True, unique=True
-    )
+    control_cert_fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
     # Rotation overlap accepts either complete credential pair for a bounded
     # window. Certificate/token halves are never mix-and-matched.
-    control_previous_token_hash: Mapped[str | None] = mapped_column(
-        String(64), nullable=True
-    )
-    control_previous_cert_fingerprint: Mapped[str | None] = mapped_column(
-        String(128), nullable=True
-    )
-    control_previous_credential_expires_at: Mapped[datetime | None] = mapped_column(
-        nullable=True
-    )
+    control_previous_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    control_previous_cert_fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    control_previous_credential_expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
     desired_generation: Mapped[int] = mapped_column(BigInteger, default=0)
     applied_generation: Mapped[int] = mapped_column(BigInteger, default=0)
     applied_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)

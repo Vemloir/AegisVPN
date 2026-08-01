@@ -11,7 +11,7 @@ def _server(**kwargs) -> Server:
     base = {
         "id": 5,
         "name": "Testland",
-        "flag": "\U0001F1EC\U0001F1F7",
+        "flag": "\U0001f1ec\U0001f1f7",
         "host": "h",
         "port": 443,
         "public_key": "p",
@@ -53,7 +53,7 @@ def test_access_toggle_label_follows_mode():
 
 
 def test_server_list_highlights_disabled_only():
-    active = _server(id=1, name="Finland", flag="\U0001F1EB\U0001F1EE", is_active=True)
+    active = _server(id=1, name="Finland", flag="\U0001f1eb\U0001f1ee", is_active=True)
     off = _server(id=2, name="Testland", is_active=False)
     texts = _texts(server_list_keyboard([active, off]))
     # The active location is clean; the disabled one is marked OFF on the button.

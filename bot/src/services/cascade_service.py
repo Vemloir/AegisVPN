@@ -91,12 +91,16 @@ async def build_cascade_items(
     if not supports_cascade(server):
         return []
     routes = (
-        await session.execute(
-            select(CascadeRoute)
-            .where(CascadeRoute.enabled == True)  # noqa: E712
-            .order_by(CascadeRoute.id)
+        (
+            await session.execute(
+                select(CascadeRoute)
+                .where(CascadeRoute.enabled == True)  # noqa: E712
+                .order_by(CascadeRoute.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     items: list[dict] = []
     for route in routes:
         entry = await session.get(Server, route.entry_server_id)
@@ -109,19 +113,14 @@ async def build_cascade_items(
             or not _role_allows(entry, "entry")
             or not exits
             or any(
-                not exit_server.is_active
-                or not supports_cascade(exit_server)
-                or not _role_allows(exit_server, "exit")
+                not exit_server.is_active or not supports_cascade(exit_server) or not _role_allows(exit_server, "exit")
                 for _, exit_server in exits
             )
         ):
             continue
 
         if server.id == entry.id:
-            inbound_tags = list(
-                (route.transport_policy or {}).get("inbound_tags")
-                or ["vless-in"]
-            )
+            inbound_tags = list((route.transport_policy or {}).get("inbound_tags") or ["vless-in"])
             items.append(
                 {
                     "kind": "cascade_route",
@@ -169,13 +168,17 @@ async def record_cascade_ack(
     generation: int,
 ) -> None:
     pages = (
-        await session.execute(
-            select(NodeSnapshotPage).where(
-                NodeSnapshotPage.server_id == server_id,
-                NodeSnapshotPage.generation == generation,
+        (
+            await session.execute(
+                select(NodeSnapshotPage).where(
+                    NodeSnapshotPage.server_id == server_id,
+                    NodeSnapshotPage.generation == generation,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     revisions: dict[int, tuple[int, str]] = {}
     for page in pages:
         if page.schema_version < 2:
@@ -186,9 +189,7 @@ async def record_cascade_ack(
                     int(item["revision"]),
                     str(item["config_digest"]),
                 )
-    await session.execute(
-        delete(CascadeRouteAck).where(CascadeRouteAck.server_id == server_id)
-    )
+    await session.execute(delete(CascadeRouteAck).where(CascadeRouteAck.server_id == server_id))
     session.add_all(
         CascadeRouteAck(
             route_id=route_id,
@@ -208,15 +209,19 @@ async def advertisable_routes(
     if not entry_server_ids:
         return []
     routes = (
-        await session.execute(
-            select(CascadeRoute)
-            .where(
-                CascadeRoute.enabled == True,  # noqa: E712
-                CascadeRoute.entry_server_id.in_(entry_server_ids),
+        (
+            await session.execute(
+                select(CascadeRoute)
+                .where(
+                    CascadeRoute.enabled == True,  # noqa: E712
+                    CascadeRoute.entry_server_id.in_(entry_server_ids),
+                )
+                .order_by(CascadeRoute.id)
             )
-            .order_by(CascadeRoute.id)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     ready: list[CascadeRoute] = []
     by_entry: dict[int, list[CascadeRoute]] = defaultdict(list)
     for route in routes:
@@ -236,28 +241,25 @@ async def advertisable_routes(
             entry is None
             or not exits
             or any(
-                participant is None
-                or not participant.is_active
-                or not supports_cascade(participant)
+                participant is None or not participant.is_active or not supports_cascade(participant)
                 for participant in participants
             )
         ):
             continue
         acks = (
-            await session.execute(
-                select(CascadeRouteAck).where(
-                    CascadeRouteAck.route_id == route.id,
-                    CascadeRouteAck.server_id.in_(
-                        [participant.id for participant in participants]
-                    ),
+            (
+                await session.execute(
+                    select(CascadeRouteAck).where(
+                        CascadeRouteAck.route_id == route.id,
+                        CascadeRouteAck.server_id.in_([participant.id for participant in participants]),
+                    )
                 )
             )
-        ).scalars().all()
-        if {
-            ack.server_id
-            for ack in acks
-            if ack.revision == route.revision
-            and ack.config_digest == config_digest
-        } == {participant.id for participant in participants}:
+            .scalars()
+            .all()
+        )
+        if {ack.server_id for ack in acks if ack.revision == route.revision and ack.config_digest == config_digest} == {
+            participant.id for participant in participants
+        }:
             ready.append(route)
     return ready

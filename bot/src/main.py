@@ -209,9 +209,7 @@ async def subscription_response(request: web.Request, profile: str) -> web.Respo
     if not sub or not body:
         return web.Response(status=404, text="Subscription not found or inactive")
 
-    response = web.Response(
-        text=body, content_type="application/json" if wants_xray_json else "text/plain"
-    )
+    response = web.Response(text=body, content_type="application/json" if wants_xray_json else "text/plain")
     metadata_headers = subscription_metadata_headers(sub, profile)
     title = metadata_headers["Profile-Title"]
     response.headers["Content-Disposition"] = f'attachment; filename="{title}"'
@@ -279,9 +277,7 @@ async def platega_callback_handler(request: web.Request) -> web.Response:
         # mismatch between the callback amount and what we billed.
         cb_amount = data.get("amount")
         if cb_amount is not None and payment.rub_amount is not None and int(cb_amount) != payment.rub_amount:
-            logger.warning(
-                f"Platega callback amount mismatch tx {tx_id}: got {cb_amount}, billed {payment.rub_amount}"
-            )
+            logger.warning(f"Platega callback amount mismatch tx {tx_id}: got {cb_amount}, billed {payment.rub_amount}")
 
         if status == "CONFIRMED":
             await confirm_platega_payment(session, payment, bot=request.app.get("bot"))
@@ -363,6 +359,7 @@ async def run_polling_mode(bot: Bot, dp: Dispatcher) -> None:
     runner = await start_http_server(app)
 
     try:
+
         async def poll() -> None:
             await bot.delete_webhook(drop_pending_updates=False)
             logger.info("Telegram mode: polling (leader)")

@@ -22,9 +22,7 @@ async def _api(method: str, **data) -> dict:
     body = json.dumps(data, ensure_ascii=False).encode("utf-8")
     headers = {"Content-Type": "application/json"}
     async with aiohttp.ClientSession() as s:
-        async with s.post(
-            f"{_API}/{method}", data=body, headers=headers, timeout=aiohttp.ClientTimeout(total=15)
-        ) as r:
+        async with s.post(f"{_API}/{method}", data=body, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as r:
             j = await r.json()
             if not j.get("ok"):
                 raise RuntimeError(j.get("error", "telegraph error"))
@@ -132,9 +130,7 @@ async def _put_page(token: str, path: str | None, title: str, content: list) -> 
         return await _api(
             f"editPage/{path}", access_token=token, title=title[:256], content=content, author_name="AegisVPN"
         )
-    return await _api(
-        "createPage", access_token=token, title=title[:256], content=content, author_name="AegisVPN"
-    )
+    return await _api("createPage", access_token=token, title=title[:256], content=content, author_name="AegisVPN")
 
 
 async def _get_page_url(slug: str, language: str, html_text: str, title: str) -> str | None:
@@ -170,7 +166,9 @@ async def _get_page_url(slug: str, language: str, html_text: str, title: str) ->
         for i in range(total - 1, -1, -1):
             content = list(chunks[i])
             if next_url is not None:
-                content.append({"tag": "p", "children": [{"tag": "a", "attrs": {"href": next_url}, "children": [next_label]}]})
+                content.append(
+                    {"tag": "p", "children": [{"tag": "a", "attrs": {"href": next_url}, "children": [next_label]}]}
+                )
             page_title = title if total == 1 else f"{title} ({i + 1}/{total})"
             path_key = f"path_{slug}_{language}_{i}"
             page = await _put_page(token, cache.get(path_key), page_title, content)

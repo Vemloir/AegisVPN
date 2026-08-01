@@ -27,6 +27,7 @@ def singleton_job(
     lease_factory=leader_lease,
 ) -> Callable:
     """Run one scheduler invocation across the whole PostgreSQL cluster."""
+
     @wraps(function)
     async def wrapped(*args, **kwargs):
         async with lease_factory(f"scheduler:{name}") as lease:

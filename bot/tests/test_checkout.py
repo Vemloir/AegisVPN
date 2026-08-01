@@ -108,9 +108,7 @@ async def test_sbp_creates_the_pending_payment_the_callback_will_look_up(monkeyp
     assert r.json()["url"] == "https://app.platega.io/tx-777"
 
     async with async_session_maker() as session:
-        payment = (
-            await session.execute(select(Payment).where(Payment.tg_payment_id == "platega_tx-777"))
-        ).scalar_one()
+        payment = (await session.execute(select(Payment).where(Payment.tg_payment_id == "platega_tx-777"))).scalar_one()
         assert payment.status == "pending"
         assert payment.provider == "platega"
         assert payment.plan_days == 30

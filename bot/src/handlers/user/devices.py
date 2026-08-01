@@ -32,6 +32,7 @@ _BUILD_NUM_RE = re.compile(r"\s+\d{3,}")
 def _clean_label(s: str | None) -> str | None:
     return _BUILD_NUM_RE.sub("", s) if s else s
 
+
 router = Router()
 
 

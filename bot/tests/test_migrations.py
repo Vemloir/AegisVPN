@@ -22,9 +22,7 @@ async def test_run_migrations_adds_missing_columns_idempotently():
         for table in MIGRATIONS:
             await session.execute(text(f"DROP TABLE IF EXISTS {table}"))
             if table == "servers":
-                await session.execute(
-                    text("CREATE TABLE servers (id INTEGER PRIMARY KEY, host VARCHAR(255))")
-                )
+                await session.execute(text("CREATE TABLE servers (id INTEGER PRIMARY KEY, host VARCHAR(255))"))
             elif table == "subscription_servers":
                 await session.execute(
                     text("CREATE TABLE subscription_servers (id INTEGER PRIMARY KEY, server_id INTEGER)")
@@ -61,9 +59,7 @@ async def test_hy2_columns_are_added_but_never_populated():
     out-of-band by the operator, so a freshly migrated server is not Hy2-capable."""
     async with async_session_maker() as session:
         await session.execute(text("DROP TABLE IF EXISTS servers"))
-        await session.execute(
-            text("CREATE TABLE servers (id INTEGER PRIMARY KEY, host VARCHAR(255))")
-        )
+        await session.execute(text("CREATE TABLE servers (id INTEGER PRIMARY KEY, host VARCHAR(255))"))
         await session.execute(text("INSERT INTO servers (id, host) VALUES (1, '203.0.113.10')"))
         await session.commit()
 

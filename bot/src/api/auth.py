@@ -88,9 +88,7 @@ def verify_telegram_webapp(init_data: str) -> dict | None:
         return None
 
     data_check_string = "\n".join(f"{k}={pairs[k]}" for k in sorted(pairs))
-    secret_key = hmac.new(
-        b"WebAppData", settings.bot_token.get_secret_value().encode(), hashlib.sha256
-    ).digest()
+    secret_key = hmac.new(b"WebAppData", settings.bot_token.get_secret_value().encode(), hashlib.sha256).digest()
     expected = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, received):
         return None

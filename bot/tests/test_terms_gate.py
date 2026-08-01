@@ -32,8 +32,7 @@ async def test_new_user_is_not_accepted_then_accepts():
         row = (
             await session.execute(
                 text(
-                    "SELECT accepted_terms_version, accepted_terms_at, privacy_accepted "
-                    "FROM users WHERE tg_id = 900001"
+                    "SELECT accepted_terms_version, accepted_terms_at, privacy_accepted FROM users WHERE tg_id = 900001"
                 )
             )
         ).fetchone()
@@ -73,12 +72,8 @@ async def test_force_reset_migration_nulls_acceptance():
     await _reset_users()
     # Two users that look accepted (as prod is today after grandfathering).
     async with async_session_maker() as session:
-        session.add(
-            User(tg_id=900010, privacy_accepted=True, accepted_terms_version=TERMS_VERSION)
-        )
-        session.add(
-            User(tg_id=900011, privacy_accepted=True, accepted_terms_version=TERMS_VERSION)
-        )
+        session.add(User(tg_id=900010, privacy_accepted=True, accepted_terms_version=TERMS_VERSION))
+        session.add(User(tg_id=900011, privacy_accepted=True, accepted_terms_version=TERMS_VERSION))
         # Force the one-shot to be considered un-applied on this DB.
         await session.execute(text("DELETE FROM schema_meta"))
         await session.commit()
@@ -92,9 +87,7 @@ async def test_force_reset_migration_nulls_acceptance():
     assert await UserService.is_terms_accepted(900011) is False
     async with async_session_maker() as session:
         rows = (
-            await session.execute(
-                text("SELECT accepted_terms_version, accepted_terms_at, privacy_accepted FROM users")
-            )
+            await session.execute(text("SELECT accepted_terms_version, accepted_terms_at, privacy_accepted FROM users"))
         ).fetchall()
     for version, at, privacy in rows:
         assert version is None and at is None

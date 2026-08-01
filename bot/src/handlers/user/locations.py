@@ -48,9 +48,7 @@ async def _active_servers_for(session, tg_id: int) -> tuple["User | None", list[
     if not user:
         return None, []
     servers = await ServerAccessService.get_accessible_servers_for_user(session, user.id)
-    servers = sorted(
-        [s for s in servers if s.is_active], key=SubscriptionService.server_sort_key
-    )
+    servers = sorted([s for s in servers if s.is_active], key=SubscriptionService.server_sort_key)
     return user, servers
 
 
@@ -88,9 +86,7 @@ async def _load_location(call: CallbackQuery, server_id: int, language: str):
     setters) goes through this so the guards stay identical.
     """
     async with async_session_maker() as session:
-        user = (
-            await session.execute(select(User).where(User.tg_id == call.from_user.id))
-        ).scalar_one_or_none()
+        user = (await session.execute(select(User).where(User.tg_id == call.from_user.id))).scalar_one_or_none()
         server = await session.get(Server, server_id)
         if user is None or server is None or not server.is_active:
             await call.answer(t(language, "locations_none"), show_alert=True)
@@ -103,8 +99,7 @@ async def _load_location(call: CallbackQuery, server_id: int, language: str):
         if not server.has_alt_transports:
             label = SubscriptionService.format_server_label(server)
             text = (
-                f"{html.bold(t(language, 'location_settings_title', name=label))}\n\n"
-                f"{t(language, 'location_no_alt')}"
+                f"{html.bold(t(language, 'location_settings_title', name=label))}\n\n{t(language, 'location_no_alt')}"
             )
             await call.message.edit_text(  # type: ignore[union-attr]
                 text, parse_mode="HTML", reply_markup=location_no_alt_keyboard(language)
@@ -152,9 +147,7 @@ async def cq_location_protocol(call: CallbackQuery):
     await call.message.edit_text(  # type: ignore[union-attr]
         text,
         parse_mode="HTML",
-        reply_markup=location_protocol_keyboard(
-            language, server.id, protocol, hy2_capable=server.hy2_capable
-        ),
+        reply_markup=location_protocol_keyboard(language, server.id, protocol, hy2_capable=server.hy2_capable),
     )
     await call.answer()
 
@@ -208,9 +201,7 @@ async def cq_location_protocol_set(call: CallbackQuery):
         return
 
     async with async_session_maker() as session:
-        user = (
-            await session.execute(select(User).where(User.tg_id == call.from_user.id))
-        ).scalar_one_or_none()
+        user = (await session.execute(select(User).where(User.tg_id == call.from_user.id))).scalar_one_or_none()
         if user is None:
             await call.answer(t(language, "locations_none"), show_alert=True)
             return
@@ -218,13 +209,9 @@ async def cq_location_protocol_set(call: CallbackQuery):
         # the transport field is left at its default. set_transport_pref collapses
         # the plain vless/xhttp default to "no row" automatically.
         stored_transport = (
-            transport
-            if protocol == SubscriptionService.PROTOCOL_VLESS
-            else SubscriptionService.DEFAULT_TRANSPORT
+            transport if protocol == SubscriptionService.PROTOCOL_VLESS else SubscriptionService.DEFAULT_TRANSPORT
         )
-        await SubscriptionService.set_transport_pref(
-            session, user.id, server.id, protocol, stored_transport
-        )
+        await SubscriptionService.set_transport_pref(session, user.id, server.id, protocol, stored_transport)
 
     await _render_location(call, server_id, toast=t(language, "location_saved"))
 
@@ -246,9 +233,7 @@ async def cq_location_transport_set(call: CallbackQuery):
     if transport not in available:
         transport = SubscriptionService.DEFAULT_TRANSPORT
     async with async_session_maker() as session:
-        user = (
-            await session.execute(select(User).where(User.tg_id == call.from_user.id))
-        ).scalar_one_or_none()
+        user = (await session.execute(select(User).where(User.tg_id == call.from_user.id))).scalar_one_or_none()
         if user is None:
             await call.answer(t(language, "locations_none"), show_alert=True)
             return

@@ -52,23 +52,15 @@ def _outbound(route: DesiredCascadeRoute, index: int) -> dict:
 def _strip_managed(config: dict) -> None:
     routing = config.get("routing") or {}
     had_managed = any(
-        str(outbound.get("tag", "")).startswith(_TAG_PREFIX)
-        for outbound in config.get("outbounds", [])
-    ) or any(
-        str(balancer.get("tag", "")).startswith(_TAG_PREFIX)
-        for balancer in routing.get("balancers", [])
-    )
+        str(outbound.get("tag", "")).startswith(_TAG_PREFIX) for outbound in config.get("outbounds", [])
+    ) or any(str(balancer.get("tag", "")).startswith(_TAG_PREFIX) for balancer in routing.get("balancers", []))
     if "outbounds" in config:
         config["outbounds"] = [
-            outbound
-            for outbound in config["outbounds"]
-            if not str(outbound.get("tag", "")).startswith(_TAG_PREFIX)
+            outbound for outbound in config["outbounds"] if not str(outbound.get("tag", "")).startswith(_TAG_PREFIX)
         ]
     if "routing" in config:
         routing["rules"] = [
-            rule
-            for rule in routing.get("rules", [])
-            if not str(rule.get("balancerTag", "")).startswith(_TAG_PREFIX)
+            rule for rule in routing.get("rules", []) if not str(rule.get("balancerTag", "")).startswith(_TAG_PREFIX)
         ]
         balancers = [
             balancer
@@ -104,15 +96,11 @@ def apply_cascade_routes(
     for route in sorted(routes, key=lambda item: item.route_id):
         overlap = claimed_inbounds.intersection(route.inbound_tags)
         if overlap:
-            raise CascadeConfigError(
-                f"cascade inbound is claimed by multiple routes: {sorted(overlap)}"
-            )
+            raise CascadeConfigError(f"cascade inbound is claimed by multiple routes: {sorted(overlap)}")
         claimed_inbounds.update(route.inbound_tags)
         strategy = str(route.health_policy.get("strategy") or "leastPing")
         if strategy != "leastPing":
-            raise CascadeConfigError(
-                f"unsupported cascade health strategy: {strategy}"
-            )
+            raise CascadeConfigError(f"unsupported cascade health strategy: {strategy}")
         if any(not exit_node.xhttp_path.startswith("/") for exit_node in route.exits):
             raise CascadeConfigError("cascade XHTTP path must start with '/'")
         outbounds = [_outbound(route, index) for index in range(len(route.exits))]
@@ -141,13 +129,8 @@ def apply_cascade_routes(
     routing["balancers"] = managed_balancers
     config["observatory"] = {
         "subjectSelector": all_subjects,
-        "probeUrl": str(
-            routes[0].health_policy.get("probe_url")
-            or "https://www.gstatic.com/generate_204"
-        ),
-        "probeInterval": str(
-            routes[0].health_policy.get("probe_interval") or "10s"
-        ),
+        "probeUrl": str(routes[0].health_policy.get("probe_url") or "https://www.gstatic.com/generate_204"),
+        "probeInterval": str(routes[0].health_policy.get("probe_interval") or "10s"),
         "enableConcurrency": True,
     }
     return config != before

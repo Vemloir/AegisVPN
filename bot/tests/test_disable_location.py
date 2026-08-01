@@ -66,9 +66,14 @@ def _install_node(monkeypatch, attempts: list, *, alive: bool) -> None:
 
 async def _seed(session, n_subs: int) -> Server:
     server = Server(
-        name="Швеция", flag="🇸🇪", host="203.0.113.20", port=443,
-        public_key="pk", short_id="sid",
-        agent_url="http://node.invalid:8444", agent_token="tok",
+        name="Швеция",
+        flag="🇸🇪",
+        host="203.0.113.20",
+        port=443,
+        public_key="pk",
+        short_id="sid",
+        agent_url="http://node.invalid:8444",
+        agent_token="tok",
         is_active=True,
     )
     session.add(server)
@@ -79,8 +84,12 @@ async def _seed(session, n_subs: int) -> Server:
         session.add(user)
         await session.flush()
         sub = Subscription(
-            user_id=user.id, sub_token=f"tok{i}", client_uuid=f"uuid-{i}",
-            plan_days=30, expires_at=datetime.datetime(2099, 1, 1), is_active=True,
+            user_id=user.id,
+            sub_token=f"tok{i}",
+            client_uuid=f"uuid-{i}",
+            plan_days=30,
+            expires_at=datetime.datetime(2099, 1, 1),
+            is_active=True,
         )
         session.add(sub)
         await session.flush()

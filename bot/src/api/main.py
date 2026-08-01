@@ -67,27 +67,32 @@ async def locations() -> list[dict]:
     """
     async with async_session_maker() as session:
         rows = (
-            await session.execute(
-                select(Server)
-                .where(Server.is_active == True)  # noqa: E712 - SQLAlchemy needs ==
-                .order_by(Server.display_order, Server.id)
+            (
+                await session.execute(
+                    select(Server)
+                    .where(Server.is_active == True)  # noqa: E712 - SQLAlchemy needs ==
+                    .order_by(Server.display_order, Server.id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
-    return [
-        {"id": s.id, "name": s.name, "flag": s.flag, "code": s.country_code}
-        for s in rows
-    ]
+    return [{"id": s.id, "name": s.name, "flag": s.flag, "code": s.country_code} for s in rows]
 
 
 @app.get("/api/plans")
 async def plans() -> list[dict]:
     async with async_session_maker() as session:
         rows = (
-            await session.execute(
-                select(Plan).where(Plan.is_active == True).order_by(Plan.days)  # noqa: E712
+            (
+                await session.execute(
+                    select(Plan).where(Plan.is_active == True).order_by(Plan.days)  # noqa: E712
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
     return [
         {
@@ -187,9 +192,7 @@ async def _me_payload(session: AsyncSession, user: User) -> dict:
         # image kept the same URL, so the browser served the stale copy.)
         # photo_url stays as a last-resort fallback for images we couldn't fetch.
         "avatar_url": (
-            f"/api/avatar/me?v={hashlib.sha1(user.avatar_data).hexdigest()[:12]}"
-            if user.avatar_data
-            else None
+            f"/api/avatar/me?v={hashlib.sha1(user.avatar_data).hexdigest()[:12]}" if user.avatar_data else None
         ),
         "photo_url": user.photo_url,
         # Drives the consent checkbox at checkout: a user who already accepted
@@ -221,9 +224,7 @@ async def _login(tg_id: int, fresh: dict, response: Response) -> dict | None:
     only in HOW tg_id/fresh were verified, not in what a sign-in does."""
     _no_store(response)
     async with async_session_maker() as session:
-        user = (
-            await session.execute(select(User).where(User.tg_id == tg_id))
-        ).scalar_one_or_none()
+        user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
 
         if user is None:
             # A visitor who signs in before ever opening the bot still gets an

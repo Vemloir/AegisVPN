@@ -54,11 +54,7 @@ class NodeControlService:
         if not isinstance(templates, list):
             return None
         template = next(
-            (
-                item
-                for item in templates
-                if isinstance(item, dict) and item.get("profile") == profile
-            ),
+            (item for item in templates if isinstance(item, dict) and item.get("profile") == profile),
             None,
         )
         if template is None:
@@ -104,7 +100,4 @@ class NodeControlService:
                 return None
             query_pairs.append((pair[0], pair[1]))
 
-        return (
-            f"vless://{client_uuid}@{host}:{port}?"
-            f"{urlencode(query_pairs)}#{quote(host, safe='')}"
-        )
+        return f"vless://{client_uuid}@{host}:{port}?{urlencode(query_pairs)}#{quote(host, safe='')}"

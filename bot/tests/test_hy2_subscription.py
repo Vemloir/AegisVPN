@@ -162,14 +162,8 @@ async def _seed_hy2_sub(*, capable: bool) -> str:
         )
         session.add(sub)
         await session.flush()
-        session.add(
-            SubscriptionServer(subscription_id=sub.id, server_id=server.id, is_synced=True)
-        )
-        session.add(
-            ServerTransportPref(
-                user_id=user.id, server_id=server.id, protocol="hy2", transport="xhttp"
-            )
-        )
+        session.add(SubscriptionServer(subscription_id=sub.id, server_id=server.id, is_synced=True))
+        session.add(ServerTransportPref(user_id=user.id, server_id=server.id, protocol="hy2", transport="xhttp"))
         await session.commit()
         return sub.sub_token
 

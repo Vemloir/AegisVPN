@@ -219,8 +219,7 @@ ONE_SHOT_DATA_MIGRATIONS: list[tuple[str, str]] = [
     # users accepted; this clears that so they are re-gated on next interaction.
     (
         "force_terms_reacceptance_2026_06_22",
-        "UPDATE users SET accepted_terms_version = NULL, accepted_terms_at = NULL, "
-        "privacy_accepted = 0",
+        "UPDATE users SET accepted_terms_version = NULL, accepted_terms_at = NULL, privacy_accepted = 0",
     ),
 ]
 
@@ -278,13 +277,8 @@ async def run_migrations() -> None:
         # One-shot data migrations run AFTER every column add/drop above, each
         # exactly once, tracked in schema_meta. This is what actually forces the
         # terms re-acceptance on deploy.
-        await session.execute(
-            text("CREATE TABLE IF NOT EXISTS schema_meta (key VARCHAR(128) PRIMARY KEY)")
-        )
-        applied = {
-            row[0]
-            for row in (await session.execute(text("SELECT key FROM schema_meta"))).fetchall()
-        }
+        await session.execute(text("CREATE TABLE IF NOT EXISTS schema_meta (key VARCHAR(128) PRIMARY KEY)"))
+        applied = {row[0] for row in (await session.execute(text("SELECT key FROM schema_meta"))).fetchall()}
         for key, sql in ONE_SHOT_DATA_MIGRATIONS:
             if key in applied:
                 continue

@@ -58,9 +58,7 @@ def server_list_keyboard(servers: list[Server]) -> InlineKeyboardMarkup:
         # no decorative emoji). Active ones stay clean so OFF entries stand out.
         if not server.is_active:
             label = f"OFF · {label}"
-        rows.append(
-            [InlineKeyboardButton(text=label, callback_data=f"admin_server_manage:{server.id}")]
-        )
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"admin_server_manage:{server.id}")])
     rows.append([InlineKeyboardButton(text="Назад в админку", callback_data="admin_back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -119,9 +117,7 @@ def plan_detail_keyboard(plan_id: int, is_base: bool = False) -> InlineKeyboardM
     # Nothing to press when it is already the base — there is no "unset", because
     # a catalogue with no reference plan has nothing to compare against.
     if not is_base:
-        rows.append(
-            [InlineKeyboardButton(text="Сделать базовым", callback_data=f"admin_plan_base:{plan_id}")]
-        )
+        rows.append([InlineKeyboardButton(text="Сделать базовым", callback_data=f"admin_plan_base:{plan_id}")])
     rows.append([InlineKeyboardButton(text="Удалить тариф", callback_data=f"admin_plan_delete:{plan_id}")])
     rows.append([InlineKeyboardButton(text="Назад к тарифам", callback_data="admin_plans")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

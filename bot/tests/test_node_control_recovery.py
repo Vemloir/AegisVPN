@@ -53,10 +53,7 @@ async def _seed_subscription(*, device_count: int = 2) -> tuple[int, int, set[st
                 is_synced=True,
             )
         )
-        device_uuids = {
-            f"40000000-0000-0000-0000-{index:012d}"
-            for index in range(1, device_count + 1)
-        }
+        device_uuids = {f"40000000-0000-0000-0000-{index:012d}" for index in range(1, device_count + 1)}
         session.add_all(
             Device(
                 subscription_id=subscription.id,
@@ -102,9 +99,7 @@ async def test_offline_revoke_publishes_complete_state_without_any_old_uuid():
         await session.commit()
 
     before_items = await _snapshot_items(server_id, before.generation)
-    assert {
-        item["uuid"] for item in before_items if item["kind"] == "client"
-    } == authorized_uuids
+    assert {item["uuid"] for item in before_items if item["kind"] == "client"} == authorized_uuids
 
     # The node is offline: no acknowledgement or individual remove call occurs.
     async with async_session_maker() as session:
@@ -115,9 +110,7 @@ async def test_offline_revoke_publishes_complete_state_without_any_old_uuid():
         await session.commit()
 
     reconnect_items = await _snapshot_items(server_id, after.generation)
-    reconnect_uuids = {
-        item["uuid"] for item in reconnect_items if item["kind"] == "client"
-    }
+    reconnect_uuids = {item["uuid"] for item in reconnect_items if item["kind"] == "client"}
     assert after.generation == before.generation + 1
     assert reconnect_uuids.isdisjoint(authorized_uuids)
 
@@ -136,9 +129,7 @@ async def test_snapshot_pagination_does_not_impose_a_device_count_limit():
         await session.commit()
 
     items = await _snapshot_items(server_id, snapshot.generation)
-    client_uuids = {
-        item["uuid"] for item in items if item["kind"] == "client"
-    }
+    client_uuids = {item["uuid"] for item in items if item["kind"] == "client"}
     assert client_uuids == authorized_uuids
     assert snapshot.item_count == len(authorized_uuids)
     assert snapshot.page_count > 1

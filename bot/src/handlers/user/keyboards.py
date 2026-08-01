@@ -44,14 +44,18 @@ def settings_keyboard(
         [InlineKeyboardButton(text=t(language, "change_language"), callback_data="settings_language")],
     ]
     if has_active_subscription:
-        buttons.append([
-            InlineKeyboardButton(
-                text=t(language, "devices_btn", count=device_count),
-                callback_data="devices_open",
-            )
-        ])
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=t(language, "devices_btn", count=device_count),
+                    callback_data="devices_open",
+                )
+            ]
+        )
         buttons.append([InlineKeyboardButton(text=t(language, "locations_btn"), callback_data="locations_open")])
-        buttons.append([InlineKeyboardButton(text=t(language, "reissue_subscription"), callback_data="reissue_subscription")])
+        buttons.append(
+            [InlineKeyboardButton(text=t(language, "reissue_subscription"), callback_data="reissue_subscription")]
+        )
     buttons.append([InlineKeyboardButton(text=t(language, "delete_account"), callback_data="account_delete")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -122,15 +126,15 @@ def location_settings_keyboard(
     # backend); a future non-vless protocol would hide it.
     if protocol == "vless":
         transport_label = t(language, _TRANSPORT_LABEL_KEYS.get(transport, "location_transport_xhttp"))
-        rows.append([
-            InlineKeyboardButton(
-                text=t(language, "location_transport_value_btn", value=transport_label),
-                callback_data=f"loc_transport:{server_id}",
-            )
-        ])
-    rows.append([
-        InlineKeyboardButton(text=t(language, "back_to_locations"), callback_data="locations_open")
-    ])
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=t(language, "location_transport_value_btn", value=transport_label),
+                    callback_data=f"loc_transport:{server_id}",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text=t(language, "back_to_locations"), callback_data="locations_open")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -151,13 +155,8 @@ def location_protocol_keyboard(
         ],
         [
             InlineKeyboardButton(
-                text=t(language, "location_proto_hy2")
-                + (mark if protocol == "hy2" else ""),
-                callback_data=(
-                    f"loc_proto_set:{server_id}:hy2"
-                    if hy2_capable
-                    else f"loc_hy2:{server_id}"
-                ),
+                text=t(language, "location_proto_hy2") + (mark if protocol == "hy2" else ""),
+                callback_data=(f"loc_proto_set:{server_id}:hy2" if hy2_capable else f"loc_hy2:{server_id}"),
             )
         ],
         [InlineKeyboardButton(text=t(language, "back"), callback_data=f"loc:{server_id}")],
@@ -176,12 +175,14 @@ def location_transport_keyboard(
     mark = t(language, "location_selected_mark")
     rows: list[list[InlineKeyboardButton]] = []
     for tr in available_transports:
-        rows.append([
-            InlineKeyboardButton(
-                text=t(language, _TRANSPORT_LABEL_KEYS[tr]) + (mark if transport == tr else ""),
-                callback_data=f"loc_transport_set:{server_id}:{tr}",
-            )
-        ])
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=t(language, _TRANSPORT_LABEL_KEYS[tr]) + (mark if transport == tr else ""),
+                    callback_data=f"loc_transport_set:{server_id}:{tr}",
+                )
+            ]
+        )
     rows.append([InlineKeyboardButton(text=t(language, "back"), callback_data=f"loc:{server_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -189,7 +190,11 @@ def location_transport_keyboard(
 def reissue_subscription_keyboard(language: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=t(language, "reissue_subscription_confirm_btn"), callback_data="reissue_subscription_confirm")],
+            [
+                InlineKeyboardButton(
+                    text=t(language, "reissue_subscription_confirm_btn"), callback_data="reissue_subscription_confirm"
+                )
+            ],
             [InlineKeyboardButton(text=t(language, "back_to_settings"), callback_data="settings_open")],
         ]
     )
@@ -245,7 +250,11 @@ def device_detail_keyboard(language: str, device_id: int, is_suspended: bool) ->
 def device_remove_confirm_keyboard(language: str, device_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=t(language, "devices_remove_yes"), callback_data=f"devices_remove_confirm:{device_id}")],
+            [
+                InlineKeyboardButton(
+                    text=t(language, "devices_remove_yes"), callback_data=f"devices_remove_confirm:{device_id}"
+                )
+            ],
             [InlineKeyboardButton(text=t(language, "devices_back"), callback_data="devices_open")],
         ]
     )

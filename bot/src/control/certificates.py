@@ -26,9 +26,7 @@ def _read_bounded(path: Path, maximum: int = 1_048_576) -> bytes:
 
 def _certificate_names(certificate: x509.Certificate) -> set[str]:
     try:
-        extension = certificate.extensions.get_extension_for_class(
-            x509.SubjectAlternativeName
-        )
+        extension = certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName)
     except x509.ExtensionNotFound:
         return set()
     return set(extension.value.get_values_for_type(x509.DNSName))

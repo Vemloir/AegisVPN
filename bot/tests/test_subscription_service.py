@@ -18,7 +18,7 @@ def _hy2_node_server() -> Server:
     return Server(
         id=1,
         name="Testland",
-        flag="\U0001F1EC\U0001F1F7",
+        flag="\U0001f1ec\U0001f1f7",
         host="203.0.113.10",
         port=443,
         public_key="GRPBK",
@@ -31,7 +31,7 @@ def _xhttp_only_server() -> Server:
     return Server(
         id=2,
         name="Finland",
-        flag="\U0001F1EB\U0001F1EE",
+        flag="\U0001f1eb\U0001f1ee",
         host="203.0.113.20",
         port=443,
         public_key="FIPBK",
@@ -45,34 +45,46 @@ def _sub(**kwargs) -> Subscription:
 
 def test_format_server_label_keeps_city():
     # Locations render as "Country | City": flag + the full stored name.
-    s = Server(id=8, name="Germany | Frankfurt", flag="\U0001F1E9\U0001F1EA",
-               host="h", port=443, public_key="p", short_id="s")
+    s = Server(
+        id=8, name="Germany | Frankfurt", flag="\U0001f1e9\U0001f1ea", host="h", port=443, public_key="p", short_id="s"
+    )
     assert SubscriptionService.server_display_name(s) == "Germany | Frankfurt"
-    assert SubscriptionService.format_server_label(s) == "\U0001F1E9\U0001F1EA Germany | Frankfurt"
+    assert SubscriptionService.format_server_label(s) == "\U0001f1e9\U0001f1ea Germany | Frankfurt"
     # A name without a city is unchanged.
-    assert SubscriptionService.server_display_name(
-        Server(id=9, name="Germany", flag="x", host="h", port=443, public_key="p", short_id="s")
-    ) == "Germany"
+    assert (
+        SubscriptionService.server_display_name(
+            Server(id=9, name="Germany", flag="x", host="h", port=443, public_key="p", short_id="s")
+        )
+        == "Germany"
+    )
 
 
 def test_duplicate_suffix_keys_on_full_name():
     from collections import Counter
+
     # Only an identical FULL name collides; distinct cities do not.
-    de_fra1 = Server(id=8, name="Germany | Frankfurt", flag="\U0001F1E9\U0001F1EA",
-                     host="h1", port=443, public_key="p", short_id="s")
-    de_fra2 = Server(id=20, name="Germany | Frankfurt", flag="\U0001F1E9\U0001F1EA",
-                     host="h2", port=443, public_key="p", short_id="s")
-    de_muc = Server(id=21, name="Germany | Munich", flag="\U0001F1E9\U0001F1EA",
-                    host="h3", port=443, public_key="p", short_id="s")
-    counts = Counter(
-        SubscriptionService.server_display_name(x).casefold() for x in (de_fra1, de_fra2, de_muc)
+    de_fra1 = Server(
+        id=8, name="Germany | Frankfurt", flag="\U0001f1e9\U0001f1ea", host="h1", port=443, public_key="p", short_id="s"
     )
+    de_fra2 = Server(
+        id=20,
+        name="Germany | Frankfurt",
+        flag="\U0001f1e9\U0001f1ea",
+        host="h2",
+        port=443,
+        public_key="p",
+        short_id="s",
+    )
+    de_muc = Server(
+        id=21, name="Germany | Munich", flag="\U0001f1e9\U0001f1ea", host="h3", port=443, public_key="p", short_id="s"
+    )
+    counts = Counter(SubscriptionService.server_display_name(x).casefold() for x in (de_fra1, de_fra2, de_muc))
     dup = {n for n, c in counts.items() if c > 1}
     # Identical full names -> both get the №id.
-    assert SubscriptionService.format_server_label(de_fra1, dup) == "\U0001F1E9\U0001F1EA Germany | Frankfurt №8"
-    assert SubscriptionService.format_server_label(de_fra2, dup) == "\U0001F1E9\U0001F1EA Germany | Frankfurt №20"
+    assert SubscriptionService.format_server_label(de_fra1, dup) == "\U0001f1e9\U0001f1ea Germany | Frankfurt №8"
+    assert SubscriptionService.format_server_label(de_fra2, dup) == "\U0001f1e9\U0001f1ea Germany | Frankfurt №20"
     # A distinct city -> no suffix.
-    assert SubscriptionService.format_server_label(de_muc, dup) == "\U0001F1E9\U0001F1EA Germany | Munich"
+    assert SubscriptionService.format_server_label(de_muc, dup) == "\U0001f1e9\U0001f1ea Germany | Munich"
 
 
 def test_is_lifetime_by_plan_days():
@@ -166,9 +178,7 @@ def test_vless_link_to_xray_config_xhttp_has_recovery_knobs_and_clean_routing():
     ru_cn = {d for r in cfg["routing"]["rules"] for d in r.get("domain", [])}
     assert {"domain:ru", "domain:cn"} <= ru_cn
     assert not any(
-        "geosite" in v or "geoip" in v
-        for r in cfg["routing"]["rules"]
-        for v in (r.get("domain", []) + r.get("ip", []))
+        "geosite" in v or "geoip" in v for r in cfg["routing"]["rules"] for v in (r.get("domain", []) + r.get("ip", []))
     )
     # DNS must not leak. The system resolver may serve ONLY the domains whose
     # traffic bypasses the tunnel anyway (RU/CN); everything else must resolve
