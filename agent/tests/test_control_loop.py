@@ -149,6 +149,32 @@ async def test_successful_cycle_records_control_activity(monkeypatch, tmp_path):
     assert status["last_error_type"] is None
 
 
+async def test_telemetry_sequence_is_reserved_in_blocks_not_fsynced_per_cycle(monkeypatch):
+    stop = asyncio.Event()
+
+    class TwoCycleClient(FakeClient):
+        async def sync(self, applied):
+            self.sync_calls += 1
+            if self.sync_calls == 2:
+                stop.set()
+            return None
+
+    client = TwoCycleClient()
+    persisted: list[int] = []
+    monkeypatch.setattr(loop_module, "_load_telemetry_sequence", lambda: 0)
+    monkeypatch.setattr(loop_module, "_save_telemetry_sequence", persisted.append)
+
+    await loop_module.control_loop(
+        stop,
+        client=client,
+        mode="observe",
+        telemetry_builder=lambda _result: _async_value({}),
+    )
+
+    assert [row["sequence"] for row in client.telemetry] == [1, 2]
+    assert persisted == [1024]
+
+
 async def test_errors_back_off_with_jitter_and_do_not_log_details(
     monkeypatch,
     capsys,
@@ -362,3 +388,71 @@ async def test_telemetry_carries_safe_and_fast_subscription_templates(monkeypatc
     assert ["type", "xhttp"] in templates["safe"]["query"]
     assert templates["fast"]["port"] == 2053
     assert ["flow", "xtls-rprx-vision"] in templates["fast"]["query"]
+
+
+async def test_telemetry_collects_independent_sources_concurrently(monkeypatch):
+    active = 0
+    peak = 0
+
+    async def empty_source():
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0)
+        active -= 1
+        return {}
+
+    async def empty_config():
+        return {"inbounds": []}
+
+    monkeypatch.setattr(loop_module, "get_online_emails", empty_source)
+    monkeypatch.setattr(loop_module.hysteria, "online", empty_source)
+    monkeypatch.setattr(loop_module, "query_traffic_stats", empty_source)
+    monkeypatch.setattr(loop_module.hysteria, "traffic", empty_source)
+    monkeypatch.setattr(loop_module, "get_xray_config", empty_config)
+    monkeypatch.setattr(
+        loop_module,
+        "load_applied_state",
+        lambda: AppliedState(generation=1, digest="1" * 64),
+    )
+
+    await loop_module._build_telemetry(None)
+
+    assert peak == 4
+
+
+async def test_telemetry_caches_subscription_templates_until_config_changes(monkeypatch):
+    config_reads = 0
+
+    async def empty_list():
+        return []
+
+    async def empty_dict():
+        return {}
+
+    async def config():
+        nonlocal config_reads
+        config_reads += 1
+        return {"inbounds": []}
+
+    class Stat:
+        st_mtime_ns = 123
+
+    monkeypatch.setattr(loop_module, "get_online_emails", empty_list)
+    monkeypatch.setattr(loop_module.hysteria, "online", empty_list)
+    monkeypatch.setattr(loop_module, "query_traffic_stats", empty_dict)
+    monkeypatch.setattr(loop_module.hysteria, "traffic", empty_dict)
+    monkeypatch.setattr(loop_module, "get_xray_config", config)
+    monkeypatch.setattr(loop_module.os, "stat", lambda _path: Stat())
+    monkeypatch.setattr(loop_module, "_subscription_template_cache_key", None)
+    monkeypatch.setattr(loop_module, "_subscription_template_cache", [])
+    monkeypatch.setattr(
+        loop_module,
+        "load_applied_state",
+        lambda: AppliedState(generation=1, digest="1" * 64),
+    )
+
+    await loop_module._build_telemetry(None)
+    await loop_module._build_telemetry(None)
+
+    assert config_reads == 1
