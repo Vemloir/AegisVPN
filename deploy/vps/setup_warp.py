@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Add a Cloudflare WARP egress to a node and route AI services through it.
 
-Why: Gemini / OpenAI / Claude / Google Labs (Flow, Whisk, ...) geo-block
-datacenter IPs. Our nodes are hosting IPs, so those services return
+Why: Gemini, Microsoft, and some AI services geo-block or degrade datacenter
+IPs. Our nodes are hosting IPs, so those services return
 "not available in your country". Routing ONLY the AI domains through a WARP
 (Cloudflare WireGuard) outbound gives them a clean consumer egress IP, while
 all other traffic keeps exiting via the node's own IP (no latency hit, no
@@ -13,6 +13,7 @@ geosite.dat (community-maintained, so the domain list isn't hand-kept):
   geosite:category-ai-!cn   all non-CN AI services (Gemini, OpenAI, Claude, ...)
   domain:labs.google        Google Labs family (Flow / Whisk / ImageFX / ...)
   geosite:google-gemini     Gemini specifically
+  geosite:microsoft         Microsoft 365, Outlook, OneDrive, Teams, Xbox, etc.
 
 Each node needs its OWN WARP registration — one key reused across IPs gets
 flagged by Cloudflare. Xray's wireguard outbound is userspace (no host wg
@@ -29,18 +30,23 @@ WARP client_id, injects the wireguard outbound + AI routing rule into the
 live xray-config.json (preserved across restarts in the data volume), then
 verifies the egress through a throwaway SOCKS inbound and removes it.
 """
+
 from __future__ import annotations
 
 import argparse
 import base64
 import json
-import sys
 import time
 
 import paramiko
 
 REMOTE_D = "/root/aegis/deploy/vps/data/vpn"
-AI_DOMAINS = ["geosite:category-ai-!cn", "domain:labs.google", "geosite:google-gemini"]
+AI_DOMAINS = [
+    "geosite:category-ai-!cn",
+    "domain:labs.google",
+    "geosite:google-gemini",
+    "geosite:microsoft",
+]
 
 
 def main() -> int:
@@ -54,8 +60,14 @@ def main() -> int:
 
     c = paramiko.SSHClient()
     c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    c.connect(args.host, username="root", password=args.password, timeout=25,
-              look_for_keys=False, allow_agent=False)
+    c.connect(
+        args.host,
+        username="root",
+        password=args.password,
+        timeout=25,
+        look_for_keys=False,
+        allow_agent=False,
+    )
 
     def run(cmd: str, t: int = 150) -> str:
         _, o, e = c.exec_command(cmd, timeout=t)
@@ -65,19 +77,27 @@ def main() -> int:
         if args.compose:
             # Split topology: recreate the agent so its entrypoint rebuilds the
             # config with the WARP outbound from agent.env, then reload xray.
-            run("cd /root/aegis/deploy/vps && docker compose up -d --force-recreate agent "
-                "&& docker compose restart xray", 180)
+            run(
+                "cd /root/aegis/deploy/vps && docker compose up -d --force-recreate agent "
+                "&& docker compose restart xray",
+                180,
+            )
         else:
             # Legacy single-container path (non-compose nodes only).
             run("docker rm -f aegis-vpn 2>/dev/null; true", 60)
-            run("docker run -d --name aegis-vpn --restart unless-stopped --network host "
+            run(
+                "docker run -d --name aegis-vpn --restart unless-stopped --network host "
                 "--log-opt max-size=5m --log-opt max-file=2 "
                 "-v /root/aegis/deploy/vps/data/vpn:/data "
-                "--env-file /root/aegis/deploy/vps/vpn.env aegis-vpn-live:latest", 120)
+                "--env-file /root/aegis/deploy/vps/vpn.env aegis-vpn-live:latest",
+                120,
+            )
 
     # 1. register WARP
-    url = run("curl -fsSL https://api.github.com/repos/ViRb3/wgcf/releases/latest "
-              "2>/dev/null | grep -oE 'https://[^\"]*linux_amd64' | head -1").strip()
+    url = run(
+        "curl -fsSL https://api.github.com/repos/ViRb3/wgcf/releases/latest "
+        "2>/dev/null | grep -oE 'https://[^\"]*linux_amd64' | head -1"
+    ).strip()
     run(f"cd /root && curl -fsSL -o wgcf '{url}' && chmod +x wgcf")
     run("cd /root && yes | ./wgcf register")
     run("cd /root && ./wgcf generate")
@@ -86,17 +106,22 @@ def main() -> int:
     peer = run("grep PublicKey /root/wgcf-profile.conf | cut -d' ' -f3").strip()
     tok = run("grep access_token /root/wgcf-account.toml | cut -d\\' -f2").strip()
     dev = run("grep device_id /root/wgcf-account.toml | cut -d\\' -f2").strip()
-    reg = run(f"curl -fsS -m15 'https://api.cloudflareclient.com/v0a2158/reg/{dev}' "
-              f"-H 'Authorization: Bearer {tok}' -H 'User-Agent: okhttp/3.12.1'")
+    reg = run(
+        f"curl -fsS -m15 'https://api.cloudflareclient.com/v0a2158/reg/{dev}' "
+        f"-H 'Authorization: Bearer {tok}' -H 'User-Agent: okhttp/3.12.1'"
+    )
     reserved = list(base64.b64decode(json.loads(reg)["config"]["client_id"])[:3])
     addrs = [a.strip() for a in addr.split(",")]
 
     warp = {
-        "protocol": "wireguard", "tag": "warp",
+        "protocol": "wireguard",
+        "tag": "warp",
         "settings": {
-            "secretKey": priv, "address": addrs,
+            "secretKey": priv,
+            "address": addrs,
             "peers": [{"publicKey": peer, "endpoint": "162.159.192.1:2408"}],
-            "reserved": reserved, "mtu": 1280,
+            "reserved": reserved,
+            "mtu": 1280,
         },
     }
     print(f"WARP registered (reserved={reserved})")
@@ -124,10 +149,14 @@ def main() -> int:
     recreate()
     time.sleep(10)
 
-    trace = run("curl -fsS -m20 --socks5-hostname 127.0.0.1:10808 "
-                "https://www.cloudflare.com/cdn-cgi/trace 2>&1 | grep -E 'warp=|loc=' | tr '\\n' ' '").strip()
-    gem = run("curl -s -m20 --socks5-hostname 127.0.0.1:10808 -o /dev/null "
-              "-w '%{http_code}' https://gemini.google.com/ 2>&1").strip()
+    trace = run(
+        "curl -fsS -m20 --socks5-hostname 127.0.0.1:10808 "
+        "https://www.cloudflare.com/cdn-cgi/trace 2>&1 | grep -E 'warp=|loc=' | tr '\\n' ' '"
+    ).strip()
+    gem = run(
+        "curl -s -m20 --socks5-hostname 127.0.0.1:10808 -o /dev/null "
+        "-w '%{http_code}' https://gemini.google.com/ 2>&1"
+    ).strip()
     print(f"egress: {trace} | gemini: {gem}")
 
     # 3. remove the throwaway socks

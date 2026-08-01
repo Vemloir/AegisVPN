@@ -51,9 +51,7 @@ def test_node_credentials_are_unique_and_private(tmp_path):
 
 def test_central_material_is_idempotent_and_never_replaces_proxy_secret(tmp_path):
     ca_cert, _ = ensure_control_ca(tmp_path / "ca")
-    caddy_template = (
-        ROOT / "deploy/vps/control-plane/control.caddy.example"
-    )
+    caddy_template = ROOT / "deploy/vps/control-plane/control.caddy.example"
     output = tmp_path / "server"
 
     initialize_control_server(
@@ -108,9 +106,7 @@ def test_promotion_requires_fresh_error_free_matching_generation():
 
 
 def test_caddy_compose_and_agent_bind_are_private_by_construction():
-    caddyfile = (
-        ROOT / "deploy/vps/control-plane/control.caddy.example"
-    ).read_text()
+    caddyfile = (ROOT / "deploy/vps/control-plane/control.caddy.example").read_text()
     compose = (ROOT / "deploy/vps/docker-compose.yml").read_text()
     entrypoint = (ROOT / "agent/entrypoint.sh").read_text()
 
@@ -125,7 +121,7 @@ def test_caddy_compose_and_agent_bind_are_private_by_construction():
     assert "./data/control/node:/data/control:ro" in agent_service
     assert "./data/control/server:/etc/caddy/control:ro" in compose
     assert 'AGENT_BIND_HOST="${AGENT_BIND_HOST:-0.0.0.0}"' in entrypoint
-    assert "--host \"$AGENT_BIND_HOST\"" in entrypoint
+    assert '--host "$AGENT_BIND_HOST"' in entrypoint
 
 
 def test_observe_and_pull_rendering_keeps_data_plane_ports_untouched():
@@ -314,9 +310,17 @@ def test_entrypoint_and_provisioning_keep_idle_at_300():
 
     assert "XRAY_CONN_IDLE=${XRAY_CONN_IDLE:-300}" in entrypoint
     assert 'conn_idle = _int_env("XRAY_CONN_IDLE", 300)' in entrypoint
-    assert 'XRAY_CONN_IDLE = 300' in update_source
+    assert "XRAY_CONN_IDLE = 300" in update_source
     assert 'env["XRAY_CONN_IDLE"] = "300"' in update_source
     assert 'env.setdefault("XRAY_CONN_IDLE", "60")' not in update_source
+
+
+def test_warp_routes_microsoft_services_on_every_config_rebuild():
+    entrypoint = (ROOT / "agent/entrypoint.sh").read_text()
+    legacy_setup = (ROOT / "deploy/vps/setup_warp.py").read_text()
+
+    assert '"geosite:microsoft"' in entrypoint
+    assert '"geosite:microsoft"' in legacy_setup
 
 
 def test_stability_patch_preserves_data_plane_identity_and_clients():
@@ -370,8 +374,7 @@ def test_stability_patch_preserves_data_plane_identity_and_clients():
     assert patched["inbounds"] == live["inbounds"]
     assert patched["outbounds"] == live["outbounds"]
     assert any(
-        rule.get("outboundTag") == "warp"
-        for rule in patched["routing"]["rules"]
+        rule.get("outboundTag") == "warp" for rule in patched["routing"]["rules"]
     )
     assert not any(
         rule.get("network") == "udp"
@@ -397,11 +400,7 @@ def test_env_update_replaces_idle_and_preserves_unrelated_values():
         {"XRAY_CONN_IDLE": "300"},
     )
 
-    assert updated == (
-        "HOST_IP=192.0.2.10\n"
-        "XRAY_CONN_IDLE=300\n"
-        "CONTROL_MODE=apply\n"
-    )
+    assert updated == ("HOST_IP=192.0.2.10\nXRAY_CONN_IDLE=300\nCONTROL_MODE=apply\n")
 
 
 def test_agent_update_uploads_current_compose_before_recreate(monkeypatch):
@@ -425,10 +424,9 @@ def test_agent_update_uploads_current_compose_before_recreate(monkeypatch):
     monkeypatch.setattr(
         update_script,
         "run",
-        lambda actual_client, command, label="", timeout=120: events.append(
-            ("run", actual_client, command, label, timeout)
-        )
-        or "",
+        lambda actual_client, command, label="", timeout=120: (
+            events.append(("run", actual_client, command, label, timeout)) or ""
+        ),
     )
 
     update_script.update_agent(client, "192.0.2.10")
@@ -477,9 +475,7 @@ def test_stability_rollout_validates_candidate_before_restart(monkeypatch):
     monkeypatch.setattr(
         update_script,
         "_write_remote_text_atomic",
-        lambda _client, path, text, mode=0o600: writes.append(
-            (path, text, mode)
-        ),
+        lambda _client, path, text, mode=0o600: writes.append((path, text, mode)),
     )
 
     def fake_run(_client, command, label="", timeout=120):
@@ -513,9 +509,7 @@ def test_stability_rollout_validates_candidate_before_restart(monkeypatch):
     assert labels.index("validate stability candidate") < labels.index(
         "activate stability candidate"
     )
-    assert labels.index("activate stability candidate") < labels.index(
-        "restart xray"
-    )
+    assert labels.index("activate stability candidate") < labels.index("restart xray")
     assert "post-stability health" in labels
     assert all("bot" not in command for _label, command in commands)
 
@@ -557,10 +551,9 @@ def test_enable_hy2_does_not_restart_or_reconfigure_xray(monkeypatch):
     monkeypatch.setattr(
         update_script,
         "run",
-        lambda _client, command, label="", timeout=120: events.append(
-            ("run", (label, command))
-        )
-        or "hysteria\n",
+        lambda _client, command, label="", timeout=120: (
+            events.append(("run", (label, command))) or "hysteria\n"
+        ),
     )
     monkeypatch.setattr(
         update_script,
@@ -647,9 +640,7 @@ def test_hy2_private_key_is_installed_without_shell_exposure(monkeypatch):
     monkeypatch.setattr(
         update_script,
         "_write_remote_text_atomic",
-        lambda _client, path, text, mode=0o600: writes.append(
-            (path, text, mode)
-        ),
+        lambda _client, path, text, mode=0o600: writes.append((path, text, mode)),
     )
 
     def fake_run(_client, command, label="", timeout=120):
@@ -678,15 +669,11 @@ def test_hy2_certificate_automation_is_root_owned_and_restarts_only_hysteria():
     export_service = (
         ROOT / "deploy/vps/systemd/aegis-hy2-cert-export.service"
     ).read_text()
-    export_timer = (
-        ROOT / "deploy/vps/systemd/aegis-hy2-cert-export.timer"
-    ).read_text()
+    export_timer = (ROOT / "deploy/vps/systemd/aegis-hy2-cert-export.timer").read_text()
     reload_service = (
         ROOT / "deploy/vps/systemd/aegis-hy2-cert-reload.service"
     ).read_text()
-    reload_path = (
-        ROOT / "deploy/vps/systemd/aegis-hy2-cert-reload.path"
-    ).read_text()
+    reload_path = (ROOT / "deploy/vps/systemd/aegis-hy2-cert-reload.path").read_text()
 
     agent_service = compose.split("\n  agent:", 1)[1].split("\n  bot:", 1)[0]
     assert "./data/hysteria:/data/hysteria" in agent_service
