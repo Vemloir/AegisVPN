@@ -26,6 +26,9 @@ from .xray import (
 )
 
 _TELEMETRY_SEQUENCE_PATH = "/data/node-control/telemetry-sequence"
+_TELEMETRY_SEQUENCE_BLOCK = 1024
+_subscription_template_cache_key: tuple[object, ...] | None = None
+_subscription_template_cache: list[dict] = []
 
 Sleep = Callable[[float], Awaitable[None]]
 Jitter = Callable[[float], float]
@@ -84,17 +87,25 @@ def _save_telemetry_sequence(sequence: int) -> None:
             pass
 
 
-async def _build_telemetry(result: ReconcileResult | None) -> dict:
-    online = set(await get_online_emails())
-    online.update(await hysteria.online())
-    stats = await query_traffic_stats()
-    for email, counters in (await hysteria.traffic()).items():
-        bucket = stats.setdefault(email, {"uplink": 0, "downlink": 0})
-        bucket["uplink"] += int(counters.get("uplink", 0) or 0)
-        bucket["downlink"] += int(counters.get("downlink", 0) or 0)
-    state = load_applied_state()
+async def _subscription_templates() -> list[dict]:
+    global _subscription_template_cache_key, _subscription_template_cache
+
+    try:
+        config_mtime = os.stat(settings.xray_config_path).st_mtime_ns
+    except OSError:
+        config_mtime = None
+    cache_key = (
+        config_mtime,
+        settings.host_ip,
+        settings.fast_host_ip,
+        settings.xray_port,
+        settings.xray_tcp_port,
+    )
+    if config_mtime is not None and cache_key == _subscription_template_cache_key:
+        return _subscription_template_cache
+
     config = await get_xray_config()
-    subscription_templates: list[dict] = []
+    templates: list[dict] = []
     for profile, preferred_network in (("safe", "xhttp"), ("fast", "tcp")):
         inbound = find_vless_inbound(config, preferred_network=preferred_network)
         if not inbound:
@@ -105,7 +116,7 @@ async def _build_telemetry(result: ReconcileResult | None) -> dict:
             or (settings.xray_tcp_port if profile == "fast" else settings.xray_port)
             or settings.xray_port
         )
-        subscription_templates.append(
+        templates.append(
             {
                 "profile": profile,
                 "host": host,
@@ -113,12 +124,32 @@ async def _build_telemetry(result: ReconcileResult | None) -> dict:
                 "query": [[key, value] for key, value in build_subscription_query(inbound)],
             }
         )
+    if config_mtime is not None:
+        _subscription_template_cache_key = cache_key
+        _subscription_template_cache = templates
+    return templates
+
+
+async def _build_telemetry(result: ReconcileResult | None) -> dict:
+    online_xray, online_hy2, stats, hy2_stats = await asyncio.gather(
+        get_online_emails(),
+        hysteria.online(),
+        query_traffic_stats(),
+        hysteria.traffic(),
+    )
+    online = set(online_xray)
+    online.update(online_hy2)
+    for email, counters in hy2_stats.items():
+        bucket = stats.setdefault(email, {"uplink": 0, "downlink": 0})
+        bucket["uplink"] += int(counters.get("uplink", 0) or 0)
+        bucket["downlink"] += int(counters.get("downlink", 0) or 0)
+    state = load_applied_state()
     return {
         "applied_generation": state.generation,
         "applied_digest": state.digest,
         "online_emails": sorted(online),
         "stats": stats,
-        "subscription_templates": subscription_templates,
+        "subscription_templates": await _subscription_templates(),
         "reconciliation": asdict(result) if result is not None else None,
     }
 
@@ -162,6 +193,7 @@ async def control_loop(
     random_delay = jitter or (lambda maximum: random.uniform(0, maximum))
     backoff = 1.0
     sequence = _load_telemetry_sequence()
+    reserved_sequence = sequence
     _runtime_status.control_running = True
 
     try:
@@ -189,6 +221,9 @@ async def control_loop(
                     result = await _reconcile_cached_state(effective_mode)
 
                 payload = await telemetry_builder(result)
+                if sequence + 1 > reserved_sequence:
+                    reserved_sequence = sequence + _TELEMETRY_SEQUENCE_BLOCK
+                    _save_telemetry_sequence(reserved_sequence)
                 await control_client.send_telemetry(
                     sequence=sequence + 1,
                     payload=payload,
@@ -196,7 +231,6 @@ async def control_loop(
                 _runtime_status.last_telemetry_at = time.time()
                 _runtime_status.last_error_type = None
                 sequence += 1
-                _save_telemetry_sequence(sequence)
                 backoff = 1.0
             except asyncio.CancelledError:
                 raise
