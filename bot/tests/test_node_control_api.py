@@ -6,10 +6,11 @@ from pydantic import SecretStr
 from sqlalchemy import select
 
 from src.api.main import app
+from src.control import router as control_router
 from src.control.state import publish_snapshot
 from src.core.config import settings
 from src.core.database import async_session_maker, engine
-from src.models import Base, NodeTelemetry, Server, Subscription, SubscriptionServer, User
+from src.models import Base, NodeSnapshot, NodeTelemetry, Server, Subscription, SubscriptionServer, User
 
 PROXY_SECRET = "proxy-secret"
 NODE_TOKEN = "node-token-with-enough-entropy"
@@ -157,6 +158,63 @@ async def test_sync_requires_all_auth_layers_and_returns_manifest(monkeypatch):
     }
 
 
+async def test_repeated_sync_reads_existing_manifest_without_rebuilding(monkeypatch):
+    await _seed_control_node()
+    _configure_control(monkeypatch)
+    calls = 0
+    real_publish = control_router.publish_snapshot
+
+    async def counted_publish(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return await real_publish(*args, **kwargs)
+
+    monkeypatch.setattr(control_router, "publish_snapshot", counted_publish)
+    body = {
+        "applied_generation": 0,
+        "applied_digest": None,
+        "agent_version": "test-agent",
+        "capabilities": ["xray-live-api"],
+    }
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        first = await client.post("/api/node/v1/sync", json=body, headers=_headers())
+        second = await client.post("/api/node/v1/sync", json=body, headers=_headers())
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["generation"] == second.json()["generation"] == 1
+    assert calls == 1
+
+
+async def test_sync_throttles_last_seen_heartbeat_writes(monkeypatch):
+    node_id, _ = await _seed_control_node()
+    _configure_control(monkeypatch)
+    monkeypatch.setitem(settings.__dict__, "node_control_heartbeat_seconds", 30.0)
+    first_seen = datetime(2026, 8, 1, 12, 0, 0)
+    times = iter([first_seen, first_seen + timedelta(seconds=1)])
+    monkeypatch.setattr(control_router, "_utcnow", lambda: next(times))
+    body = {
+        "applied_generation": 0,
+        "applied_digest": None,
+        "agent_version": "test-agent",
+        "capabilities": [],
+    }
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        assert (await client.post("/api/node/v1/sync", json=body, headers=_headers())).status_code == 200
+        assert (await client.post("/api/node/v1/sync", json=body, headers=_headers())).status_code == 200
+
+    async with async_session_maker() as session:
+        node = await session.get(Server, node_id)
+        assert node.control_last_seen_at == first_seen
+
+
 async def test_pages_ack_and_telemetry_are_node_scoped_and_monotonic(monkeypatch):
     node_id, other_id = await _seed_control_node()
     _configure_control(monkeypatch)
@@ -235,11 +293,7 @@ async def test_pages_ack_and_telemetry_are_node_scoped_and_monotonic(monkeypatch
         other = await session.get(Server, other_id)
         telemetry = await session.get(NodeTelemetry, node_id)
         link = (
-            await session.execute(
-                select(SubscriptionServer).where(
-                    SubscriptionServer.server_id == node_id
-                )
-            )
+            await session.execute(select(SubscriptionServer).where(SubscriptionServer.server_id == node_id))
         ).scalar_one()
     assert node.applied_generation == manifest["generation"]
     assert node.applied_digest == manifest["digest"]
@@ -247,6 +301,56 @@ async def test_pages_ack_and_telemetry_are_node_scoped_and_monotonic(monkeypatch
     assert telemetry.sequence == 2
     assert telemetry.payload == {"online": 4}
     assert link.is_synced is True
+
+
+async def test_ack_prunes_old_history_but_keeps_newer_unacknowledged_snapshots(
+    monkeypatch,
+):
+    node_id, _ = await _seed_control_node()
+    _configure_control(monkeypatch)
+    async with async_session_maker() as session:
+        node = await session.get(Server, node_id)
+        for generation in range(1, 8):
+            session.add(
+                NodeSnapshot(
+                    server_id=node_id,
+                    generation=generation,
+                    schema_version=1,
+                    digest=str(generation) * 64,
+                    item_count=0,
+                    page_count=0,
+                    page_size=1,
+                )
+            )
+        node.desired_generation = 7
+        await session.commit()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            "/api/node/v1/ack",
+            json={
+                "generation": 6,
+                "digest": "6" * 64,
+                "success": True,
+            },
+            headers=_headers(),
+        )
+
+    assert response.status_code == 200
+    async with async_session_maker() as session:
+        generations = list(
+            (
+                await session.execute(
+                    select(NodeSnapshot.generation)
+                    .where(NodeSnapshot.server_id == node_id)
+                    .order_by(NodeSnapshot.generation)
+                )
+            ).scalars()
+        )
+    assert generations == [4, 5, 6, 7]
 
 
 async def test_telemetry_payload_is_bounded(monkeypatch):
@@ -275,9 +379,7 @@ async def test_credential_rotation_overlap_accepts_only_matching_pairs(monkeypat
         node = await session.get(Server, node_id)
         node.control_previous_token_hash = node.control_token_hash
         node.control_previous_cert_fingerprint = node.control_cert_fingerprint
-        node.control_previous_credential_expires_at = (
-            datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=10)
-        )
+        node.control_previous_credential_expires_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=10)
         node.control_token_hash = hashlib.sha256(new_token.encode()).hexdigest()
         node.control_cert_fingerprint = new_fingerprint
         await session.commit()
@@ -318,9 +420,7 @@ async def test_credential_rotation_overlap_accepts_only_matching_pairs(monkeypat
 
     async with async_session_maker() as session:
         node = await session.get(Server, node_id)
-        node.control_previous_credential_expires_at = (
-            datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=1)
-        )
+        node.control_previous_credential_expires_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=1)
         await session.commit()
 
     async with AsyncClient(
@@ -368,9 +468,7 @@ async def test_stale_generation_ack_cannot_roll_back_applied_state(monkeypatch):
     async with async_session_maker() as session:
         first = await publish_snapshot(session, node_id, page_size=1)
         await session.commit()
-        subscription = (
-            await session.execute(select(Subscription))
-        ).scalar_one()
+        subscription = (await session.execute(select(Subscription))).scalar_one()
         subscription.is_active = False
         await session.flush()
         second = await publish_snapshot(session, node_id, page_size=1)

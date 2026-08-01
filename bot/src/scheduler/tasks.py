@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import sqlite3
 import tarfile
 from datetime import UTC, datetime, timedelta
@@ -16,6 +17,24 @@ from src.core.logger import logger
 from src.models import NodeTelemetry, Payment, Server, Subscription, SubscriptionServer, User
 from src.services import AgentClient, NodeControlService, SubscriptionService, confirm_platega_payment, t
 from src.services.platega_client import PlategaError, get_transaction_status
+
+_TRAFFIC_EMAIL_RE = re.compile(r"^user_(\d+)_sub_(\d+)(?:_dev_(\d+))?$")
+
+
+def _index_stats_by_subscription(
+    stats: dict[str, dict],
+) -> dict[tuple[int, int], list[tuple[str, dict]]]:
+    """Group Xray counters by subscription in one pass over the payload."""
+    indexed: dict[tuple[int, int], list[tuple[str, dict]]] = {}
+    for email, counters in stats.items():
+        if not isinstance(email, str) or not isinstance(counters, dict):
+            continue
+        match = _TRAFFIC_EMAIL_RE.fullmatch(email)
+        if match is None:
+            continue
+        key = (int(match.group(1)), int(match.group(2)))
+        indexed.setdefault(key, []).append((email, counters))
+    return indexed
 
 
 def renewal_keyboard(language: str) -> InlineKeyboardMarkup:
@@ -36,14 +55,18 @@ async def reconcile_pending_platega(bot: Bot):
     cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=6)
     async with async_session_maker() as session:
         pending = (
-            await session.execute(
-                select(Payment).where(
-                    Payment.provider == "platega",
-                    Payment.status == "pending",
-                    Payment.created_at >= cutoff,
+            (
+                await session.execute(
+                    select(Payment).where(
+                        Payment.provider == "platega",
+                        Payment.status == "pending",
+                        Payment.created_at >= cutoff,
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     if not pending:
         return
 
@@ -192,11 +215,7 @@ async def poll_traffic():
         for server in servers:
             if server.control_mode == "pull":
                 telemetry = await session.get(NodeTelemetry, server.id)
-                stats = (
-                    dict((telemetry.payload or {}).get("stats") or {})
-                    if telemetry is not None
-                    else {}
-                )
+                stats = dict((telemetry.payload or {}).get("stats") or {}) if telemetry is not None else {}
             else:
                 client = AgentClient(server.agent_url, server.agent_token)
                 try:
@@ -206,6 +225,8 @@ async def poll_traffic():
                     continue
             if not stats:
                 continue
+
+            stats_index = _index_stats_by_subscription(stats)
 
             links = (
                 (
@@ -226,15 +247,13 @@ async def poll_traffic():
                 # A subscription reports traffic under several emails: the base
                 # user_X_sub_Y plus one user_X_sub_Y_dev_Z per device. Sum the
                 # deltas across all of them, keyed by a per-email cursor.
-                prefix = f"user_{sub.user_id}_sub_{sub.id}"
-                emails = [e for e in stats if e == prefix or e.startswith(f"{prefix}_dev_")]
-                if not emails:
+                entries = stats_index.get((sub.user_id, sub.id), [])
+                if not entries:
                     continue
 
                 cursors = dict(link.traffic_cursors or {})
                 delta_up = delta_down = 0
-                for email in emails:
-                    cur = stats.get(email) or {}
+                for email, cur in entries:
                     cur_up = int(cur.get("uplink", 0) or 0)
                     cur_down = int(cur.get("downlink", 0) or 0)
                     last = cursors.get(email)
@@ -492,8 +511,7 @@ async def check_servers_health(bot: Bot):
                 logger.info("Server %s (%s) recovered", server.id, server.name)
                 await _alert_admins(
                     bot,
-                    f"Нода снова в строю: {server.name}\n"
-                    f"{server.host}:{server.port}",
+                    f"Нода снова в строю: {server.name}\n{server.host}:{server.port}",
                 )
             continue
 
@@ -501,7 +519,11 @@ async def check_servers_health(bot: Bot):
         _fail_counts[server.id] = fails
         logger.warning(
             "health: %s (%s) failing %d/%d — %s",
-            server.name, server.host, fails, HEALTH_FAIL_THRESHOLD, reason,
+            server.name,
+            server.host,
+            fails,
+            HEALTH_FAIL_THRESHOLD,
+            reason,
         )
         if fails >= HEALTH_FAIL_THRESHOLD and not was_down:
             _down_servers.add(server.id)
