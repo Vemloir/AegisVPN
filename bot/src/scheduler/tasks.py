@@ -6,23 +6,55 @@ import re
 import sqlite3
 import tarfile
 import tempfile
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from aiogram import Bot
 from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaDocument
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import joinedload
 
 from src.core.config import settings
 from src.core.database import async_session_maker
 from src.core.logger import logger
-from src.models import NodeTelemetry, Payment, Server, Subscription, SubscriptionServer, User
-from src.services import AgentClient, NodeControlService, SubscriptionService, confirm_platega_payment, t
+from src.models import Device, NodeTelemetry, Payment, Server, Subscription, SubscriptionServer, User
+from src.services import AgentClient, NodeControlService, confirm_platega_payment, t
 from src.services.backup_archive import BackupConfigurationError, encrypt_backup
 from src.services.platega_client import PlategaError, get_transaction_status
 
 _TRAFFIC_EMAIL_RE = re.compile(r"^user_(\d+)_sub_(\d+)(?:_dev_(\d+))?$")
+_SCHEDULER_NETWORK_CONCURRENCY = 8
+
+
+@dataclass(frozen=True, slots=True)
+class _UnsyncedJob:
+    subscription_id: int
+    server_id: int
+    client_uuid: str
+    user_id: int
+    control_mode: str
+    agent_url: str
+    agent_token: str
+
+
+@dataclass(frozen=True, slots=True)
+class _TrafficSource:
+    server_id: int
+    control_mode: str
+    agent_url: str
+    agent_token: str
+    telemetry_stats: dict[str, dict]
+
+
+@dataclass(frozen=True, slots=True)
+class _ExpiredSubscriptionJob:
+    subscription_id: int
+    user_tg_id: int | None
+    user_language: str
+    user_banned: bool
+    client_uuids: tuple[str, ...]
+    push_targets: tuple[tuple[int, str, str], ...]
 
 
 def _index_stats_by_subscription(
@@ -101,33 +133,109 @@ async def check_expired_subscriptions(bot: Bot):
     logger.info("Running task: check_expired_subscriptions")
     async with async_session_maker() as session:
         now = datetime.now(UTC).replace(tzinfo=None)
-        result = await session.execute(
-            select(Subscription).where(
-                Subscription.expires_at <= now,
-                Subscription.is_active == True,
-            )
-        )
-        expired_subs = result.scalars().all()
-
-        for sub in expired_subs:
-            sub.is_active = False
-            await SubscriptionService.remove_subscription_from_servers(session, sub)
-
-            user_result = await session.execute(select(User).where(User.id == sub.user_id))
-            user = user_result.scalar_one_or_none()
-            if not user or user.is_banned:
-                continue
-
-            try:
-                await bot.send_message(
-                    user.tg_id,
-                    t(user.language, "expired_notice"),
-                    reply_markup=renewal_keyboard(user.language),
+        subscriptions = (
+            (
+                await session.execute(
+                    select(Subscription)
+                    .options(joinedload(Subscription.user))
+                    .where(
+                        Subscription.expires_at <= now,
+                        Subscription.is_active == True,
+                    )
                 )
-            except Exception as exc:
-                logger.error(f"Failed to send expiration notice to {user.tg_id}: {exc}")
+            )
+            .scalars()
+            .all()
+        )
+        if not subscriptions:
+            return
+        subscription_ids = [subscription.id for subscription in subscriptions]
+        device_rows = (
+            await session.execute(
+                select(Device.subscription_id, Device.uuid).where(Device.subscription_id.in_(subscription_ids))
+            )
+        ).all()
+        device_uuids: dict[int, list[str]] = {}
+        for subscription_id, client_uuid in device_rows:
+            device_uuids.setdefault(subscription_id, []).append(client_uuid)
+        server_rows = (
+            await session.execute(
+                select(
+                    SubscriptionServer.subscription_id,
+                    Server.id,
+                    Server.control_mode,
+                    Server.agent_url,
+                    Server.agent_token,
+                )
+                .join(Server, Server.id == SubscriptionServer.server_id)
+                .where(SubscriptionServer.subscription_id.in_(subscription_ids))
+            )
+        ).all()
+        servers_by_subscription: dict[int, list] = {}
+        server_ids: set[int] = set()
+        for row in server_rows:
+            servers_by_subscription.setdefault(row.subscription_id, []).append(row)
+            server_ids.add(row.id)
 
+        jobs: list[_ExpiredSubscriptionJob] = []
+        for subscription in subscriptions:
+            subscription.is_active = False
+            user = subscription.user
+            jobs.append(
+                _ExpiredSubscriptionJob(
+                    subscription_id=subscription.id,
+                    user_tg_id=user.tg_id if user is not None else None,
+                    user_language=user.language if user is not None else "ru",
+                    user_banned=user.is_banned if user is not None else True,
+                    client_uuids=(
+                        subscription.client_uuid,
+                        *device_uuids.get(subscription.id, []),
+                    ),
+                    push_targets=tuple(
+                        (row.id, row.agent_url, row.agent_token)
+                        for row in servers_by_subscription.get(subscription.id, [])
+                        if row.control_mode in {"push", "observe"}
+                    ),
+                )
+            )
+        # Pull snapshots are published in the same short transaction as the
+        # active-state transition, before any remote or Telegram I/O begins.
+        await NodeControlService.publish_for_servers(session, server_ids)
         await session.commit()
+
+    semaphore = asyncio.Semaphore(_SCHEDULER_NETWORK_CONCURRENCY)
+
+    async def revoke(agent_url: str, agent_token: str, client_uuid: str, server_id: int) -> None:
+        async with semaphore:
+            try:
+                await AgentClient(agent_url, agent_token).remove_client(client_uuid)
+            except Exception as exc:
+                logger.error(
+                    "Failed to remove client %s from server %s: %s",
+                    client_uuid,
+                    server_id,
+                    exc,
+                )
+
+    await asyncio.gather(
+        *(
+            revoke(agent_url, agent_token, client_uuid, server_id)
+            for job in jobs
+            for server_id, agent_url, agent_token in job.push_targets
+            for client_uuid in job.client_uuids
+        )
+    )
+    for job in jobs:
+        if job.user_tg_id is None or job.user_banned:
+            continue
+        try:
+            await bot.send_message(
+                job.user_tg_id,
+                t(job.user_language, "expired_notice"),
+                reply_markup=renewal_keyboard(job.user_language),
+            )
+        except Exception as exc:
+            logger.error("Failed to send expiration notice to %s: %s", job.user_tg_id, exc)
 
 
 async def remind_expiring_subscriptions(bot: Bot):
@@ -170,130 +278,198 @@ async def remind_expiring_subscriptions(bot: Bot):
 async def retry_unsynced_servers():
     logger.info("Running task: retry_unsynced_servers")
     async with async_session_maker() as session:
-        result = await session.execute(
-            select(SubscriptionServer)
-            .options(
-                joinedload(SubscriptionServer.subscription),
-                joinedload(SubscriptionServer.server),
+        rows = (
+            await session.execute(
+                select(
+                    SubscriptionServer.subscription_id,
+                    SubscriptionServer.server_id,
+                    Subscription.client_uuid,
+                    Subscription.user_id,
+                    Server.control_mode,
+                    Server.agent_url,
+                    Server.agent_token,
+                )
+                .join(Subscription, Subscription.id == SubscriptionServer.subscription_id)
+                .join(Server, Server.id == SubscriptionServer.server_id)
+                .where(
+                    SubscriptionServer.is_synced == False,
+                    Subscription.is_active == True,
+                    Server.is_active == True,
+                )
             )
-            .where(
-                SubscriptionServer.is_synced == False,
-                SubscriptionServer.subscription.has(Subscription.is_active == True),
-                SubscriptionServer.server.has(Server.is_active == True),
-            )
-        )
-        unsynced_links = result.scalars().all()
+        ).all()
+    jobs = [_UnsyncedJob(*row) for row in rows]
 
-        for sub_server in unsynced_links:
-            server = sub_server.server
-            sub = sub_server.subscription
-            if server.control_mode == "pull":
-                await NodeControlService.publish_for_servers(session, {server.id})
-                continue
-            client = AgentClient(server.agent_url, server.agent_token)
+    # Desired-state publication is local DB work. Keep it serialized because
+    # SQLite has one writer, but do not hold this session across node HTTP.
+    for server_id in sorted({job.server_id for job in jobs if job.control_mode == "pull"}):
+        async with async_session_maker() as session:
+            await NodeControlService.publish_for_servers(session, {server_id})
+            await session.commit()
+
+    semaphore = asyncio.Semaphore(_SCHEDULER_NETWORK_CONCURRENCY)
+
+    async def retry_push(job: _UnsyncedJob) -> _UnsyncedJob | None:
+        if job.control_mode == "pull":
+            return None
+        async with semaphore:
+            client = AgentClient(job.agent_url, job.agent_token)
             try:
-                email = f"user_{sub.user_id}_sub_{sub.id}"
-                success = await client.add_client(sub.client_uuid, email)
-                if success:
-                    sub_server.is_synced = True
-                    logger.info(f"Successfully synced {sub.client_uuid} to server {server.id}")
+                email = f"user_{job.user_id}_sub_{job.subscription_id}"
+                success = await client.add_client(job.client_uuid, email)
             except Exception as exc:
-                logger.error(f"Retry sync failed for {sub.client_uuid} to server {server.id}: {exc}")
+                logger.error(
+                    "Retry sync failed for %s to server %s: %s",
+                    job.client_uuid,
+                    job.server_id,
+                    exc,
+                )
+                return None
+        if not success:
+            return None
+        logger.info("Successfully synced %s to server %s", job.client_uuid, job.server_id)
+        return job
 
+    successful = [job for job in await asyncio.gather(*(retry_push(job) for job in jobs)) if job is not None]
+    if not successful:
+        return
+    async with async_session_maker() as session:
+        for job in successful:
+            await session.execute(
+                update(SubscriptionServer)
+                .where(
+                    SubscriptionServer.subscription_id == job.subscription_id,
+                    SubscriptionServer.server_id == job.server_id,
+                    SubscriptionServer.is_synced == False,
+                )
+                .values(is_synced=True)
+            )
         await session.commit()
 
 
-async def poll_traffic():
-    """Pull per-subscription byte counters from every node and accumulate them.
-
-    Xray's counters are cumulative since its last start and reset to 0 on
-    restart, so we store the last raw value per (subscription, node) and add
-    only the positive delta. A negative delta means Xray restarted — then the
-    current value itself is the delta.
-    """
-    logger.info("Running task: poll_traffic")
+async def _traffic_sources() -> list[_TrafficSource]:
     async with async_session_maker() as session:
-        servers = (await session.execute(select(Server).where(Server.is_active == True))).scalars().all()
+        server_rows = (
+            await session.execute(
+                select(
+                    Server.id,
+                    Server.control_mode,
+                    Server.agent_url,
+                    Server.agent_token,
+                ).where(Server.is_active == True)
+            )
+        ).all()
+        pull_ids = [row.id for row in server_rows if row.control_mode == "pull"]
+        telemetry_by_server: dict[int, dict[str, dict]] = {}
+        if pull_ids:
+            telemetry_rows = (
+                await session.execute(
+                    select(NodeTelemetry.server_id, NodeTelemetry.payload).where(NodeTelemetry.server_id.in_(pull_ids))
+                )
+            ).all()
+            telemetry_by_server = {
+                server_id: dict((payload or {}).get("stats") or {}) for server_id, payload in telemetry_rows
+            }
+    return [
+        _TrafficSource(
+            server_id=row.id,
+            control_mode=row.control_mode,
+            agent_url=row.agent_url,
+            agent_token=row.agent_token,
+            telemetry_stats=telemetry_by_server.get(row.id, {}),
+        )
+        for row in server_rows
+    ]
 
+
+async def _fetch_traffic_stats(
+    source: _TrafficSource,
+    semaphore: asyncio.Semaphore,
+) -> tuple[int, dict]:
+    if source.control_mode == "pull":
+        return source.server_id, source.telemetry_stats
+    async with semaphore:
+        client = AgentClient(source.agent_url, source.agent_token)
+        try:
+            return source.server_id, await client.get_stats()
+        except Exception as exc:
+            logger.warning("traffic poll: server %s stats failed: %s", source.server_id, exc)
+            return source.server_id, {}
+
+
+async def _apply_traffic_stats(server_id: int, stats: dict) -> None:
+    if not stats:
+        return
+    stats_index = _index_stats_by_subscription(stats)
+    async with async_session_maker() as session:
+        server = await session.get(Server, server_id)
+        if server is None or not server.is_active:
+            return
+        links = (
+            (
+                await session.execute(
+                    select(SubscriptionServer)
+                    .options(joinedload(SubscriptionServer.subscription))
+                    .where(SubscriptionServer.server_id == server_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
         changed = False
-        for server in servers:
-            if server.control_mode == "pull":
-                telemetry = await session.get(NodeTelemetry, server.id)
-                stats = dict((telemetry.payload or {}).get("stats") or {}) if telemetry is not None else {}
-            else:
-                client = AgentClient(server.agent_url, server.agent_token)
-                try:
-                    stats = await client.get_stats()
-                except Exception as exc:
-                    logger.warning("traffic poll: server %s stats failed: %s", server.id, exc)
-                    continue
-            if not stats:
+        for link in links:
+            sub = link.subscription
+            if sub is None:
+                continue
+            entries = stats_index.get((sub.user_id, sub.id), [])
+            if not entries:
                 continue
 
-            stats_index = _index_stats_by_subscription(stats)
-
-            links = (
-                (
-                    await session.execute(
-                        select(SubscriptionServer)
-                        .options(joinedload(SubscriptionServer.subscription))
-                        .where(SubscriptionServer.server_id == server.id)
-                    )
-                )
-                .scalars()
-                .all()
-            )
-
-            for link in links:
-                sub = link.subscription
-                if sub is None:
-                    continue
-                # A subscription reports traffic under several emails: the base
-                # user_X_sub_Y plus one user_X_sub_Y_dev_Z per device. Sum the
-                # deltas across all of them, keyed by a per-email cursor.
-                entries = stats_index.get((sub.user_id, sub.id), [])
-                if not entries:
-                    continue
-
-                cursors = dict(link.traffic_cursors or {})
-                delta_up = delta_down = 0
-                for email, cur in entries:
-                    cur_up = int(cur.get("uplink", 0) or 0)
-                    cur_down = int(cur.get("downlink", 0) or 0)
-                    last = cursors.get(email)
-                    if last is None:
-                        # First sighting (cutover or a new device): record a
-                        # baseline so we never count pre-existing counters as a
-                        # one-time spike. Deltas accrue from the next poll on.
-                        cursors[email] = [cur_up, cur_down]
-                        continue
-                    d_up = cur_up - int(last[0])
-                    if d_up < 0:  # Xray restarted → counter reset to 0
-                        d_up = cur_up
-                    d_down = cur_down - int(last[1])
-                    if d_down < 0:
-                        d_down = cur_down
-                    delta_up += d_up
-                    delta_down += d_down
+            cursors = dict(link.traffic_cursors or {})
+            delta_up = delta_down = 0
+            for email, cur in entries:
+                cur_up = int(cur.get("uplink", 0) or 0)
+                cur_down = int(cur.get("downlink", 0) or 0)
+                last = cursors.get(email)
+                if last is None:
                     cursors[email] = [cur_up, cur_down]
+                    continue
+                d_up = cur_up - int(last[0])
+                if d_up < 0:
+                    d_up = cur_up
+                d_down = cur_down - int(last[1])
+                if d_down < 0:
+                    d_down = cur_down
+                delta_up += d_up
+                delta_down += d_down
+                cursors[email] = [cur_up, cur_down]
 
-                if delta_up:
-                    sub.traffic_up_bytes = (sub.traffic_up_bytes or 0) + delta_up
-                    link.traffic_up_bytes = (link.traffic_up_bytes or 0) + delta_up
-                    # Location total lives on the server row so it survives link churn.
-                    server.traffic_up_bytes = (server.traffic_up_bytes or 0) + delta_up
-                    changed = True
-                if delta_down:
-                    sub.traffic_down_bytes = (sub.traffic_down_bytes or 0) + delta_down
-                    link.traffic_down_bytes = (link.traffic_down_bytes or 0) + delta_down
-                    server.traffic_down_bytes = (server.traffic_down_bytes or 0) + delta_down
-                    changed = True
-                if cursors != (link.traffic_cursors or {}):
-                    link.traffic_cursors = cursors  # reassign so ORM flags the change
-                    changed = True
+            if delta_up:
+                sub.traffic_up_bytes = (sub.traffic_up_bytes or 0) + delta_up
+                link.traffic_up_bytes = (link.traffic_up_bytes or 0) + delta_up
+                server.traffic_up_bytes = (server.traffic_up_bytes or 0) + delta_up
+                changed = True
+            if delta_down:
+                sub.traffic_down_bytes = (sub.traffic_down_bytes or 0) + delta_down
+                link.traffic_down_bytes = (link.traffic_down_bytes or 0) + delta_down
+                server.traffic_down_bytes = (server.traffic_down_bytes or 0) + delta_down
+                changed = True
+            if cursors != (link.traffic_cursors or {}):
+                link.traffic_cursors = cursors
+                changed = True
 
         if changed:
             await session.commit()
+
+
+async def poll_traffic():
+    """Fetch counters outside DB sessions, then apply one short batch per node."""
+    logger.info("Running task: poll_traffic")
+    sources = await _traffic_sources()
+    semaphore = asyncio.Semaphore(_SCHEDULER_NETWORK_CONCURRENCY)
+    results = await asyncio.gather(*(_fetch_traffic_stats(source, semaphore) for source in sources))
+    for server_id, stats in results:
+        await _apply_traffic_stats(server_id, stats)
 
 
 def _make_full_backup() -> Path | None:
