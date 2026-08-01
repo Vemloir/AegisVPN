@@ -315,6 +315,16 @@ def test_entrypoint_and_provisioning_keep_idle_at_300():
     assert 'env.setdefault("XRAY_CONN_IDLE", "60")' not in update_source
 
 
+def test_entrypoint_publishes_env_and_xray_config_atomically():
+    entrypoint = (ROOT / "agent/entrypoint.sh").read_text()
+
+    assert 'ENV_TEMP=$(mktemp "$(dirname "$ENV_FILE")/.agent.env.XXXXXX")' in entrypoint
+    assert 'mv -f "$ENV_TEMP" "$ENV_FILE"' in entrypoint
+    assert "tempfile.mkstemp" in entrypoint
+    assert "os.replace(temporary_path, config_path)" in entrypoint
+    assert "os.fsync(directory)" in entrypoint
+
+
 def test_warp_routes_microsoft_services_on_every_config_rebuild():
     entrypoint = (ROOT / "agent/entrypoint.sh").read_text()
     legacy_setup = (ROOT / "deploy/vps/setup_warp.py").read_text()
