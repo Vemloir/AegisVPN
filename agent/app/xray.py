@@ -160,18 +160,42 @@ def api_server() -> str:
 
 async def run_xray_api(args: list[str]) -> tuple[int, str]:
     cmd = ["xray", "api", *args]
+    returncode, out, _ = await _run_process(
+        cmd,
+        timeout=8,
+        stderr_to_stdout=True,
+    )
+    if returncode == 124:
+        return returncode, "timeout"
+    return returncode, out.decode("utf-8", "replace")
+
+
+async def _run_process(
+    command: list[str],
+    *,
+    timeout: float,
+    stderr_to_stdout: bool = False,
+) -> tuple[int, bytes, bytes]:
+    """Run one child with a deadline and always reap it after termination.
+
+    Return code 124 is reserved for a local timeout, matching the conventional
+    ``timeout(1)`` status. The bytes returned after a timeout come from the
+    mandatory post-kill ``communicate()`` call and are useful for bounded local
+    diagnostics without leaving a zombie process behind.
+    """
     proc = await asyncio.create_subprocess_exec(
-        *cmd,
+        *command,
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
+        stderr=(asyncio.subprocess.STDOUT if stderr_to_stdout else asyncio.subprocess.PIPE),
     )
     try:
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=8)
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except TimeoutError:
         proc.kill()
-        return 1, "timeout"
-    return proc.returncode or 0, out.decode("utf-8", "replace")
+        out, err = await proc.communicate()
+        return 124, out or b"", err or b""
+    return proc.returncode or 0, out or b"", err or b""
 
 
 async def wait_for_xray_ready(
@@ -187,9 +211,7 @@ async def wait_for_xray_ready(
     """
     for attempt in range(max(1, attempts)):
         try:
-            return_code, _ = await run_xray_api(
-                ["statsquery", f"--server={api_server()}", "user>>>"]
-            )
+            return_code, _ = await run_xray_api(["statsquery", f"--server={api_server()}", "user>>>"])
         except (OSError, RuntimeError):
             return_code = 1
         if return_code == 0:
@@ -245,6 +267,22 @@ async def xray_api_remove(tag: str, email: str) -> bool:
     return ok
 
 
+def normalize_online_name(value: str) -> str | None:
+    """Return an email from Xray's online-stat name or a plain email.
+
+    The pinned Xray emits ``user>>>EMAIL>>>online``. Older/newer compatible
+    outputs may already contain the plain email. Delimiter-bearing values with
+    any other shape are stat names for a different metric and must not leak into
+    telemetry as device identities.
+    """
+    if ">>>" not in value:
+        return value or None
+    parts = value.split(">>>")
+    if len(parts) == 3 and parts[0] == "user" and parts[2] == "online":
+        return parts[1] or None
+    return None
+
+
 def _parse_online_users(raw: bytes) -> list[str]:
     """Extract the list of online user emails from `statsgetallonlineusers` output.
 
@@ -258,16 +296,18 @@ def _parse_online_users(raw: bytes) -> list[str]:
         return []
     users = data.get("users")
     if isinstance(users, dict):
-        return [str(k) for k in users.keys()]
+        return [email for key in users if (email := normalize_online_name(str(key)))]
     if isinstance(users, list):
         emails: list[str] = []
         for item in users:
             if isinstance(item, str):
-                emails.append(item)
-            elif isinstance(item, dict):
-                email = item.get("email") or item.get("user") or item.get("name")
+                email = normalize_online_name(item)
                 if email:
-                    emails.append(str(email))
+                    emails.append(email)
+            elif isinstance(item, dict):
+                value = item.get("email") or item.get("user") or item.get("name")
+                if value and (email := normalize_online_name(str(value))):
+                    emails.append(email)
         return emails
     return []
 
@@ -280,13 +320,18 @@ async def get_online_emails() -> list[str]:
     whether it is connected — no traffic-delta guessing.
     """
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "xray", "api", "statsgetallonlineusers", f"--server={api_server()}",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        returncode, out, _ = await _run_process(
+            [
+                "xray",
+                "api",
+                "statsgetallonlineusers",
+                f"--server={api_server()}",
+            ],
+            timeout=5,
         )
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
-    except (TimeoutError, Exception):
+    except Exception:
+        return []
+    if returncode != 0:
         return []
     return _parse_online_users(out)
 
@@ -303,22 +348,22 @@ async def query_traffic_stats() -> dict[str, dict[str, int]]:
     delta accounting on its side.
     """
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "xray",
-            "api",
-            "statsquery",
-            f"--server={api_server()}",
-            "user>>>",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        returncode, out, err = await _run_process(
+            [
+                "xray",
+                "api",
+                "statsquery",
+                f"--server={api_server()}",
+                "user>>>",
+            ],
+            timeout=10,
         )
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=10)
-    except TimeoutError:
-        raise HTTPException(status_code=504, detail="xray api statsquery timed out") from None
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"stats query failed: {e}") from e
 
-    if proc.returncode != 0:
+    if returncode == 124:
+        raise HTTPException(status_code=504, detail="xray api statsquery timed out")
+    if returncode != 0:
         detail = (err or b"").decode("utf-8", errors="replace")[:200]
         raise HTTPException(status_code=500, detail=f"xray api error: {detail}")
 

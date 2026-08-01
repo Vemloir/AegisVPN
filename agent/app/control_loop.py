@@ -2,8 +2,9 @@ import asyncio
 import os
 import random
 import tempfile
+import time
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from typing import Literal
 
 from . import hysteria
@@ -13,6 +14,7 @@ from .control_models import DesiredSnapshot
 from .reconcile import (
     ReconcileResult,
     load_applied_state,
+    load_pending_revocations,
     reconcile_snapshot,
 )
 from .xray import (
@@ -28,6 +30,29 @@ _TELEMETRY_SEQUENCE_PATH = "/data/node-control/telemetry-sequence"
 Sleep = Callable[[float], Awaitable[None]]
 Jitter = Callable[[float], float]
 TelemetryBuilder = Callable[[ReconcileResult | None], Awaitable[dict]]
+ControlRunner = Callable[..., Awaitable[None]]
+
+
+@dataclass(slots=True)
+class ControlRuntimeStatus:
+    supervisor_running: bool = False
+    control_running: bool = False
+    last_sync_at: float | None = None
+    last_telemetry_at: float | None = None
+    last_error_type: str | None = None
+
+
+_runtime_status = ControlRuntimeStatus()
+
+
+def control_readiness() -> dict[str, object]:
+    return {
+        "supervisor_running": _runtime_status.supervisor_running,
+        "control_running": _runtime_status.control_running,
+        "last_sync_at": _runtime_status.last_sync_at,
+        "last_telemetry_at": _runtime_status.last_telemetry_at,
+        "last_error_type": _runtime_status.last_error_type,
+    }
 
 
 def _load_telemetry_sequence() -> int:
@@ -74,18 +99,10 @@ async def _build_telemetry(result: ReconcileResult | None) -> dict:
         inbound = find_vless_inbound(config, preferred_network=preferred_network)
         if not inbound:
             continue
-        host = (
-            settings.fast_host_ip
-            if profile == "fast" and settings.fast_host_ip
-            else settings.host_ip
-        )
+        host = settings.fast_host_ip if profile == "fast" and settings.fast_host_ip else settings.host_ip
         port = int(
             inbound.get("port")
-            or (
-                settings.xray_tcp_port
-                if profile == "fast"
-                else settings.xray_port
-            )
+            or (settings.xray_tcp_port if profile == "fast" else settings.xray_port)
             or settings.xray_port
         )
         subscription_templates.append(
@@ -93,10 +110,7 @@ async def _build_telemetry(result: ReconcileResult | None) -> dict:
                 "profile": profile,
                 "host": host,
                 "port": port,
-                "query": [
-                    [key, value]
-                    for key, value in build_subscription_query(inbound)
-                ],
+                "query": [[key, value] for key, value in build_subscription_query(inbound)],
             }
         )
     return {
@@ -111,6 +125,11 @@ async def _build_telemetry(result: ReconcileResult | None) -> dict:
 
 async def _reconcile_cached_state(mode: str) -> ReconcileResult | None:
     if mode != "apply":
+        return None
+    # AppliedState is intentionally advanced only after every revoke side
+    # effect succeeds. While a durable revocation is pending it therefore
+    # describes the older, still-authorized state and must never be replayed.
+    if load_pending_revocations():
         return None
     applied = load_applied_state()
     if applied.generation < 1 or not applied.digest:
@@ -139,17 +158,21 @@ async def control_loop(
     if effective_mode not in {"observe", "apply"}:
         return
     stop = stop_event or asyncio.Event()
-    control_client = client or ControlClient.from_settings()
+    control_client = client
     random_delay = jitter or (lambda maximum: random.uniform(0, maximum))
     backoff = 1.0
     sequence = _load_telemetry_sequence()
+    _runtime_status.control_running = True
 
     try:
+        if control_client is None:
+            control_client = ControlClient.from_settings()
         while not stop.is_set():
             result: ReconcileResult | None = None
             try:
                 applied = load_applied_state()
                 snapshot = await control_client.sync(applied)
+                _runtime_status.last_sync_at = time.time()
                 if snapshot is not None:
                     result = await reconcile_snapshot(
                         snapshot,
@@ -170,34 +193,69 @@ async def control_loop(
                     sequence=sequence + 1,
                     payload=payload,
                 )
+                _runtime_status.last_telemetry_at = time.time()
+                _runtime_status.last_error_type = None
                 sequence += 1
                 _save_telemetry_sequence(sequence)
                 backoff = 1.0
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                _runtime_status.last_error_type = type(exc).__name__
                 # Never include exception text: HTTP libraries can embed URLs,
                 # headers or response bodies containing node credentials/UUIDs.
                 print(f"control loop error: {type(exc).__name__}")
                 try:
                     await _reconcile_cached_state(effective_mode)
                 except Exception as cached_exc:
-                    print(
-                        "cached control reconciliation error: "
-                        f"{type(cached_exc).__name__}"
-                    )
+                    print(f"cached control reconciliation error: {type(cached_exc).__name__}")
                 if stop.is_set():
                     break
                 await sleep(max(0.0, random_delay(backoff)))
                 backoff = min(60.0, backoff * 2)
     finally:
-        await control_client.close()
+        _runtime_status.control_running = False
+        if control_client is not None:
+            await control_client.close()
+
+
+async def supervise_control_loop(
+    stop_event: asyncio.Event | None = None,
+    *,
+    mode: Literal["observe", "apply"] | None = None,
+    sleep: Sleep = asyncio.sleep,
+    runner: ControlRunner = control_loop,
+) -> None:
+    """Keep the outbound control task alive across startup/runtime failures."""
+    effective_mode = mode or settings.control_mode
+    if effective_mode not in {"observe", "apply"}:
+        return
+    stop = stop_event or asyncio.Event()
+    backoff = 1.0
+    _runtime_status.supervisor_running = True
+    try:
+        while not stop.is_set():
+            try:
+                await runner(stop, mode=effective_mode)
+                if stop.is_set():
+                    break
+                raise RuntimeError("control loop stopped unexpectedly")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                _runtime_status.last_error_type = type(exc).__name__
+                if stop.is_set():
+                    break
+                await sleep(backoff)
+                backoff = min(60.0, backoff * 2)
+    finally:
+        _runtime_status.supervisor_running = False
 
 
 def start_control_task() -> asyncio.Task | None:
     if settings.control_mode == "off":
         return None
     return asyncio.create_task(
-        control_loop(mode=settings.control_mode),
-        name="agent-control-loop",
+        supervise_control_loop(mode=settings.control_mode),
+        name="agent-control-supervisor",
     )

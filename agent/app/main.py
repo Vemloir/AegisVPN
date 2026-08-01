@@ -5,6 +5,7 @@ limiter in :mod:`app.connlimit`, and auth in :mod:`app.security`.
 """
 
 import asyncio
+import time
 from contextlib import suppress
 from urllib.parse import quote, urlencode
 
@@ -15,8 +16,9 @@ from . import hysteria
 from .certificate_sync import certificate_sync_loop
 from .config import settings
 from .connlimit import conn_limit_loop, set_override
-from .control_loop import start_control_task
+from .control_loop import control_readiness, start_control_task
 from .models import ClientAddRequest, ClientRemoveRequest, ConnLimitRequest, Hy2AuthRequest
+from .reconcile import retry_pending_revocations
 from .security import verify_token
 from .xray import (
     build_client_record,
@@ -49,6 +51,7 @@ async def _start_background_tasks() -> None:
     # Populate the Hysteria2 user set from the on-disk xray config so auth works
     # immediately. No-op (empty set) on nodes without any vless clients.
     await hysteria.refresh()
+    await retry_pending_revocations()
     _control_task = start_control_task()
     if settings.hy2_enabled and settings.control_mode != "off":
         _certificate_task = asyncio.create_task(
@@ -80,7 +83,27 @@ async def health():
             client_id = client.get("id")
             if client_id:
                 unique_clients.add(client_id)
-    return {"status": "ok", "clients": len(unique_clients)}
+    control: dict[str, object] | None = None
+    if settings.control_mode != "off":
+        control = control_readiness()
+        task_alive = _control_task is not None and not _control_task.done()
+        stale_after = max(120, int(settings.control_timeout_seconds) * 3)
+        now = time.time()
+        last_sync = control.get("last_sync_at")
+        last_telemetry = control.get("last_telemetry_at")
+        activity_fresh = all(
+            isinstance(value, (int, float)) and now - value <= stale_after for value in (last_sync, last_telemetry)
+        )
+        if not task_alive or not control.get("supervisor_running") or not activity_fresh:
+            raise HTTPException(
+                status_code=503,
+                detail={"status": "not-ready", "control": control},
+            )
+    return {
+        "status": "ok",
+        "clients": len(unique_clients),
+        "control": control,
+    }
 
 
 @app.post("/conn-limit", dependencies=[Depends(verify_token)])

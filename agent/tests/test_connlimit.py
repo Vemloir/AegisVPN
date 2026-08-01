@@ -139,6 +139,31 @@ async def test_unlimited_user_never_kicked_or_blocked(monkeypatch):
     assert blocked == []
 
 
+async def test_online_user_stats_error_preserves_previous_block_rule(monkeypatch):
+    connlimit._prev_had_excess = True
+    sib_calls: list[list[str]] = []
+
+    async def empty_hy2_counts():
+        return {}
+
+    async def failing_xray(args):
+        if args[0] == "statsgetallonlineusers":
+            return 1, "local api unavailable"
+        if args[0] == "sib":
+            sib_calls.append(args)
+            return 0, ""
+        raise AssertionError(args)
+
+    monkeypatch.setattr(connlimit.hysteria, "online_counts", empty_hy2_counts)
+    monkeypatch.setattr(connlimit, "run_xray_api", failing_xray)
+
+    with pytest.raises(connlimit.StatsQueryError):
+        await connlimit.enforce_conn_limit_once()
+
+    assert sib_calls == []
+    assert connlimit._prev_had_excess is True
+
+
 @pytest.mark.parametrize("data", [b'{"user_1_sub_1": 2, "u2": 1}', b'["user_1_sub_1"]'])
 async def test_hy2_online_counts_shape(monkeypatch, data):
     from app import hysteria

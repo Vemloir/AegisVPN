@@ -83,6 +83,11 @@ async def _patch_runtime(monkeypatch, tmp_path):
         "_APPLIED_STATE_PATH",
         str(tmp_path / "applied-state.json"),
     )
+    monkeypatch.setattr(
+        reconcile,
+        "_PENDING_REVOCATIONS_PATH",
+        str(tmp_path / "pending-revocations.json"),
+    )
     monkeypatch.setattr(connlimit, "_OVERRIDES_PATH", str(tmp_path / "conn-limits.json"))
     connlimit._overrides.clear()
 
@@ -131,17 +136,9 @@ async def test_reconcile_applies_exact_state_and_is_idempotent(monkeypatch, tmp_
         "keep",
         "new-device",
     }
-    assert all(
-        "flow" not in client for client in vless[0]["settings"]["clients"]
-    )
-    assert all(
-        client["flow"] == "xtls-rprx-vision"
-        for client in vless[1]["settings"]["clients"]
-    )
-    assert {
-        (tag, record["id"], record.get("flow"))
-        for tag, record in additions
-    } == {
+    assert all("flow" not in client for client in vless[0]["settings"]["clients"])
+    assert all(client["flow"] == "xtls-rprx-vision" for client in vless[1]["settings"]["clients"])
+    assert {(tag, record["id"], record.get("flow")) for tag, record in additions} == {
         ("vless-xhttp", "new-device", None),
         ("vless-tcp", "new-device", "xtls-rprx-vision"),
     }
@@ -196,6 +193,84 @@ async def test_failed_live_apply_never_advances_applied_state(monkeypatch, tmp_p
         await reconcile.reconcile_snapshot(_snapshot(), observe=False)
 
     assert reconcile.load_applied_state().generation == 0
+
+
+async def test_failed_hysteria_kick_is_retried_for_identical_snapshot(
+    monkeypatch,
+    tmp_path,
+):
+    _, _, _, events = await _patch_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        reconcile,
+        "_PENDING_REVOCATIONS_PATH",
+        str(tmp_path / "pending-revocations.json"),
+        raising=False,
+    )
+    kick_attempts = 0
+
+    async def flaky_kick(emails):
+        nonlocal kick_attempts
+        kick_attempts += 1
+        events.append(("kick", list(emails)))
+        return kick_attempts > 1
+
+    monkeypatch.setattr(reconcile.hysteria, "kick", flaky_kick)
+
+    with pytest.raises(reconcile.ReconcileError, match="Hysteria"):
+        await reconcile.reconcile_snapshot(_snapshot(), observe=False)
+
+    assert reconcile.load_pending_revocations() == {
+        "user_2_sub_2",
+        "user_2_sub_2_dev_3",
+    }
+    assert reconcile.load_applied_state().generation == 0
+
+    result = await reconcile.reconcile_snapshot(_snapshot(), observe=False)
+
+    assert result.success is True
+    assert kick_attempts == 2
+    assert reconcile.load_pending_revocations() == set()
+    assert reconcile.load_applied_state().generation == 8
+
+
+async def test_startup_retries_only_revocations_absent_from_current_config(
+    monkeypatch,
+    tmp_path,
+):
+    config_path = tmp_path / "xray.json"
+    config = _config()
+    for inbound in config["inbounds"]:
+        if inbound.get("protocol") == "vless":
+            inbound["settings"]["clients"] = [
+                client for client in inbound["settings"]["clients"] if client.get("email") != "user_2_sub_2"
+            ]
+    config_path.write_text(json.dumps(config))
+    monkeypatch.setattr(xray.settings, "xray_config_path", str(config_path))
+    monkeypatch.setattr(
+        reconcile,
+        "_PENDING_REVOCATIONS_PATH",
+        str(tmp_path / "pending-revocations.json"),
+        raising=False,
+    )
+    reconcile.save_pending_revocations({"user_2_sub_2"})
+    events: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(
+        reconcile.hysteria,
+        "refresh_from_config",
+        lambda current: events.append(("refresh", current)),
+    )
+
+    async def kick(emails):
+        events.append(("kick", list(emails)))
+        return True
+
+    monkeypatch.setattr(reconcile.hysteria, "kick", kick)
+
+    assert await reconcile.retry_pending_revocations() is True
+    assert events[0][0] == "refresh"
+    assert events[1] == ("kick", ["user_2_sub_2"])
+    assert reconcile.load_pending_revocations() == set()
 
 
 async def _false():

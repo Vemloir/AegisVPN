@@ -11,7 +11,7 @@ import os
 
 from . import hysteria
 from .config import settings
-from .xray import api_server, run_xray_api
+from .xray import api_server, normalize_online_name, run_xray_api
 
 # Whether any IPs were blocked in the previous cycle. Used to avoid
 # calling sib (which reads stdin and spams errors) when there's nothing to do.
@@ -23,6 +23,10 @@ _prev_had_excess: bool = False
 # (`settings.conn_limit`). Persisted so it survives node/agent restarts.
 _OVERRIDES_PATH = "/data/conn_limits.json"
 _overrides: dict[int, int] = {}
+
+
+class StatsQueryError(RuntimeError):
+    """The local Xray API did not provide a complete authoritative sample."""
 
 
 def _load_overrides() -> None:
@@ -76,10 +80,7 @@ def replace_overrides(overrides: dict[int, int]) -> None:
     Persist before swapping the in-memory map so a failed write cannot be
     acknowledged as applied.
     """
-    normalized = {
-        int(user_id): max(0, int(limit))
-        for user_id, limit in overrides.items()
-    }
+    normalized = {int(user_id): max(0, int(limit)) for user_id, limit in overrides.items()}
     _write_overrides(normalized)
     global _overrides
     _overrides = normalized
@@ -107,16 +108,21 @@ async def online_users() -> list[str]:
     """Emails of users with at least one live session right now."""
     rc, out = await run_xray_api(["statsgetallonlineusers", f"--server={api_server()}"])
     if rc != 0:
-        return []
+        raise StatsQueryError("online user query failed")
     try:
-        names = json.loads(out or "{}").get("users", []) or []
+        payload = json.loads(out or "{}")
     except json.JSONDecodeError:
-        return []
-    emails = []
-    for n in names:  # "user>>>EMAIL>>>online"
-        parts = n.split(">>>")
-        if len(parts) >= 3 and parts[0] == "user":
-            emails.append(parts[1])
+        raise StatsQueryError("online user query returned invalid JSON") from None
+    if not isinstance(payload, dict):
+        raise StatsQueryError("online user query returned an invalid payload")
+    names = payload.get("users", [])
+    if not isinstance(names, (list, dict)):
+        raise StatsQueryError("online user query returned an invalid users shape")
+    emails: list[str] = []
+    for name in names:
+        email = normalize_online_name(str(name))
+        if email:
+            emails.append(email)
     return emails
 
 
@@ -124,11 +130,20 @@ async def online_ips(email: str) -> dict[str, int]:
     """{source_ip: last_seen_unix} for a user's live sessions."""
     rc, out = await run_xray_api(["statsonlineiplist", f"--server={api_server()}", "-email", email])
     if rc != 0:
-        return {}
+        raise StatsQueryError("online IP query failed")
     try:
-        return json.loads(out or "{}").get("ips", {}) or {}
+        payload = json.loads(out or "{}")
     except json.JSONDecodeError:
-        return {}
+        raise StatsQueryError("online IP query returned invalid JSON") from None
+    if not isinstance(payload, dict):
+        raise StatsQueryError("online IP query returned an invalid payload")
+    ips = payload.get("ips", {})
+    if not isinstance(ips, dict):
+        raise StatsQueryError("online IP query returned an invalid ips shape")
+    try:
+        return {str(ip): int(last_seen) for ip, last_seen in ips.items()}
+    except (TypeError, ValueError):
+        raise StatsQueryError("online IP query returned invalid timestamps") from None
 
 
 async def enforce_conn_limit_once() -> int:
