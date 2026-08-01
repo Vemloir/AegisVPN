@@ -87,11 +87,9 @@ class Server(Base):
     hy2_obfs_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     hy2_up: Mapped[str | None] = mapped_column(String(32), nullable=True)
     hy2_down: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    # Hy2 TLS SNI = the CA cert's domain (one shared Let's Encrypt cert + one
-    # DuckDNS domain across all nodes). Like the obfs password, it is a value the
-    # operator sets via a direct DB update (never shipped in the migration), and
-    # is REQUIRED for a usable link: the client validates this name against the
-    # real CA cert (no insecure — the xray-core fork rejects self-signed certs).
+    # Hy2 TLS SNI for this node's own certificate. Nodes sharing an SNI still
+    # require separate per-node bundles; the control endpoint rejects a shared
+    # long-lived private key. It is required for a usable client link.
     hy2_sni: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     @property

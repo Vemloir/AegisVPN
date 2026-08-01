@@ -380,7 +380,8 @@ async def cq_admin_user_connlimit(call: CallbackQuery):
     text, _ = rendered
     prompt = (
         f"{text}\n\n{html.bold('Лимит подключений')}\n"
-        "Сколько одновременных подключений (IP) разрешить этому пользователю?\n"
+        "Сколько одновременных сетевых сессий разрешить этому пользователю? "
+        "Xray считает источники IP, Hy2 — сессии.\n"
         "«Без лимита» — снять ограничение совсем."
     )
     await call.message.edit_text(prompt, parse_mode="HTML", reply_markup=user_conn_limit_keyboard(tg_id))  # type: ignore
@@ -413,7 +414,9 @@ async def cq_admin_user_connlimit_custom(call: CallbackQuery, state: FSMContext)
     await state.set_state(AdminStates.waiting_user_conn_limit)
     await state.update_data(conn_limit_tg_id=tg_id)
     await call.message.edit_text(  # type: ignore
-        f"{html.bold('Лимит подключений')}\nОтправьте число (сколько одновременных IP разрешить, 0 — без лимита).",
+        f"{html.bold('Лимит подключений')}\n"
+        "Отправьте число одновременных сетевых сессий (Xray считает источники IP, "
+        "Hy2 — сессии; 0 — без лимита).",
         parse_mode="HTML",
         reply_markup=cancel_keyboard(f"admin_user_show:{tg_id}"),
     )

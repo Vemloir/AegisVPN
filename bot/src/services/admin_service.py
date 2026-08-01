@@ -287,7 +287,8 @@ class AdminService:
     async def set_user_conn_limit(tg_id: int, limit: int | None) -> tuple[User | None, int, int]:
         """Set a user's connection-limit override and push it to every node.
 
-        ``limit``: None → node default; 0 → unlimited; N>0 → at most N IPs.
+        ``limit``: None → node default; 0 → unlimited; N>0 → at most N
+        protocol-specific concurrent sources/sessions.
         Returns ``(user, pushed_ok, total_nodes)``; user is None if not found.
         """
         async with async_session_maker() as session:
