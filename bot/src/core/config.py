@@ -76,10 +76,13 @@ class Settings(BaseSettings):
     # (agent CONN_LIMIT). Shown in the admin card when a user has no override.
     default_conn_limit: int = 5
 
-    # Daily DB backup: a compressed dump is sent to each admin in Telegram.
+    # Disaster-recovery backup. Production stores only the offline recovery
+    # public key; the private key must never be copied to the VPS.
     backup_enabled: bool = True
     backup_hour: int = 4  # UTC hour for the daily backup
     backup_keep: int = 7  # local rotated copies kept under /data/backups
+    backup_dir: str = "/data/backups"
+    backup_public_key_file: str = "/control/backup-public-key.pem"
 
     # Offline GeoIP (DB-IP City Lite) for the "added from" location on devices.
     # Downloaded into the persistent /data volume on first boot, refreshed monthly.

@@ -1,8 +1,11 @@
 import asyncio
+import io
 import json
+import os
 import re
 import sqlite3
 import tarfile
+import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -16,6 +19,7 @@ from src.core.database import async_session_maker
 from src.core.logger import logger
 from src.models import NodeTelemetry, Payment, Server, Subscription, SubscriptionServer, User
 from src.services import AgentClient, NodeControlService, SubscriptionService, confirm_platega_payment, t
+from src.services.backup_archive import BackupConfigurationError, encrypt_backup
 from src.services.platega_client import PlategaError, get_transaction_status
 
 _TRAFFIC_EMAIL_RE = re.compile(r"^user_(\d+)_sub_(\d+)(?:_dev_(\d+))?$")
@@ -293,11 +297,15 @@ async def poll_traffic():
 
 
 def _make_full_backup() -> Path | None:
-    """Create AegisVPN-BACKUP-DD.MM.YYYY-HH:MM.tar.gz containing:
+    """Create an encrypted disaster-recovery archive containing:
       - aegis.db  (consistent SQLite snapshot via online backup API)
-      - agent.env (Finland Reality keys + agent token)
+      - agent.env (Reality keys + agent token)
       - bot.env   (bot token, admin IDs and other critical settings)
-    Returns the archive path, or None if the DB is not SQLite."""
+
+    The plaintext tar exists only in memory. The only persistent output is an
+    authenticated ciphertext decryptable by the offline recovery private key.
+    Returns the encrypted archive path, or None if the DB is not SQLite.
+    """
     if not settings.db_url.startswith("sqlite+aiosqlite"):
         return None
 
@@ -306,62 +314,91 @@ def _make_full_backup() -> Path | None:
         logger.warning("backup: db file %s missing", src)
         return None
 
-    out_dir = Path("/data/backups")
-    out_dir.mkdir(parents=True, exist_ok=True)
+    public_key_path = Path(settings.backup_public_key_file)
+    try:
+        public_key_pem = public_key_path.read_bytes()
+    except OSError as exc:
+        raise BackupConfigurationError(f"backup public key is unavailable at {public_key_path}") from exc
+
+    out_dir = Path(settings.backup_dir)
+    out_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    out_dir.chmod(0o700)
 
     stamp = datetime.now(UTC).strftime("%d.%m.%Y-%H:%M")
-    archive = out_dir / f"AegisVPN-BACKUP-{stamp}.tar.gz"
-    db_snap = out_dir / "_aegis_snap.db"
-    bot_env_tmp = out_dir / "_bot.env"
+    archive = out_dir / f"AegisVPN-BACKUP-{stamp}.aegis"
 
-    # 1. Consistent DB snapshot
-    dst = sqlite3.connect(db_snap)
+    with tempfile.TemporaryDirectory(prefix=".backup-", dir=out_dir) as temp_dir:
+        Path(temp_dir).chmod(0o700)
+        db_snap = Path(temp_dir) / "aegis.db"
+        dst = sqlite3.connect(db_snap)
+        try:
+            with sqlite3.connect(f"file:{src}?mode=ro", uri=True) as live:
+                live.backup(dst)
+        finally:
+            dst.close()
+        db_snap.chmod(0o600)
+
+        lines = [
+            f"BOT_TOKEN={settings.bot_token.get_secret_value()}",
+            f"ADMIN_IDS={json.dumps(settings.admin_ids)}",
+        ]
+        for key, val in [
+            ("BOT_DOMAIN", settings.bot_domain),
+            ("PUBLIC_BASE_URL", settings.public_base_url),
+            ("SUBSCRIPTION_PUBLIC_BASE_URL", settings.subscription_public_base_url),
+            ("BOT_PUBLIC_URL", settings.bot_public_url),
+            ("SUPPORT_PUBLIC_URL", settings.support_public_url),
+            ("SITE_PUBLIC_URL", settings.site_public_url),
+            ("TELEGRAM_MODE", settings.telegram_mode),
+            ("WEBAPP_PORT", settings.webapp_port),
+            ("SITE_TITLE", settings.site_title),
+            ("SUBSCRIPTION_TITLE", settings.subscription_title),
+        ]:
+            if val is not None:
+                lines.append(f"{key}={val}")
+        bot_env = ("\n".join(lines) + "\n").encode()
+
+        plaintext = io.BytesIO()
+        with tarfile.open(fileobj=plaintext, mode="w:gz") as tar:
+            _add_backup_bytes(tar, "aegis.db", db_snap.read_bytes())
+            _add_backup_bytes(tar, "bot.env", bot_env)
+            agent_env = Path(settings.bootstrap_server_agent_env)
+            if agent_env.exists():
+                _add_backup_bytes(tar, "agent.env", agent_env.read_bytes())
+            else:
+                logger.warning("backup: agent.env not found at %s", agent_env)
+
+        encrypted = encrypt_backup(plaintext.getvalue(), public_key_pem)
+
+    fd, temp_name = tempfile.mkstemp(prefix=".encrypted-", dir=out_dir)
     try:
-        with sqlite3.connect(f"file:{src}?mode=ro", uri=True) as live:
-            live.backup(dst)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(encrypted)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp_name, archive)
+        archive.chmod(0o600)
     finally:
-        dst.close()
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        Path(temp_name).unlink(missing_ok=True)
 
-    # 2. Reconstruct bot.env from live settings
-    lines = [
-        f"BOT_TOKEN={settings.bot_token.get_secret_value()}",
-        f"ADMIN_IDS={json.dumps(settings.admin_ids)}",
-    ]
-    for key, val in [
-        ("BOT_DOMAIN", settings.bot_domain),
-        ("PUBLIC_BASE_URL", settings.public_base_url),
-        ("SUBSCRIPTION_PUBLIC_BASE_URL", settings.subscription_public_base_url),
-        ("BOT_PUBLIC_URL", settings.bot_public_url),
-        ("SUPPORT_PUBLIC_URL", settings.support_public_url),
-        ("SITE_PUBLIC_URL", settings.site_public_url),
-        ("TELEGRAM_MODE", settings.telegram_mode),
-        ("WEBAPP_PORT", settings.webapp_port),
-        ("SITE_TITLE", settings.site_title),
-        ("SUBSCRIPTION_TITLE", settings.subscription_title),
-    ]:
-        if val is not None:
-            lines.append(f"{key}={val}")
-    bot_env_tmp.write_text("\n".join(lines) + "\n")
-
-    # 3. Pack everything
-    agent_env = Path(settings.bootstrap_server_agent_env)  # /vpn-data/agent.env
-    with tarfile.open(archive, "w:gz") as tar:
-        tar.add(db_snap, arcname="aegis.db")
-        tar.add(bot_env_tmp, arcname="bot.env")
-        if agent_env.exists():
-            tar.add(agent_env, arcname="agent.env")
-        else:
-            logger.warning("backup: agent.env not found at %s", agent_env)
-
-    db_snap.unlink(missing_ok=True)
-    bot_env_tmp.unlink(missing_ok=True)
-
-    # Rotate local copies
-    backups = sorted(out_dir.glob("AegisVPN-BACKUP-*.tar.gz"))
-    for old in backups[: max(0, len(backups) - settings.backup_keep)]:
+    backups = sorted(out_dir.glob("AegisVPN-BACKUP-*.aegis"))
+    for old in backups[: max(0, len(backups) - max(1, settings.backup_keep))]:
         old.unlink(missing_ok=True)
 
     return archive
+
+
+def _add_backup_bytes(tar: tarfile.TarFile, name: str, data: bytes) -> None:
+    info = tarfile.TarInfo(name=name)
+    info.size = len(data)
+    info.mode = 0o600
+    info.mtime = int(datetime.now(UTC).timestamp())
+    tar.addfile(info, io.BytesIO(data))
 
 
 # message_id of the last backup document sent to each admin (for editing in place)
@@ -382,7 +419,7 @@ async def send_backup_to_admins(bot: Bot):
         return
 
     data = gz.read_bytes()
-    caption = f"Бекапп БД {datetime.now(UTC):%Y-%m-%d %H:%M} UTC ({len(data) // 1024} KiB)"
+    caption = f"Зашифрованный бэкап {datetime.now(UTC):%Y-%m-%d %H:%M} UTC ({len(data) // 1024} KiB)"
 
     for admin_id in settings.admin_ids:
         try:
