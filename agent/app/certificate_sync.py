@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import random
+import secrets
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -52,9 +54,9 @@ def _validate_bundle(
     if cert_public != key_public:
         raise ValueError("certificate and private key do not match")
     try:
-        names = certificate.extensions.get_extension_for_class(
-            x509.SubjectAlternativeName
-        ).value.get_values_for_type(x509.DNSName)
+        names = certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value.get_values_for_type(
+            x509.DNSName
+        )
     except x509.ExtensionNotFound:
         names = []
     if not any(_dns_matches(name, hostname) for name in names):
@@ -97,23 +99,46 @@ def _install_pair(
     certificate_pem: bytes,
     private_key_pem: bytes,
 ) -> None:
-    old_certificate = certificate_path.read_bytes() if certificate_path.exists() else None
-    old_private_key = private_key_path.read_bytes() if private_key_path.exists() else None
+    if certificate_path.name != "cert.pem" or private_key_path.name != "key.pem":
+        raise ValueError("certificate paths must end in cert.pem and key.pem")
+    if certificate_path.parent != private_key_path.parent:
+        raise ValueError("certificate and private key must share one live directory")
+
+    live_directory = certificate_path.parent
+    root = live_directory.parent
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(root, 0o700)
+    if live_directory.exists() and not live_directory.is_symlink():
+        raise ValueError("live certificate directory must be an atomic symlink")
+
+    versions = root / "versions"
+    versions.mkdir(mode=0o700, exist_ok=True)
+    version_directory = Path(tempfile.mkdtemp(prefix="version-", dir=versions))
+    os.chmod(version_directory, 0o700)
+    _atomic_write(version_directory / "cert.pem", certificate_pem)
+    _atomic_write(version_directory / "key.pem", private_key_pem)
+
+    temporary_link = root / f".current-{secrets.token_hex(8)}"
     try:
-        _atomic_write(certificate_path, certificate_pem)
-        _atomic_write(private_key_path, private_key_pem)
-    except BaseException:
-        # A pair spans two filenames, so retain the old complete pair if the
-        # second atomic rename fails after the first one has succeeded.
-        if old_certificate is None:
-            certificate_path.unlink(missing_ok=True)
-        else:
-            _atomic_write(certificate_path, old_certificate)
-        if old_private_key is None:
-            private_key_path.unlink(missing_ok=True)
-        else:
-            _atomic_write(private_key_path, old_private_key)
-        raise
+        os.symlink(
+            os.path.relpath(version_directory, root),
+            temporary_link,
+            target_is_directory=True,
+        )
+        directory = os.open(root, os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+            os.replace(temporary_link, live_directory)
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        temporary_link.unlink(missing_ok=True)
+
+
+def _certificate_poll_delay(seconds: int, *, random_value: float | None = None) -> float:
+    value = random.random() if random_value is None else random_value
+    return max(1.0, seconds * (9.0 + 2.0 * value) / 10.0)
 
 
 class CertificateSynchronizer:
@@ -156,9 +181,8 @@ class CertificateSynchronizer:
         ):
             return CertificateSyncResult("unchanged", fingerprint)
 
-        # Both payloads are fully parsed and matched before either live file is
-        # touched. Each rename is atomic; old files remain valid on validation
-        # errors or interrupted downloads.
+        # Both payloads are installed in a versioned directory. One symlink
+        # rename makes the complete matching pair live atomically.
         _install_pair(
             self.certificate_path,
             self.private_key_path,
@@ -195,6 +219,6 @@ async def certificate_sync_loop(
                 raise
             except Exception as exc:
                 print(f"Hy2 certificate sync error: {type(exc).__name__}")
-            await sleep(settings.hy2_certificate_check_seconds)
+            await sleep(_certificate_poll_delay(settings.hy2_certificate_check_seconds))
     finally:
         await client.close()

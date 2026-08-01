@@ -46,8 +46,8 @@ class Settings(BaseSettings):
     hy2_enabled: bool = False
     hy2_stats_url: str = "http://127.0.0.1:9999"
     hy2_stats_secret: str | None = None
-    hy2_certificate_path: str = "/data/hysteria/cert.pem"
-    hy2_private_key_path: str = "/data/hysteria/key.pem"
+    hy2_certificate_path: str = "/data/hysteria/current/cert.pem"
+    hy2_private_key_path: str = "/data/hysteria/current/key.pem"
     hy2_certificate_reload_marker: str = "/data/hysteria/.reload"
     hy2_certificate_check_seconds: int = 21_600
 

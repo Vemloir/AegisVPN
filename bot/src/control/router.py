@@ -1,8 +1,9 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from src.control.auth import authenticate_node
 from src.control.certificates import load_hy2_certificate_bundle
@@ -50,8 +51,28 @@ async def get_hy2_certificate(
             detail="Hy2 is disabled",
             headers={"Cache-Control": "no-store"},
         )
+    certificate_root = Path(settings.node_hy2_certificate_dir)
+    node_certificate_root = certificate_root / f"node-{node.id}"
+    async with async_session_maker() as session:
+        matching_node_ids = list(
+            await session.scalars(
+                select(Server.id).where(
+                    Server.id != node.id,
+                    Server.is_active.is_(True),
+                    Server.hy2_enabled.is_(True),
+                    Server.hy2_sni == node.hy2_sni,
+                )
+            )
+        )
+    if matching_node_ids and not node_certificate_root.is_dir():
+        raise HTTPException(
+            status_code=409,
+            detail="Per-node Hy2 certificate required",
+            headers={"Cache-Control": "no-store"},
+        )
+    bundle_root = node_certificate_root if node_certificate_root.is_dir() else certificate_root
     try:
-        bundle = load_hy2_certificate_bundle(settings.node_hy2_certificate_dir)
+        bundle = load_hy2_certificate_bundle(bundle_root)
     except (OSError, ValueError, UnicodeDecodeError):
         raise HTTPException(
             status_code=503,
@@ -64,6 +85,20 @@ async def get_hy2_certificate(
             detail="Hy2 hostname mismatch",
             headers={"Cache-Control": "no-store"},
         )
+    for matching_node_id in matching_node_ids:
+        other_root = certificate_root / f"node-{matching_node_id}"
+        if not other_root.is_dir():
+            continue
+        try:
+            other_bundle = load_hy2_certificate_bundle(other_root)
+        except (OSError, ValueError, UnicodeDecodeError):
+            continue
+        if other_bundle.fingerprint == bundle.fingerprint:
+            raise HTTPException(
+                status_code=409,
+                detail="Hy2 certificate is shared by multiple nodes",
+                headers={"Cache-Control": "no-store"},
+            )
     return {
         "certificate": bundle.certificate,
         "private_key": bundle.private_key,

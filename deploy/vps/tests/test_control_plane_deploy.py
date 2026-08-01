@@ -646,6 +646,7 @@ def test_hy2_private_key_is_installed_without_shell_exposure(monkeypatch):
         "_write_remote_text_atomic",
         lambda _client, path, text, mode=0o600: writes.append((path, text, mode)),
     )
+    monkeypatch.setattr(update_script.secrets, "token_hex", lambda _size: "fixed")
 
     def fake_run(_client, command, label="", timeout=120):
         commands.append(command)
@@ -661,9 +662,10 @@ def test_hy2_private_key_is_installed_without_shell_exposure(monkeypatch):
     )
 
     assert writes == [
-        (f"{update_script.REMOTE_HY2_DIR}/cert.pem", cert, 0o644),
-        (f"{update_script.REMOTE_HY2_DIR}/key.pem", key, 0o600),
+        (f"{update_script.REMOTE_HY2_DIR}/versions/fixed/cert.pem", cert, 0o600),
+        (f"{update_script.REMOTE_HY2_DIR}/versions/fixed/key.pem", key, 0o600),
     ]
+    assert any("mv -Tf" in command and " current" in command for command in commands)
     assert all(cert_b64 not in command for command in commands)
     assert all(key_b64 not in command for command in commands)
 
