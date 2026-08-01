@@ -1,11 +1,9 @@
 name: CI
 
 on:
-  # Auto-triggers (push / pull_request) are disabled because GitHub Actions is
-  # locked on this account pending billing. The pipeline is kept ready and can
-  # be run manually from the Actions tab; re-enable the triggers below once
-  # billing is active. Checks also run locally: `uv run ruff check .` and
-  # `uv run pytest` in bot/ and agent/.
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -40,11 +38,31 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: [bot, agent]
+        include:
+          - component: bot
+            platforms: linux/amd64
+          - component: agent
+            platforms: linux/amd64,linux/arm64
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.component }}
           file: ${{ matrix.component }}/Dockerfile
+          platforms: ${{ matrix.platforms }}
           push: false
+
+  deploy-tests:
+    name: deployment tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14"
+          enable-cache: true
+      - name: Install deployment test dependencies
+        run: uv sync --project bot --group dev
+      - name: Deployment tests
+        run: PYTHONPATH=. uv run --project bot pytest -q deploy/vps/tests

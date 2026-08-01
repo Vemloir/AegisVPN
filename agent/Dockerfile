@@ -22,11 +22,16 @@ FROM ${PYTHON_IMAGE}
 ARG TARGETARCH
 ARG XRAY_VERSION=v26.3.27
 ARG XRAY_SHA256=23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae
+ARG XRAY_ARM64_SHA256=4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c
 RUN apt-get update && \
     apt-get install -y curl unzip procps && \
-    test "$TARGETARCH" = "amd64" && \
-    curl --fail --location --retry 3 -o xray.zip "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-linux-64.zip" && \
-    echo "${XRAY_SHA256}  xray.zip" | sha256sum -c - && \
+    case "$TARGETARCH" in \
+      "amd64") XRAY_ARCH="64"; XRAY_ARCH_SHA256="$XRAY_SHA256" ;; \
+      "arm64") XRAY_ARCH="arm64-v8a"; XRAY_ARCH_SHA256="$XRAY_ARM64_SHA256" ;; \
+      *) echo "unsupported target architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac && \
+    curl --fail --location --retry 3 -o xray.zip "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-linux-${XRAY_ARCH}.zip" && \
+    echo "${XRAY_ARCH_SHA256}  xray.zip" | sha256sum -c - && \
     unzip xray.zip -d /usr/local/bin/ xray geoip.dat geosite.dat && \
     chmod +x /usr/local/bin/xray && \
     rm xray.zip && \
