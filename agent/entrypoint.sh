@@ -286,35 +286,40 @@ def ensure_warp(cfg: dict) -> None:
     are unreliable from some VPS ranges. Everything else keeps the node's
     direct egress and avoids an unnecessary hop.
     """
+    outbounds = cfg.setdefault("outbounds", [])
+    existing_warp = next((outbound for outbound in outbounds if outbound.get("tag") == "warp"), None)
     secret = os.environ.get("WARP_SECRET_KEY", "").strip()
-    if not secret:
+    if secret:
+        addresses = [
+            a for a in (
+                os.environ.get("WARP_ADDR_V4", "").strip(),
+                os.environ.get("WARP_ADDR_V6", "").strip(),
+            ) if a
+        ]
+        reserved_raw = os.environ.get("WARP_RESERVED", "").strip()
+        reserved = [int(x) for x in reserved_raw.split(",") if x.strip().lstrip("-").isdigit()]
+        warp_outbound = {
+            "tag": "warp",
+            "protocol": "wireguard",
+            "settings": {
+                "secretKey": secret,
+                "address": addresses,
+                "peers": [{
+                    "publicKey": os.environ.get("WARP_PEER_PUBKEY", "").strip(),
+                    "endpoint": os.environ.get("WARP_ENDPOINT", "").strip() or "162.159.192.1:2408",
+                }],
+                "mtu": int(os.environ.get("WARP_MTU", "1280") or "1280"),
+            },
+        }
+        if reserved:
+            warp_outbound["settings"]["reserved"] = reserved
+    elif existing_warp is not None:
+        # Older nodes stored the per-node WARP registration only in the live
+        # Xray config. Preserve that secret material while refreshing rules.
+        warp_outbound = existing_warp
+    else:
         return
 
-    addresses = [
-        a for a in (
-            os.environ.get("WARP_ADDR_V4", "").strip(),
-            os.environ.get("WARP_ADDR_V6", "").strip(),
-        ) if a
-    ]
-    reserved_raw = os.environ.get("WARP_RESERVED", "").strip()
-    reserved = [int(x) for x in reserved_raw.split(",") if x.strip().lstrip("-").isdigit()]
-    warp_outbound = {
-        "tag": "warp",
-        "protocol": "wireguard",
-        "settings": {
-            "secretKey": secret,
-            "address": addresses,
-            "peers": [{
-                "publicKey": os.environ.get("WARP_PEER_PUBKEY", "").strip(),
-                "endpoint": os.environ.get("WARP_ENDPOINT", "").strip() or "162.159.192.1:2408",
-            }],
-            "mtu": int(os.environ.get("WARP_MTU", "1280") or "1280"),
-        },
-    }
-    if reserved:
-        warp_outbound["settings"]["reserved"] = reserved
-
-    outbounds = cfg.setdefault("outbounds", [])
     # Replace any prior warp block so creds/endpoint stay current, else insert
     # just before the trailing blackhole/last outbound.
     outbounds[:] = [o for o in outbounds if o.get("tag") != "warp"]
