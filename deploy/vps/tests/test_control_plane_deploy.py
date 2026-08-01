@@ -325,6 +325,14 @@ def test_entrypoint_publishes_env_and_xray_config_atomically():
     assert "os.fsync(directory)" in entrypoint
 
 
+def test_update_client_rejects_unknown_ssh_hosts():
+    source = inspect.getsource(update_script.connect)
+
+    assert "load_system_host_keys" in source
+    assert "RejectPolicy" in source
+    assert "AutoAddPolicy" not in source
+
+
 def test_warp_routes_microsoft_services_on_every_config_rebuild():
     entrypoint = (ROOT / "agent/entrypoint.sh").read_text()
     legacy_setup = (ROOT / "deploy/vps/setup_warp.py").read_text()
