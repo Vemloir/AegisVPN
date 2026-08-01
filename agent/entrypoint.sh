@@ -309,6 +309,21 @@ def ensure_warp(cfg: dict) -> None:
     # Drop any prior warp rule and re-add, so a narrowed/updated domain set
     # takes effect on restart instead of being frozen at first-write.
     rules[:] = [r for r in rules if r.get("outboundTag") != "warp"]
+    games_direct_rule = {
+        "type": "field",
+        "domain": [
+            "geosite:category-games",
+            "domain:callofduty.com",
+            "domain:activision.com",
+            "domain:activisionblizzard.com",
+            "domain:demonware.net",
+        ],
+        "outboundTag": "direct",
+    }
+    rules[:] = [
+        rule for rule in rules
+        if "geosite:category-games" not in rule.get("domain", [])
+    ]
     warp_domains_rule = {
         "type": "field",
         "domain": [
@@ -323,7 +338,10 @@ def ensure_warp(cfg: dict) -> None:
         "outboundTag": "warp",
     }
     api_idx = next((i for i, r in enumerate(rules) if r.get("inboundTag") == ["api"]), -1)
-    rules.insert(api_idx + 1, warp_domains_rule)
+    # First-match routing: every game stays on the node's direct egress even
+    # when its owner/service domains are also covered by geosite:microsoft.
+    rules.insert(api_idx + 1, games_direct_rule)
+    rules.insert(api_idx + 2, warp_domains_rule)
 
 
 ensure_warp(config)
