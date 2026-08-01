@@ -2,7 +2,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -131,6 +131,50 @@ async def build_desired_items(
     return items
 
 
+async def latest_snapshot(
+    session: AsyncSession,
+    server_id: int,
+) -> NodeSnapshot | None:
+    return (
+        await session.execute(
+            select(NodeSnapshot)
+            .where(NodeSnapshot.server_id == server_id)
+            .order_by(NodeSnapshot.generation.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+async def prune_acknowledged_snapshots(
+    session: AsyncSession,
+    server_id: int,
+    acknowledged_generation: int,
+    *,
+    keep_previous: int = 2,
+) -> int:
+    """Delete history older than the ACK retry window.
+
+    Newer generations are deliberately untouched: a node may ACK generation N
+    while N+1 is already published or downloading. Pages are deleted explicitly
+    because SQLite deployments do not currently rely on FK cascade pragmas.
+    """
+    cutoff = int(acknowledged_generation) - max(0, int(keep_previous))
+    if cutoff <= 1:
+        return 0
+    predicate = (
+        NodeSnapshotPage.server_id == server_id,
+        NodeSnapshotPage.generation < cutoff,
+    )
+    await session.execute(delete(NodeSnapshotPage).where(*predicate))
+    result = await session.execute(
+        delete(NodeSnapshot).where(
+            NodeSnapshot.server_id == server_id,
+            NodeSnapshot.generation < cutoff,
+        )
+    )
+    return int(result.rowcount or 0)
+
+
 async def publish_snapshot(
     session: AsyncSession,
     server_id: int,
@@ -140,37 +184,22 @@ async def publish_snapshot(
     if page_size < 1:
         raise ValueError("page_size must be positive")
 
-    server = (
-        await session.execute(
-            select(Server).where(Server.id == server_id).with_for_update()
-        )
-    ).scalar_one()
+    server = (await session.execute(select(Server).where(Server.id == server_id).with_for_update())).scalar_one()
     items = await build_desired_items(session, server_id)
     schema_version = 2 if _supports_cascade(server) else 1
     digest = hashlib.sha256(canonical_json(items)).hexdigest()
-    latest = (
-        await session.execute(
-            select(NodeSnapshot)
-            .where(NodeSnapshot.server_id == server_id)
-            .order_by(NodeSnapshot.generation.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    if (
-        latest is not None
-        and latest.digest == digest
-        and latest.schema_version == schema_version
-    ):
+    latest = await latest_snapshot(session, server_id)
+    if latest is not None and latest.digest == digest and latest.schema_version == schema_version:
         return latest
 
-    generation = max(
-        int(server.desired_generation or 0),
-        int(latest.generation if latest is not None else 0),
-    ) + 1
-    pages = [
-        items[offset : offset + page_size]
-        for offset in range(0, len(items), page_size)
-    ]
+    generation = (
+        max(
+            int(server.desired_generation or 0),
+            int(latest.generation if latest is not None else 0),
+        )
+        + 1
+    )
+    pages = [items[offset : offset + page_size] for offset in range(0, len(items), page_size)]
     snapshot = NodeSnapshot(
         server_id=server_id,
         generation=generation,

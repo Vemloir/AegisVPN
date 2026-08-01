@@ -1,5 +1,5 @@
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import update
@@ -14,7 +14,12 @@ from src.control.schemas import (
     SnapshotManifest,
     SnapshotPage,
 )
-from src.control.state import canonical_json, publish_snapshot
+from src.control.state import (
+    canonical_json,
+    latest_snapshot,
+    prune_acknowledged_snapshots,
+    publish_snapshot,
+)
 from src.core.config import settings
 from src.core.database import async_session_maker
 from src.models import (
@@ -79,25 +84,32 @@ async def sync_node(
     while True:
         async with async_session_maker() as session:
             current = await session.get(Server, node.id)
-            if (
-                current is None
-                or current.control_mode not in {"observe", "pull"}
-            ):
+            if current is None or current.control_mode not in {"observe", "pull"}:
                 raise HTTPException(status_code=401, detail="Inactive node")
-            current.control_last_seen_at = _utcnow()
-            current.control_agent_version = request.agent_version
-            current.control_capabilities = {"features": request.capabilities}
-            snapshot = await publish_snapshot(
-                session,
-                current.id,
-                page_size=settings.node_control_page_size,
+            now = _utcnow()
+            heartbeat_due = current.control_last_seen_at is None or (
+                now - current.control_last_seen_at
+                >= timedelta(seconds=max(1.0, settings.node_control_heartbeat_seconds))
             )
+            if heartbeat_due:
+                current.control_last_seen_at = now
+            if current.control_agent_version != request.agent_version:
+                current.control_agent_version = request.agent_version
+            capabilities = {"features": sorted(set(request.capabilities))}
+            capabilities_changed = current.control_capabilities != capabilities
+            if capabilities_changed:
+                current.control_capabilities = capabilities
+
+            snapshot = await latest_snapshot(session, current.id)
+            if snapshot is None or capabilities_changed:
+                snapshot = await publish_snapshot(
+                    session,
+                    current.id,
+                    page_size=settings.node_control_page_size,
+                )
             await session.commit()
 
-        if (
-            snapshot.generation > request.applied_generation
-            or request.applied_digest != snapshot.digest
-        ):
+        if snapshot.generation > request.applied_generation or request.applied_digest != snapshot.digest:
             return SnapshotManifest(
                 schema_version=snapshot.schema_version,
                 generation=snapshot.generation,
@@ -110,9 +122,7 @@ async def sync_node(
         remaining = deadline - loop.time()
         if remaining <= 0:
             return Response(status_code=status.HTTP_204_NO_CONTENT)
-        await asyncio.sleep(
-            min(settings.node_control_poll_interval_seconds, remaining)
-        )
+        await asyncio.sleep(min(settings.node_control_poll_interval_seconds, remaining))
 
 
 @router.get(
@@ -182,10 +192,13 @@ async def acknowledge_snapshot(
             server_id=node.id,
             generation=request.generation,
         )
+        await prune_acknowledged_snapshots(
+            session,
+            node.id,
+            request.generation,
+        )
         await session.execute(
-            update(SubscriptionServer)
-            .where(SubscriptionServer.server_id == node.id)
-            .values(is_synced=True)
+            update(SubscriptionServer).where(SubscriptionServer.server_id == node.id).values(is_synced=True)
         )
         await session.commit()
     return NodeControlResult(status="ok")

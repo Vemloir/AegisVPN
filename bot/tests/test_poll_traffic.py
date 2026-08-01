@@ -15,6 +15,40 @@ from src.models.base import Base
 from src.scheduler import tasks
 
 
+def test_stats_are_indexed_once_by_subscription():
+    class SinglePassStats(dict):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.item_passes = 0
+
+        def items(self):
+            self.item_passes += 1
+            if self.item_passes > 1:
+                raise AssertionError("stats mapping was scanned more than once")
+            return super().items()
+
+    stats = SinglePassStats(
+        {
+            "user_1_sub_2": {"uplink": 1, "downlink": 2},
+            "user_1_sub_2_dev_3": {"uplink": 3, "downlink": 4},
+            "user_9_sub_8_dev_7": {"uplink": 5, "downlink": 6},
+            "user_1_sub_bad": {"uplink": 99, "downlink": 99},
+            "unrelated": {"uplink": 99, "downlink": 99},
+        }
+    )
+
+    indexed = tasks._index_stats_by_subscription(stats)
+
+    assert indexed == {
+        (1, 2): [
+            ("user_1_sub_2", {"uplink": 1, "downlink": 2}),
+            ("user_1_sub_2_dev_3", {"uplink": 3, "downlink": 4}),
+        ],
+        (9, 8): [("user_9_sub_8_dev_7", {"uplink": 5, "downlink": 6})],
+    }
+    assert stats.item_passes == 1
+
+
 async def _seed(key: int) -> tuple[int, str]:
     """Create a user, subscription, server and link. Returns (sub_id, email_prefix).
 

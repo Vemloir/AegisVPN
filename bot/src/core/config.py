@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     node_control_proxy_secret_file: str = "/control/proxy-secret"
     node_control_long_poll_seconds: float = 25.0
     node_control_poll_interval_seconds: float = 1.0
+    node_control_heartbeat_seconds: float = 30.0
     node_control_page_size: int = 500
     node_control_max_telemetry_bytes: int = 1_048_576
     # Root-owned Caddy certificate export. The API can only read it and only
