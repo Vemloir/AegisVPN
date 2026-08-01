@@ -54,16 +54,16 @@ async def get_hy2_certificate(
     certificate_root = Path(settings.node_hy2_certificate_dir)
     node_certificate_root = certificate_root / f"node-{node.id}"
     async with async_session_maker() as session:
-        matching_node_ids = list(
-            await session.scalars(
-                select(Server.id).where(
+        other_nodes = (
+            await session.execute(
+                select(Server.id, Server.hy2_sni).where(
                     Server.id != node.id,
                     Server.is_active.is_(True),
                     Server.hy2_enabled.is_(True),
-                    Server.hy2_sni == node.hy2_sni,
                 )
             )
-        )
+        ).all()
+    matching_node_ids = [server_id for server_id, hy2_sni in other_nodes if hy2_sni == node.hy2_sni]
     if matching_node_ids and not node_certificate_root.is_dir():
         raise HTTPException(
             status_code=409,
@@ -85,8 +85,8 @@ async def get_hy2_certificate(
             detail="Hy2 hostname mismatch",
             headers={"Cache-Control": "no-store"},
         )
-    for matching_node_id in matching_node_ids:
-        other_root = certificate_root / f"node-{matching_node_id}"
+    for other_node_id, _ in other_nodes:
+        other_root = certificate_root / f"node-{other_node_id}"
         if not other_root.is_dir():
             continue
         try:

@@ -143,17 +143,30 @@ def verify_runtime_pins(
 # SSH helpers
 # ---------------------------------------------------------------------------
 
-def connect(host: str, password: str, attempts: int = 4) -> paramiko.SSHClient:
+def connect(
+    host: str,
+    password: str,
+    attempts: int = 4,
+    *,
+    username: str = "root",
+) -> paramiko.SSHClient:
     if paramiko is None:
         raise SystemExit("paramiko required: pip install paramiko")
     delay = 8.0
     last: Exception | None = None
     for attempt in range(1, attempts + 1):
         c = paramiko.SSHClient()
-        c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        c.load_system_host_keys()
+        c.set_missing_host_key_policy(paramiko.RejectPolicy())
         try:
-            c.connect(host, username="root", password=password,
-                      timeout=30, banner_timeout=30, auth_timeout=30)
+            c.connect(
+                host,
+                username=username,
+                password=password,
+                timeout=30,
+                banner_timeout=30,
+                auth_timeout=30,
+            )
             return c
         except Exception as exc:
             last = exc
