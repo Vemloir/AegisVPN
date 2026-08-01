@@ -25,7 +25,7 @@ Solely to run the service: issuing and renewing subscriptions, displaying statis
 We do not sell or share your data. The only exception is the payment infrastructure required to accept payment: Telegram (Stars) and the payment providers that process your chosen method (the Faster Payments System operator / acquirer, the crypto payment service). They receive only the information needed to complete the payment; their processing is governed by their own privacy policies.
 
 ## 5. Routing to AI services
-Some AI services (in particular Google Gemini) restrict access from data centers. To keep them working, traffic to Google Gemini domains ONLY is routed through Cloudflare WARP; all other traffic goes directly through our own servers. For those domains the exit node is Cloudflare's infrastructure, which is governed by Cloudflare's privacy policy.
+Some services (in particular Google Gemini and Microsoft) restrict or poorly serve data-center addresses. To keep them working, only traffic to Google Gemini and Microsoft domains is routed through Cloudflare WARP; all other traffic goes directly through our own servers. For those domains the exit node is Cloudflare's infrastructure, which is governed by Cloudflare's privacy policy.
 
 ## 6. Open source
 The server and bot code is open source (MIT license) and published on GitHub: github.com/demented484/AegisVPN. You can verify for yourself how the service works and that we genuinely keep no logs.

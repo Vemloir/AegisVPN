@@ -266,10 +266,9 @@ def ensure_warp(cfg: dict) -> None:
     outbounds/routing are otherwise preserved as-is, which would silently drop
     a WARP block added out-of-band.
 
-    Scope is deliberately narrow — ONLY Google Gemini. Other AI services
-    (OpenAI, Anthropic, …) work fine directly from our VPS ranges, so sending
-    them through WARP would only add a needless hop. Gemini is the one that
-    refuses our egress IPs, so just its domains go through Cloudflare's WARP.
+    Scope is deliberately narrow: Google Gemini and Microsoft services that
+    are unreliable from some VPS ranges. Everything else keeps the node's
+    direct egress and avoids an unnecessary hop.
     """
     secret = os.environ.get("WARP_SECRET_KEY", "").strip()
     if not secret:
@@ -310,10 +309,11 @@ def ensure_warp(cfg: dict) -> None:
     # Drop any prior warp rule and re-add, so a narrowed/updated domain set
     # takes effect on restart instead of being frozen at first-write.
     rules[:] = [r for r in rules if r.get("outboundTag") != "warp"]
-    gemini_rule = {
+    warp_domains_rule = {
         "type": "field",
         "domain": [
             "geosite:google-gemini",
+            "geosite:microsoft",
             "domain:gemini.google.com",
             "domain:generativelanguage.googleapis.com",
             "domain:aistudio.google.com",
@@ -323,7 +323,7 @@ def ensure_warp(cfg: dict) -> None:
         "outboundTag": "warp",
     }
     api_idx = next((i for i, r in enumerate(rules) if r.get("inboundTag") == ["api"]), -1)
-    rules.insert(api_idx + 1, gemini_rule)
+    rules.insert(api_idx + 1, warp_domains_rule)
 
 
 ensure_warp(config)
