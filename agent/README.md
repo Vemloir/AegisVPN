@@ -19,7 +19,7 @@ app/
 ├── control_models.py  versioned desired/applied state
 ├── reconcile.py       exact Xray/Hysteria/limit reconciliation
 ├── xray.py            atomic config I/O and live Xray API operations
-├── connlimit.py       per-subscription simultaneous-IP limit
+├── connlimit.py       per-subscription simultaneous source/session limit
 └── main.py            local/legacy FastAPI routes
 entrypoint.sh     bootstraps keys + renders the live Xray config, then runs both
 template.json     base Xray config (no-logs, stats/api/policy)

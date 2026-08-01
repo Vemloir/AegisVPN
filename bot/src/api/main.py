@@ -102,7 +102,7 @@ async def plans() -> list[dict]:
             "stars_price": p.stars_price,
             "rub_price": p.rub_price,
             # NOT a device count: the limit is on SIMULTANEOUS connections
-            # (distinct source IPs at one time). A subscription can be installed
+            # (protocol-specific active sources/sessions). A subscription can be installed
             # on any number of devices; only this many may be connected at once.
             # It is a global setting rather than a per-plan one, but the site
             # shows it on the plan card, so echo it on each row. 0 = unlimited.

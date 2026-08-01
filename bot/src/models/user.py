@@ -42,7 +42,7 @@ class User(Base):
     accepted_terms_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     accepted_terms_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # Per-user simultaneous-connection override. NULL = node default applies;
-    # 0 = unlimited; N>0 = at most N concurrent source IPs.
+    # 0 = unlimited; N>0 caps protocol-specific concurrent sources/sessions.
     conn_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     subscriptions: Mapped[list["Subscription"]] = relationship(back_populates="user", cascade="all, delete-orphan")

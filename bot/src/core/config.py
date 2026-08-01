@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     # returns it to a fully authenticated, Hy2-enabled node.
     node_hy2_certificate_dir: str = "/control/hy2-cert"
 
-    # Default simultaneous-connection limit per user, mirroring the node default
+    # Default simultaneous source/session limit per user, mirroring the node default
     # (agent CONN_LIMIT). Shown in the admin card when a user has no override.
     default_conn_limit: int = 5
 

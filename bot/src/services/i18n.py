@@ -167,7 +167,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "devices_btn": "Устройства ({count})",
         "devices_title": "Устройства ({count})",
         "devices_empty": "Нет активных устройств.",
-        "devices_hint": "Каждое устройство получает отдельный UUID. До 5 одновременных подключений на подписку.",
+        "devices_hint": (
+            "Количество добавленных устройств не ограничено. Защитный лимит относится "
+            "к одновременным сетевым сессиям, а не к числу устройств."
+        ),
         "devices_active_now": "только что",
         "devices_active_min": "{n} мин назад",
         "devices_active_hours": "{n} ч назад",
@@ -354,7 +357,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "devices_btn": "Devices ({count})",
         "devices_title": "Devices ({count})",
         "devices_empty": "No active devices.",
-        "devices_hint": "Each device gets a separate UUID. Up to 5 simultaneous connections per subscription.",
+        "devices_hint": (
+            "You can add unlimited devices. The safety limit applies to simultaneous "
+            "network sessions, not to the number of devices."
+        ),
         "devices_active_now": "just now",
         "devices_active_min": "{n} min ago",
         "devices_active_hours": "{n} h ago",
