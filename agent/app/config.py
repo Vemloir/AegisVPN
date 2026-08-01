@@ -30,11 +30,16 @@ class Settings(BaseSettings):
     xray_config_path: str = "/etc/xray/config.json"
     # Local-only Xray gRPC API port (dokodemo-door inbound tagged "api").
     xray_api_port: int = 10085
+    # Small deltas stay live; larger batches use one validated hard reload
+    # instead of spawning one Xray CLI process per inbound/client mutation.
+    xray_live_delta_limit: int = 32
 
     # Per-subscription simultaneous-IP limit (anti account-sharing).
     # 0 disables enforcement. Excess source IPs are blocked via xray api sib.
     conn_limit: int = 5
     conn_limit_interval: int = 60  # seconds between enforcement cycles
+    conn_limit_ip_concurrency: int = 12
+    conn_limit_stats_timeout: float = 30.0
 
     # Local Hysteria2 process. Disabled by default: on a node without Hy2,
     # every Hy2 path is a no-op and the agent behaves exactly as before.
@@ -61,8 +66,13 @@ class Settings(BaseSettings):
     control_max_snapshot_bytes: int = 64 * 1_048_576
 
     @field_validator(
-        "xray_tcp_port", "xray_grpc_port", "fast_host_ip",
-        "short_id_tcp", "public_key_tcp", "hy2_stats_secret", "control_token",
+        "xray_tcp_port",
+        "xray_grpc_port",
+        "fast_host_ip",
+        "short_id_tcp",
+        "public_key_tcp",
+        "hy2_stats_secret",
+        "control_token",
         mode="before",
     )
     @classmethod
@@ -77,11 +87,7 @@ class Settings(BaseSettings):
 
     @property
     def control_url_list(self) -> list[str]:
-        return [
-            url.strip().rstrip("/")
-            for url in self.control_urls.split(",")
-            if url.strip()
-        ]
+        return [url.strip().rstrip("/") for url in self.control_urls.split(",") if url.strip()]
 
     model_config = ConfigDict(
         env_file="/data/agent.env",

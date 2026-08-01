@@ -171,14 +171,29 @@ async def enforce_conn_limit_once() -> int:
     # Consider every user seen on either protocol (a Hy2-only user with no xray
     # session still counts toward — and can exceed — the limit).
     emails = set(await online_users()) | set(hy2_counts)
+    limits = {email: _limit_for(email) for email in emails}
+    limited_emails = [email for email in emails if limits[email] > 0]
+    semaphore = asyncio.Semaphore(max(1, settings.conn_limit_ip_concurrency))
+
+    async def query_ips(email: str) -> tuple[str, dict[str, int]]:
+        async with semaphore:
+            return email, await online_ips(email)
+
+    try:
+        async with asyncio.timeout(max(1.0, settings.conn_limit_stats_timeout)):
+            ip_results = await asyncio.gather(*(query_ips(email) for email in limited_emails))
+    except TimeoutError:
+        raise StatsQueryError("online IP queries exceeded the cycle deadline") from None
+    ips_by_email = dict(ip_results)
+
     excess: list[str] = []
     hy2_kick: list[str] = []
     for email in emails:
-        limit = _limit_for(email)  # per-user override, else node default
+        limit = limits[email]  # per-user override, else node default
         if limit <= 0:  # 0 = unlimited (default disabled or per-user "no limit")
             continue
         hy2_count = hy2_counts.get(email, 0)
-        ips = await online_ips(email)
+        ips = ips_by_email[email]
         combined = len(ips) + hy2_count
         if combined <= limit:
             continue
