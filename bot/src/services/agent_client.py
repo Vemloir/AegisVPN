@@ -87,12 +87,10 @@ class AgentClient:
         """Push a per-user connection-limit override to the node.
 
         ``limit`` None clears it (node default applies); 0 means unlimited; a
-        positive value caps the user to that many concurrent source IPs.
+        positive value caps protocol-specific concurrent sources/sessions.
         """
         payload = {"user_id": user_id, "limit": limit}
-        async with get_session().post(
-            f"{self.base_url}/conn-limit", json=payload, headers=self.headers
-        ) as resp:
+        async with get_session().post(f"{self.base_url}/conn-limit", json=payload, headers=self.headers) as resp:
             if resp.status == 200:
                 return True
             resp.raise_for_status()
