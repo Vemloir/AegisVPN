@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass
 
 from . import cascade, connlimit, hysteria
+from .config import settings
 from .control_models import (
     AppliedState,
     DesiredCascadeRoute,
@@ -256,8 +257,10 @@ async def reconcile_snapshot(
         if config_changed:
             await save_xray_config(config)
 
-        api_ok = not cascade_changed
-        if not cascade_changed:
+        live_delta_size = len(removals) + len(additions)
+        use_live_api = not cascade_changed and live_delta_size <= max(0, settings.xray_live_delta_limit)
+        api_ok = use_live_api
+        if use_live_api:
             for tag, email in removals:
                 if not await xray_api_remove(tag, email):
                     api_ok = False

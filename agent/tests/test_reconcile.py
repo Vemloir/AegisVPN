@@ -163,6 +163,22 @@ async def test_reconcile_applies_exact_state_and_is_idempotent(monkeypatch, tmp_
     assert additions == removals == events == []
 
 
+async def test_large_client_delta_uses_one_verified_reload(monkeypatch, tmp_path):
+    _, additions, removals, _ = await _patch_runtime(monkeypatch, tmp_path)
+    reloads: list[bool] = []
+    monkeypatch.setattr(reconcile.settings, "xray_live_delta_limit", 1)
+    monkeypatch.setattr(reconcile, "reload_xray", lambda: reloads.append(True))
+    monkeypatch.setattr(reconcile, "wait_for_xray_ready", _true)
+
+    result = await reconcile.reconcile_snapshot(_snapshot(), observe=False)
+
+    assert result.success is True
+    assert result.added + result.removed == 6
+    assert additions == []
+    assert removals == []
+    assert reloads == [True]
+
+
 async def test_observe_reports_diff_without_mutating(monkeypatch, tmp_path):
     config_path, additions, removals, events = await _patch_runtime(
         monkeypatch,

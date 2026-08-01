@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from app import connlimit
@@ -162,6 +164,36 @@ async def test_online_user_stats_error_preserves_previous_block_rule(monkeypatch
 
     assert sib_calls == []
     assert connlimit._prev_had_excess is True
+
+
+async def test_online_ip_queries_use_bounded_parallelism(monkeypatch):
+    emails = [f"user_{index}_sub_{index}" for index in range(12)]
+    active = 0
+    peak = 0
+
+    async def fake_online_users():
+        return emails
+
+    async def fake_online_ips(_email):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return {"192.0.2.1": 1}
+
+    async def empty_hy2_counts():
+        return {}
+
+    monkeypatch.setattr(connlimit.settings, "conn_limit", 2)
+    monkeypatch.setattr(connlimit.settings, "conn_limit_ip_concurrency", 4)
+    monkeypatch.setattr(connlimit, "online_users", fake_online_users)
+    monkeypatch.setattr(connlimit, "online_ips", fake_online_ips)
+    monkeypatch.setattr(connlimit.hysteria, "online_counts", empty_hy2_counts)
+    connlimit._prev_had_excess = False
+
+    assert await connlimit.enforce_conn_limit_once() == 0
+    assert 1 < peak <= 4
 
 
 @pytest.mark.parametrize("data", [b'{"user_1_sub_1": 2, "u2": 1}', b'["user_1_sub_1"]'])
