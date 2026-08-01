@@ -327,10 +327,14 @@ def test_entrypoint_publishes_env_and_xray_config_atomically():
 
 def test_update_client_rejects_unknown_ssh_hosts():
     source = inspect.getsource(update_script.connect)
+    jump_source = inspect.getsource(update_script.connect_via_jump)
 
     assert "load_system_host_keys" in source
     assert "RejectPolicy" in source
     assert "AutoAddPolicy" not in source
+    assert "load_system_host_keys" in jump_source
+    assert "RejectPolicy" in jump_source
+    assert "AutoAddPolicy" not in jump_source
 
 
 def test_warp_routes_microsoft_services_on_every_config_rebuild():

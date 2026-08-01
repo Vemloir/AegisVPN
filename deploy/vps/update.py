@@ -182,6 +182,44 @@ def connect(
     raise SystemExit(f"cannot reach {host}: {last}")
 
 
+def connect_via_jump(
+    jump_client: paramiko.SSHClient,
+    host: str,
+    password: str,
+    *,
+    username: str = "root",
+) -> paramiko.SSHClient:
+    """Connect through a verified SSH jump host while still pinning the target."""
+    if paramiko is None:
+        raise SystemExit("paramiko required: pip install paramiko")
+    transport = jump_client.get_transport()
+    if transport is None or not transport.is_active():
+        raise SystemExit("SSH jump transport is not active")
+    channel = transport.open_channel(
+        "direct-tcpip",
+        (host, 22),
+        ("127.0.0.1", 0),
+    )
+    client = paramiko.SSHClient()
+    client.load_system_host_keys()
+    client.set_missing_host_key_policy(paramiko.RejectPolicy())
+    try:
+        client.connect(
+            host,
+            username=username,
+            password=password,
+            sock=channel,
+            timeout=30,
+            banner_timeout=30,
+            auth_timeout=30,
+        )
+    except BaseException:
+        client.close()
+        channel.close()
+        raise
+    return client
+
+
 def run(c: paramiko.SSHClient, cmd: str, label: str = "", timeout: int = 120) -> str:
     _, stdout, stderr = c.exec_command(cmd, timeout=timeout)
     out = stdout.read().decode()
