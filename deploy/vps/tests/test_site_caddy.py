@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def test_site_caddy_sets_security_headers_without_overwriting_private_api_cache():
     caddy = (ROOT / "deploy/vps/Caddyfile").read_text()
+    assert 'root_common_name "ISRG Root X1"' in caddy
     site = caddy.split("site.example.com {", 1)[1].split(
         "\n}\n\n# Optional outbound", 1
     )[0]
