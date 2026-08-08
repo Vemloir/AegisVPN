@@ -1,6 +1,11 @@
 # Replace the email and domains below with your own before deploying.
 {
     email you@example.com
+    # Prefer Let's Encrypt's broadly trusted cross-signed chain. ISRG Root X2
+    # is absent from the system trust store before Android 14.
+    preferred_chains {
+        root_common_name "ISRG Root X1"
+    }
 }
 
 http://vpn.example.com {

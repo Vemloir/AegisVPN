@@ -19,9 +19,13 @@ The project now uses a split architecture:
 The main VPS runs the database/bot plus the HTTPS control endpoint from
 [deploy/vps/docker-compose.yml](deploy/vps/docker-compose.yml):
 
-- `aegis-vpn` - local `agent + xray`
 - `aegis-bot` - Telegram bot, SQLite DB, subscription endpoint
-- `aegis-caddy` - HTTPS reverse proxy for the bot
+- `aegis-siteapi` - public website API
+- `aegis-caddy` - HTTPS reverse proxy for the site, bot, and node control
+
+The `xray` and `agent` services are behind the opt-in `local-exit` Compose
+profile. A normal control-host deployment must not start them: Caddy owns TCP
+443 exclusively. VPN exits use `docker-compose.node.yml` on separate hosts.
 
 Typical flow:
 
@@ -31,7 +35,7 @@ Typical flow:
    affected node.
 4. Each node long-polls the mTLS control endpoint over outbound HTTPS/443,
    verifies the complete snapshot digest, and reconciles Xray live.
-5. The user receives a subscription URL like `https://<domain>:8443/sub/<token>`.
+5. The user receives a subscription URL like `https://<domain>/sub/<token>`.
 6. When the client opens that URL, the bot dynamically builds a Base64 subscription from all synced servers.
 
 ### Additional VPN servers

@@ -5,10 +5,14 @@ x-logging: &default-logging
     max-file: "2"
 
 services:
-  # Data plane: runs ONLY xray against the shared config that the agent owns.
-  # Kept separate so agent code deploys (which recreate `agent`) never restart
-  # xray — existing client sessions survive a code update untouched.
+  # Optional local data plane. The control host serves HTTPS on TCP/443, so
+  # xray/agent must never start there during a default `docker compose up`.
+  # Explicitly target these services (or enable --profile local-exit) only when
+  # this host is intentionally configured as a VPN exit on a non-conflicting
+  # listener.
   xray:
+    profiles:
+      - local-exit
     build:
       context: ../../agent
     container_name: aegis-xray
@@ -22,10 +26,10 @@ services:
     volumes:
       - ./data/vpn:/data
 
-  # Control plane: builds the xray config from agent.env and serves the agent
-  # API. Shares xray's PID namespace so `xray api` / `pkill xray` reach the data
-  # plane. Restarting this container does NOT touch xray (zero-drop deploys).
+  # Local node agent paired with the optional xray service above.
   agent:
+    profiles:
+      - local-exit
     build:
       context: ../../agent
     container_name: aegis-vpn

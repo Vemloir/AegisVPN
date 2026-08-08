@@ -6,10 +6,14 @@ This deploy path is the current production layout for the main Aegis VPN VPS.
 
 The control host uses `docker-compose.yml`:
 
-- `xray` and `agent` - independently restartable data and control planes
 - `bot`, `siteapi`, and `support-bot` - Telegram and public API services
-- `caddy` - HTTPS reverse proxy and website
+- `caddy` - HTTPS reverse proxy and website; the sole TCP/443 listener
+- `xray` and `agent` - optional local data plane behind the `local-exit` profile
 - `hysteria` - optional Hysteria 2 data plane
+
+The production control host is not a VPN exit. A default `docker compose up`
+therefore excludes `xray` and `agent`, preventing Linux `SO_REUSEPORT` from
+splitting HTTPS connections between Caddy and Reality.
 
 Remote VPN nodes use `docker-compose.node.yml`. It contains only `xray`,
 `agent`, and the optional `hysteria` profile, so node updates never require
@@ -32,13 +36,13 @@ control-host-only `bot.env` or `support.env` files.
 Typical public base URL:
 
 ```text
-https://your-domain:8443
+https://your-domain
 ```
 
 So the user-facing subscription URL becomes:
 
 ```text
-https://your-domain:8443/sub/<token>
+https://your-domain/sub/<token>
 ```
 
 ## Setup
@@ -61,14 +65,8 @@ mkdir -p data/bot data/vpn data/caddy config/caddy
 - `BOOTSTRAP_SERVER_FLAG`
 - `BOOTSTRAP_PLANS_JSON`
 
-3. Fill `vpn.env`:
-
-- `XRAY_RUN_MODE=internal`
-- `XRAY_CONFIG_PATH=/data/xray-config.json`
-- `XRAY_PORT`
-- `REALITY_DEST`
-- `REALITY_SERVER_NAME`
-- `HOST_IP`
+3. Fill `vpn.env` only if this host is intentionally also a VPN exit. Its
+   `XRAY_PORT` must not conflict with Caddy TCP/443.
 
 4. Adjust [Caddyfile](C:/Users/detko/Documents/VPN/deploy/vps/Caddyfile) if your domain or port differs.
 
@@ -84,13 +82,20 @@ On a remote VPN node, use:
 docker compose -f docker-compose.node.yml up -d --build
 ```
 
+To deliberately enable a local VPN exit, target the profiled services and use
+a non-conflicting port:
+
+```bash
+docker compose --profile local-exit up -d --build xray agent
+```
+
 ## Notes
 
 - the bot usually binds to `127.0.0.1:8080`
-- Caddy usually exposes HTTPS on `:8443`
-- Xray port is configured in `vpn.env`
-- if `443` is already occupied by another service, keep Xray on another port such as `9443`
-- `PUBLIC_BASE_URL` must match the real public subscription URL seen by clients
+- Caddy exposes the website and subscriptions on TCP/443
+- legacy subscription URLs may remain available on TCP/8443
+- a local Xray port is configured in `vpn.env` and must not be TCP/443
+- `SUBSCRIPTION_PUBLIC_BASE_URL` must match the URL seen by clients
 
 ## Adding More VPN Servers
 

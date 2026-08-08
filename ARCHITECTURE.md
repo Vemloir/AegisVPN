@@ -67,11 +67,16 @@ Responsibilities:
 
 ### Main VPS
 
-Usually runs:
+Runs:
 
 - `aegis-bot`
-- `aegis-vpn`
+- `aegis-siteapi`
+- `aegis-support-bot`
 - `aegis-caddy`
+
+Caddy is the only TCP/443 listener. The optional local `agent` and `xray`
+services are gated behind the `local-exit` profile and are disabled on the
+production control host.
 
 Defined in [deploy/vps/docker-compose.yml](C:/Users/detko/Documents/VPN/deploy/vps/docker-compose.yml).
 
@@ -179,7 +184,8 @@ The root page `/` is intentionally hidden in the bot and returns `404`.
 
 Typical setup:
 
-- public: `https://<domain>:8443/sub/<token>`
+- public: `https://<domain>/sub/<token>`
+- legacy public alias: `https://<domain>:8443/sub/<token>`
 - internal bot: `127.0.0.1:8080`
 
 Relevant file:
