@@ -1,5 +1,5 @@
-"""Per-location transport preferences: storage, default-means-no-row, reset,
-and the user->server resolution map that feeds the subscription builder.
+"""Per-location transport preferences: capability-aware defaults, storage,
+reset, and the user->server resolution map that feeds the subscription builder.
 
 The whole suite shares one SQLite file (see conftest); each test rebuilds the
 schema so test_migrations leaving minimal tables behind does not interfere.
@@ -46,32 +46,44 @@ async def _seed(alt: bool = True) -> tuple[int, int]:
 async def test_default_means_no_row():
     user_id, server_id = await _seed()
     async with async_session_maker() as session:
-        # No row yet -> default (vless, xhttp).
-        protocol, transport = await SubscriptionService.get_transport_pref(session, user_id, server_id)
-        assert (protocol, transport) == ("vless", "xhttp")
-        # The build-path map is empty (every server stays on its default).
-        mapping = await SubscriptionService._transport_prefs_for_user(session, user_id, [server_id])
-        assert mapping == {}
-
-
-async def test_set_tcp_pref_round_trips_into_build_map():
-    user_id, server_id = await _seed()
-    async with async_session_maker() as session:
-        await SubscriptionService.set_transport_pref(session, user_id, server_id, "vless", "tcp")
-    async with async_session_maker() as session:
+        # A TCP-capable location defaults to TCP+Vision without storing a row.
         protocol, transport = await SubscriptionService.get_transport_pref(session, user_id, server_id)
         assert (protocol, transport) == ("vless", "tcp")
         mapping = await SubscriptionService._transport_prefs_for_user(session, user_id, [server_id])
         assert mapping == {server_id: "tcp"}
+        rows = (await session.execute(select(ServerTransportPref))).scalars().all()
+        assert rows == []
+
+
+async def test_xhttp_only_server_defaults_to_xhttp():
+    user_id, server_id = await _seed(alt=False)
+    async with async_session_maker() as session:
+        protocol, transport = await SubscriptionService.get_transport_pref(session, user_id, server_id)
+        assert (protocol, transport) == ("vless", "xhttp")
+        mapping = await SubscriptionService._transport_prefs_for_user(session, user_id, [server_id])
+        assert mapping == {server_id: "xhttp"}
+
+
+async def test_explicit_xhttp_pref_round_trips_into_build_map():
+    user_id, server_id = await _seed()
+    async with async_session_maker() as session:
+        await SubscriptionService.set_transport_pref(session, user_id, server_id, "vless", "xhttp")
+    async with async_session_maker() as session:
+        protocol, transport = await SubscriptionService.get_transport_pref(session, user_id, server_id)
+        assert (protocol, transport) == ("vless", "xhttp")
+        mapping = await SubscriptionService._transport_prefs_for_user(session, user_id, [server_id])
+        assert mapping == {server_id: "xhttp"}
+        rows = (await session.execute(select(ServerTransportPref))).scalars().all()
+        assert len(rows) == 1
 
 
 async def test_selecting_default_deletes_the_row():
     user_id, server_id = await _seed()
     async with async_session_maker() as session:
-        await SubscriptionService.set_transport_pref(session, user_id, server_id, "vless", "tcp")
-    async with async_session_maker() as session:
-        # Re-selecting the plain default collapses back to "no row".
         await SubscriptionService.set_transport_pref(session, user_id, server_id, "vless", "xhttp")
+    async with async_session_maker() as session:
+        # Selecting the capability-aware TCP default collapses to "no row".
+        await SubscriptionService.set_transport_pref(session, user_id, server_id, "vless", "tcp")
     async with async_session_maker() as session:
         rows = (await session.execute(select(ServerTransportPref))).scalars().all()
         assert rows == []
@@ -80,17 +92,17 @@ async def test_selecting_default_deletes_the_row():
 async def test_reset_clears_a_locations_pref():
     user_id, server_id = await _seed()
     async with async_session_maker() as session:
-        await SubscriptionService.set_transport_pref(session, user_id, server_id, "vless", "tcp")
+        await SubscriptionService.set_transport_pref(session, user_id, server_id, "vless", "xhttp")
     async with async_session_maker() as session:
         await SubscriptionService.reset_transport_pref(session, user_id, server_id)
     async with async_session_maker() as session:
         protocol, transport = await SubscriptionService.get_transport_pref(session, user_id, server_id)
-        assert (protocol, transport) == ("vless", "xhttp")
+        assert (protocol, transport) == ("vless", "tcp")
         mapping = await SubscriptionService._transport_prefs_for_user(session, user_id, [server_id])
-        assert mapping == {}
+        assert mapping == {server_id: "tcp"}
 
 
-async def test_stale_tcp_pref_on_xhttp_only_server_is_omitted():
+async def test_stale_tcp_pref_on_xhttp_only_server_falls_back_to_xhttp():
     # Server has no alt transports, but a tcp pref row exists (capability lost).
     user_id, server_id = await _seed(alt=False)
     async with async_session_maker() as session:
@@ -99,5 +111,4 @@ async def test_stale_tcp_pref_on_xhttp_only_server_is_omitted():
         await session.commit()
     async with async_session_maker() as session:
         mapping = await SubscriptionService._transport_prefs_for_user(session, user_id, [server_id])
-        # Resolves to xhttp default -> omitted from the override map (byte-identical).
-        assert mapping == {}
+        assert mapping == {server_id: "xhttp"}
