@@ -205,11 +205,12 @@ async def cq_location_protocol_set(call: CallbackQuery):
         if user is None:
             await call.answer(t(language, "locations_none"), show_alert=True)
             return
-        # vless keeps the current transport; hy2 has no transport sub-choice, so
-        # the transport field is left at its default. set_transport_pref collapses
-        # the plain vless/xhttp default to "no row" automatically.
+        # VLESS keeps the current transport. Hy2 has no transport sub-choice, so
+        # keep the location's capability-aware VLESS fallback in the shared row.
         stored_transport = (
-            transport if protocol == SubscriptionService.PROTOCOL_VLESS else SubscriptionService.DEFAULT_TRANSPORT
+            transport
+            if protocol == SubscriptionService.PROTOCOL_VLESS
+            else SubscriptionService.default_transport_for(server)
         )
         await SubscriptionService.set_transport_pref(session, user.id, server.id, protocol, stored_transport)
 
@@ -227,11 +228,10 @@ async def cq_location_transport_set(call: CallbackQuery):
     if loaded is None:
         return
     server, _protocol, _transport, available = loaded
-    # Only accept a transport the server actually serves; anything else is
-    # ignored (the resolver would fall back to xhttp anyway). Selecting xhttp is
-    # the reset — set_transport_pref deletes the row for the plain default.
+    # Only accept a transport the server actually serves; anything else resolves
+    # to this location's capability-aware default.
     if transport not in available:
-        transport = SubscriptionService.DEFAULT_TRANSPORT
+        transport = SubscriptionService.default_transport_for(server)
     async with async_session_maker() as session:
         user = (await session.execute(select(User).where(User.tg_id == call.from_user.id))).scalar_one_or_none()
         if user is None:

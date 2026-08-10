@@ -153,20 +153,24 @@ class SubscriptionService:
     DEFAULT_PROTOCOL = PROTOCOL_VLESS
     TRANSPORT_XHTTP = "xhttp"
     TRANSPORT_TCP = "tcp"
-    DEFAULT_TRANSPORT = TRANSPORT_XHTTP
+    DEFAULT_TRANSPORT = TRANSPORT_TCP
     # Transports the bot can actually emit a VLESS link for, given a server's
     # capability fields. xhttp is always available; tcp needs its port.
-    VLESS_TRANSPORTS = (TRANSPORT_XHTTP, TRANSPORT_TCP)
+    VLESS_TRANSPORTS = (TRANSPORT_TCP, TRANSPORT_XHTTP)
+
+    @staticmethod
+    def default_transport_for(server: Server) -> str:
+        """The best VLESS transport this server can serve by default."""
+        if getattr(server, "tcp_port", None):
+            return SubscriptionService.TRANSPORT_TCP
+        return SubscriptionService.TRANSPORT_XHTTP
 
     @staticmethod
     def available_transports(server: Server) -> list[str]:
-        """VLESS transports this server can serve, in display order. Always
-        includes xhttp (the default inbound); tcp only when the tcp_port
-        capability is set."""
-        transports = [SubscriptionService.TRANSPORT_XHTTP]
+        """VLESS transports this server can serve, best default first."""
         if getattr(server, "tcp_port", None):
-            transports.append(SubscriptionService.TRANSPORT_TCP)
-        return transports
+            return [SubscriptionService.TRANSPORT_TCP, SubscriptionService.TRANSPORT_XHTTP]
+        return [SubscriptionService.TRANSPORT_XHTTP]
 
     @staticmethod
     def resolve_protocol(server: Server, protocol: str | None) -> str:
@@ -179,14 +183,15 @@ class SubscriptionService:
     def resolve_transport(server: Server, protocol: str | None, transport: str | None) -> str:
         """Collapse a stored (protocol, transport) preference into the concrete
         VLESS transport to emit. Hy2 (handled separately) and a tcp pref on a
-        server that lost the capability fall back to the byte-identical default
-        xhttp."""
+        server that lost the capability fall back to the server's current
+        capability-aware default."""
+        default_transport = SubscriptionService.default_transport_for(server)
         if protocol and protocol != SubscriptionService.PROTOCOL_VLESS:
             # hy2 (or any future non-vless protocol) is not a VLESS transport.
-            return SubscriptionService.DEFAULT_TRANSPORT
+            return default_transport
         if transport in SubscriptionService.available_transports(server):
             return transport
-        return SubscriptionService.DEFAULT_TRANSPORT
+        return default_transport
 
     @staticmethod
     def build_hy2_link(
@@ -238,11 +243,16 @@ class SubscriptionService:
 
     @staticmethod
     async def get_transport_pref(session: AsyncSession, user_id: int, server_id: int) -> tuple[str, str]:
-        """The stored (protocol, transport) for one location, or the default
-        (vless, xhttp) when no row exists."""
+        """The stored choice, or this location's capability-aware default."""
         pref = await session.get(ServerTransportPref, (user_id, server_id))
         if pref is None:
-            return SubscriptionService.DEFAULT_PROTOCOL, SubscriptionService.DEFAULT_TRANSPORT
+            server = await session.get(Server, server_id)
+            transport = (
+                SubscriptionService.default_transport_for(server)
+                if server is not None
+                else SubscriptionService.DEFAULT_TRANSPORT
+            )
+            return SubscriptionService.DEFAULT_PROTOCOL, transport
         return pref.protocol, pref.transport
 
     @staticmethod
@@ -253,10 +263,14 @@ class SubscriptionService:
         protocol: str,
         transport: str,
     ) -> None:
-        """Upsert a per-location preference. Selecting the plain default
-        (vless/xhttp) deletes the row so 'no preference' stays the canonical
-        representation of default behavior."""
-        if protocol == SubscriptionService.DEFAULT_PROTOCOL and transport == SubscriptionService.DEFAULT_TRANSPORT:
+        """Store an explicit choice; selecting this server's default deletes it."""
+        server = await session.get(Server, server_id)
+        default_transport = (
+            SubscriptionService.default_transport_for(server)
+            if server is not None
+            else SubscriptionService.DEFAULT_TRANSPORT
+        )
+        if protocol == SubscriptionService.DEFAULT_PROTOCOL and transport == default_transport:
             await SubscriptionService.reset_transport_pref(session, user_id, server_id)
             return
         pref = await session.get(ServerTransportPref, (user_id, server_id))
@@ -276,7 +290,7 @@ class SubscriptionService:
 
     @staticmethod
     async def reset_transport_pref(session: AsyncSession, user_id: int, server_id: int) -> None:
-        """Drop a location's preference, returning it to vless/xhttp."""
+        """Drop a location's preference, returning it to the server default."""
         await session.execute(
             delete(ServerTransportPref).where(
                 ServerTransportPref.user_id == user_id,
@@ -287,15 +301,10 @@ class SubscriptionService:
 
     @staticmethod
     async def _transport_prefs_for_user(session: AsyncSession, user_id: int, server_ids: list[int]) -> dict[int, str]:
-        """Map ``server_id -> concrete VLESS transport`` for this user's stored
-        preferences, restricted to ``server_ids``. Only includes servers whose
-        resolved transport differs from the byte-identical default, so the map is
-        empty for users who never changed anything. Each server is fetched so the
-        resolution honors its current capabilities (a stale tcp pref on a node
-        that lost the port falls back to xhttp and is omitted)."""
+        """Resolve a concrete VLESS transport for every existing requested server."""
         if not server_ids:
             return {}
-        rows = (
+        prefs = (
             (
                 await session.execute(
                     select(ServerTransportPref).where(
@@ -307,15 +316,20 @@ class SubscriptionService:
             .scalars()
             .all()
         )
-        result: dict[int, str] = {}
-        for pref in rows:
-            server = await session.get(Server, pref.server_id)
-            if server is None:
-                continue
-            resolved = SubscriptionService.resolve_transport(server, pref.protocol, pref.transport)
-            if resolved != SubscriptionService.DEFAULT_TRANSPORT:
-                result[pref.server_id] = resolved
-        return result
+        servers = (
+            (await session.execute(select(Server).where(Server.id.in_(server_ids))))
+            .scalars()
+            .all()
+        )
+        prefs_by_server = {pref.server_id: pref for pref in prefs}
+        return {
+            server.id: SubscriptionService.resolve_transport(
+                server,
+                prefs_by_server[server.id].protocol if server.id in prefs_by_server else None,
+                prefs_by_server[server.id].transport if server.id in prefs_by_server else None,
+            )
+            for server in servers
+        }
 
     @staticmethod
     async def _hy2_servers_for_user(session: AsyncSession, user_id: int, server_ids: list[int]) -> set[int]:
@@ -446,20 +460,17 @@ class SubscriptionService:
         params (host/port/reality keypair).
 
         ``transport`` selects which of the server's VLESS+REALITY inbounds to
-        target. ``None`` (the default for every server without a per-location
-        preference) keeps EXACTLY today's behavior: the transport is taken from
-        the incoming link (xhttp on every xhttp-only node), so the produced link
-        is byte-identical to before this change. An explicit ``"tcp"`` retargets
-        the port + stream params to that node's alternative inbound, reusing the
-        same reality keypair and emitting
-        flow=xtls-rprx-vision (matching that inbound's clients).
+        target. ``None`` resolves to TCP+Vision when ``tcp_port`` is provisioned,
+        otherwise XHTTP. An explicit choice always wins when the node supports it.
         """
         parts = urlsplit(raw_uri)
         userinfo, _, _ = parts.netloc.rpartition("@")
         query = dict(parse_qsl(parts.query, keep_blank_values=True))
-        # When no transport override is given, mirror the incoming link's type
-        # (the legacy path). An override (tcp) wins.
-        effective = (transport or query.get("type") or "tcp").lower()
+        effective = SubscriptionService.resolve_transport(
+            server,
+            SubscriptionService.PROTOCOL_VLESS,
+            transport.lower() if transport else None,
+        )
         is_xhttp = effective == "xhttp"
         is_tcp = effective == SubscriptionService.TRANSPORT_TCP
         query["security"] = "reality"
@@ -469,8 +480,7 @@ class SubscriptionService:
         query["pbk"] = server.public_key
         query["sid"] = server.short_id
         query["spx"] = query.get("spx", "/")
-        # Per-transport stream params. The xhttp branch is untouched so the
-        # default path stays byte-identical.
+        # Per-transport stream params.
         override_port: int | None = None
         if is_tcp:
             query["type"] = "tcp"
@@ -512,8 +522,7 @@ class SubscriptionService:
         # drop the sslip.io dependency (a third-party DNS that, when it hiccups,
         # takes down every location except the one already on a bare IP).
         target_host = server.host or parts.hostname
-        # A transport override (tcp) carries its own inbound port; otherwise
-        # keep the legacy precedence (link port, then server default).
+        # TCP carries its own inbound port; XHTTP keeps the agent/server port.
         target_port = override_port or parts.port or server.port
         netloc = f"{userinfo}@{target_host}:{target_port}" if userinfo else f"{target_host}:{target_port}"
         return urlunsplit((parts.scheme, netloc, parts.path, normalized_query, fragment))
@@ -646,9 +655,8 @@ class SubscriptionService:
 
         effective_uuid = device_uuid or sub.client_uuid
 
-        # Per-location transport preferences for this user. A missing row means
-        # the default (vless/xhttp) — i.e. byte-identical to the legacy path —
-        # so an empty map leaves every server on its default transport.
+        # Resolve a concrete per-location transport. A missing preference row
+        # becomes TCP on a TCP-capable server and XHTTP everywhere else.
         server_ids = [server.id for server in servers]
         transport_by_server = await SubscriptionService._transport_prefs_for_user(session, sub.user_id, server_ids)
         # Locations the user pinned to Hysteria2 (only those that are actually

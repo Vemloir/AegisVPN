@@ -4,8 +4,8 @@ from src.models import Server, Subscription
 from src.services import SubscriptionService
 from src.services.subscription_service import _RU_CN_DIRECT_DOMAINS
 
-# A raw vless link as the agent returns it from /sub/<uuid> (xhttp default
-# inbound). The bot's normalize_vless_uri rewrites it onto the bot's
+# A raw VLESS link as the agent returns it from /sub/<uuid> (the agent template
+# uses XHTTP). The bot's normalize_vless_uri rewrites it onto the bot's
 # authoritative host/port + reality keypair.
 _AGENT_RAW = (
     "vless://0146ca3d-e9b9-459a-8e54-b611dc601bec@agent-host:443?type=xhttp"
@@ -208,20 +208,26 @@ def test_vless_link_to_xray_config_xhttp_has_recovery_knobs_and_clean_routing():
 # --- per-location transport selection ---------------------------------------
 
 
-def test_default_transport_is_byte_identical():
-    """A user with no preference (transport=None) gets EXACTLY the same link as
-    before this change: the legacy code path used transport=None implicitly."""
+def test_tcp_capable_server_defaults_to_tcp_vision():
+    """No explicit preference uses the best transport the node can serve."""
     server = _hy2_node_server()
-    # `None` is what every server without a pref resolves to in _collect_links.
     with_none = SubscriptionService.normalize_vless_uri(_AGENT_RAW, server, transport=None)
-    # Explicitly asking for xhttp must produce the identical string too.
     with_xhttp = SubscriptionService.normalize_vless_uri(_AGENT_RAW, server, transport="xhttp")
-    assert with_none == with_xhttp
-    # And it is the xhttp link on port 443 with the bot's reality keypair.
-    assert "type=xhttp" in with_none
-    assert "@203.0.113.10:443" in with_none
+    assert with_none != with_xhttp
+    assert "type=tcp" in with_none
+    assert "@203.0.113.10:2053" in with_none
+    assert "headerType=none" in with_none
+    assert "flow=xtls-rprx-vision" in with_none
     assert "pbk=GRPBK" in with_none and "sid=GRSID" in with_none
-    assert "flow=" not in with_none
+    assert "type=xhttp" in with_xhttp
+    assert "@203.0.113.10:443" in with_xhttp
+    assert "flow=" not in with_xhttp
+
+
+def test_xhttp_only_server_keeps_xhttp_default():
+    link = SubscriptionService.normalize_vless_uri(_AGENT_RAW, _xhttp_only_server(), transport=None)
+    assert "type=xhttp" in link
+    assert "flow=" not in link
 
 
 def test_tcp_transport_uses_tcp_port_and_vision_flow():
@@ -251,17 +257,16 @@ def test_every_server_offers_the_settings_screen():
     assert SubscriptionService.available_transports(server) == ["xhttp"]
 
 
-def test_hy2_node_offers_xhttp_and_tcp_transports():
+def test_tcp_capable_node_offers_tcp_then_xhttp():
     server = _hy2_node_server()
     assert server.has_alt_transports is True
-    assert SubscriptionService.available_transports(server) == ["xhttp", "tcp"]
+    assert SubscriptionService.available_transports(server) == ["tcp", "xhttp"]
 
 
-def test_hy2_pref_falls_back_to_xhttp():
+def test_non_vless_and_stale_prefs_use_capability_aware_default():
     server = _hy2_node_server()
-    # resolve_transport collapses an hy2 pref to the default xhttp (no backend).
-    assert SubscriptionService.resolve_transport(server, "hy2", "xhttp") == "xhttp"
-    assert SubscriptionService.resolve_transport(server, "hy2", "tcp") == "xhttp"
+    assert SubscriptionService.resolve_transport(server, "hy2", "xhttp") == "tcp"
+    assert SubscriptionService.resolve_transport(server, "hy2", "tcp") == "tcp"
     # A tcp pref on a server that lost the capability also falls back.
     assert SubscriptionService.resolve_transport(_xhttp_only_server(), "vless", "tcp") == "xhttp"
     # A valid tcp pref resolves to tcp.

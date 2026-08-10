@@ -71,13 +71,13 @@ def test_protocol_chooser_enables_hy2_only_on_capable_node():
 
 
 def test_transport_chooser_lists_available_with_marker_and_back():
-    kb = location_transport_keyboard("ru", 7, "tcp", ["xhttp", "tcp"])
+    kb = location_transport_keyboard("ru", 7, "tcp", ["tcp", "xhttp"])
     cbs = _callbacks(kb)
-    assert cbs == ["loc_transport_set:7:xhttp", "loc_transport_set:7:tcp", "loc:7"]
+    assert cbs == ["loc_transport_set:7:tcp", "loc_transport_set:7:xhttp", "loc:7"]
     texts = _texts(kb)
-    assert "TCP + VISION" in texts[1] and "(текущий)" in texts[1]
+    assert "TCP + VISION" in texts[0] and "(текущий)" in texts[0]
     # The non-selected option has no marker.
-    assert "(текущий)" not in texts[0]
+    assert "(текущий)" not in texts[1]
 
 
 def test_transport_chooser_omits_tcp_without_capability():
