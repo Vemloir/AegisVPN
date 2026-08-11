@@ -38,6 +38,6 @@ def test_subscription_metadata_keeps_usage_and_update_contract():
     assert headers["Subscription-Userinfo"].startswith("upload=123; download=456; total=0; expire=")
 
 
-def test_ua_varmlen_receives_xray_json_subscription():
-    assert client_wants_xray_json("UA Varmlen/1.4.2")
-    assert client_wants_xray_json("ua varmlen")
+def test_varmlen_receives_xray_json_subscription():
+    assert client_wants_xray_json("Varmlen/1.4.2")
+    assert client_wants_xray_json("varmlen")
