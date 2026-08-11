@@ -100,6 +100,9 @@ async def ensure_default_plan_exists() -> None:
 
 
 async def bootstrap_server() -> None:
+    if not settings.bootstrap_server_enabled:
+        return
+
     agent_env_path = Path(settings.bootstrap_server_agent_env)
     if not await wait_for_agent_env(agent_env_path):
         logger.warning(f"Agent env file not found: {agent_env_path}")

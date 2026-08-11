@@ -61,9 +61,12 @@ mkdir -p data/bot data/vpn data/caddy config/caddy
 - `BOT_TOKEN`
 - `ADMIN_IDS`
 - `PUBLIC_BASE_URL`
-- `BOOTSTRAP_SERVER_NAME`
-- `BOOTSTRAP_SERVER_FLAG`
 - `BOOTSTRAP_PLANS_JSON`
+
+Set `BOOTSTRAP_SERVER_ENABLED=true` plus `BOOTSTRAP_SERVER_NAME` and
+`BOOTSTRAP_SERVER_FLAG` only when this control host intentionally runs a
+co-located VPN exit. Leave it false on control-only hosts; otherwise a stale
+`data/vpn/agent.env` can be registered as a duplicate location.
 
 3. Fill `vpn.env` only if this host is intentionally also a VPN exit. Its
    `XRAY_PORT` must not conflict with Caddy TCP/443.

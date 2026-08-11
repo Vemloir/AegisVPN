@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     subscription_update_interval_hours: int = 1
 
     bootstrap_plans_json: str = ""
+    # Server bootstrapping reads a co-located Agent's persistent env and writes a
+    # Server row. Control-only hosts can retain a stale /vpn-data volume after a
+    # topology migration, so this destructive discovery must be explicitly on.
+    bootstrap_server_enabled: bool = False
     bootstrap_server_name: str = "Main"
     bootstrap_server_flag: str = "VPN"
     bootstrap_server_agent_env: str = "/vpn-data/agent.env"
