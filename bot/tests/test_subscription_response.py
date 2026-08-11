@@ -41,3 +41,8 @@ def test_subscription_metadata_keeps_usage_and_update_contract():
 def test_varmlen_receives_xray_json_subscription():
     assert client_wants_xray_json("Varmlen/1.4.2")
     assert client_wants_xray_json("varmlen")
+
+
+def test_incy_receives_xray_json_subscription():
+    assert client_wants_xray_json("INCY/1.0.0")
+    assert client_wants_xray_json("incy")
