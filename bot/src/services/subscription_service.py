@@ -879,9 +879,10 @@ class SubscriptionService:
                 "hysteriaSettings": {"version": 2, "auth": userinfo},
                 "tlsSettings": {
                     "serverName": q.get("sni", ""),
-                    # firefox to match our REALITY default — chrome's QUIC
-                    # ClientHello is the more commonly fingerprinted/policed one.
-                    "fingerprint": "firefox",
+                    # Match the client-native HY2 JSON shape used by Happ/
+                    # Varmlen. This is intentionally independent of the REALITY
+                    # fingerprint used by VLESS transports.
+                    "fingerprint": "qq",
                     "alpn": ["h3"],
                 },
             },
