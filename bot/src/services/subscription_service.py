@@ -847,13 +847,15 @@ class SubscriptionService:
         xray-core proper has no hysteria2 outbound, but the xray FORK Happ /
         v2rayTun bundle DOES run hysteria as an xray outbound — it is exactly the
         config those clients generate from our hysteria2:// link themselves
-        (protocol "hysteria", auth under hysteriaSettings, congestion control under
-        finalmask.quicParams). Emitting it directly lets the Hy2 location keep the
-        SAME baked-in routing/DNS as the vless entries instead of forcing the whole
-        subscription down to a flat link list. The client validates the real Let's
-        Encrypt cert (no allowInsecure). BBR congestion (low gaming latency, no
-        bufferbloat). salamander obfs is added (finalmask.udp) only when the link
-        carries it, for nodes whose network path drops un-obfuscated QUIC streams.
+        (protocol "hysteria", auth under hysteriaSettings). Emitting it directly
+        lets the Hy2 location keep the SAME baked-in routing/DNS as the vless
+        entries instead of forcing the whole subscription down to a flat link
+        list. The client validates the real Let's
+        Encrypt cert (no allowInsecure). Plain HY2 deliberately omits finalmask:
+        Varmlen on Android can finish the QUIC handshake with finalmask.quicParams
+        but then stalls the streams used by its DNS probe. Xray's native default is
+        BBR when no bandwidth is specified. salamander obfs is added as
+        finalmask.udp only when the link carries it.
         """
         if not link.startswith("hysteria2://"):
             return None
@@ -883,17 +885,17 @@ class SubscriptionService:
                     "fingerprint": "firefox",
                     "alpn": ["h3"],
                 },
-                "finalmask": {"quicParams": {"debug": False, "congestion": "bbr"}},
             },
         }
         # salamander obfs (when the link carries it) keeps the QUIC stream packets
         # intact on paths that drop un-obfuscated streams (handshake passes, then
         # "accepting stream failed: timeout"). Lives under
-        # finalmask.udp alongside quicParams in the xray fork's hysteria outbound.
+        # finalmask.udp in the xray fork's hysteria outbound. Plain HY2 above has
+        # no finalmask at all for Android client compatibility.
         if q.get("obfs") == "salamander" and q.get("obfs-password"):
-            proxy["streamSettings"]["finalmask"]["udp"] = [
-                {"type": "salamander", "settings": {"password": q["obfs-password"]}}
-            ]
+            proxy["streamSettings"]["finalmask"] = {
+                "udp": [{"type": "salamander", "settings": {"password": q["obfs-password"]}}]
+            }
         return {
             "remarks": unquote(parts.fragment) if parts.fragment else (server.name or "").strip(),
             "dns": _XRAY_CLEAN_DNS,
