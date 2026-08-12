@@ -1,0 +1,13 @@
+[Unit]
+Description=Aegis HY2 alternative UDP port
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c '/usr/sbin/iptables -t nat -C PREROUTING -p udp --dport 2053 -j REDIRECT --to-ports 443 2>/dev/null || /usr/sbin/iptables -t nat -A PREROUTING -p udp --dport 2053 -j REDIRECT --to-ports 443'
+ExecStop=/bin/sh -c '/usr/sbin/iptables -t nat -D PREROUTING -p udp --dport 2053 -j REDIRECT --to-ports 443 2>/dev/null || true'
+
+[Install]
+WantedBy=multi-user.target

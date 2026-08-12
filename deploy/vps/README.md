@@ -11,6 +11,12 @@ The control host uses `docker-compose.yml`:
 - `xray` and `agent` - optional local data plane behind the `local-exit` profile
 - `hysteria` - optional Hysteria 2 data plane
 
+Nodes whose provider path filters or black-holes QUIC on UDP/443 can expose
+UDP/2053 without changing Hysteria's internal listener. Install and enable
+`systemd/aegis-hy2-alt-port.service`, open `2053/udp` in the host firewall, and
+set that server's `hy2_port` to `2053` in the control-plane database. UDP/443
+continues to work, so this can be enabled per node without affecting others.
+
 The production control host is not a VPN exit. A default `docker compose up`
 therefore excludes `xray` and `agent`, preventing Linux `SO_REUSEPORT` from
 splitting HTTPS connections between Caddy and Reality.
