@@ -889,12 +889,20 @@ class SubscriptionService:
         }
         # salamander obfs (when the link carries it) keeps the QUIC stream packets
         # intact on paths that drop un-obfuscated streams (handshake passes, then
-        # "accepting stream failed: timeout"). Lives under
-        # finalmask.udp in the xray fork's hysteria outbound. Plain HY2 above has
-        # no finalmask at all for Android client compatibility.
+        # "accepting stream failed: timeout"). Lives under finalmask.udp in the
+        # xray fork's hysteria outbound. Disable client-side path-MTU discovery on
+        # these exceptional paths as well: the server-side switch cannot prevent
+        # a client from probing a larger UDP payload that an asymmetric route
+        # silently drops after the small handshake packets succeeded. Plain HY2
+        # above has no finalmask at all for Android client compatibility.
         if q.get("obfs") == "salamander" and q.get("obfs-password"):
             proxy["streamSettings"]["finalmask"] = {
-                "udp": [{"type": "salamander", "settings": {"password": q["obfs-password"]}}]
+                "udp": [{"type": "salamander", "settings": {"password": q["obfs-password"]}}],
+                "quicParams": {
+                    "congestion": "bbr",
+                    "disablePathMTUDiscovery": True,
+                    "keepAlivePeriod": 10,
+                },
             }
         return {
             "remarks": unquote(parts.fragment) if parts.fragment else (server.name or "").strip(),

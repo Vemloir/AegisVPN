@@ -115,6 +115,11 @@ def test_xray_json_hy2_finalmask_added_only_with_obfs_password():
     fm = proxy["streamSettings"]["finalmask"]
     assert fm["udp"][0]["type"] == "salamander"
     assert fm["udp"][0]["settings"]["password"] == "s4l4m"
+    assert fm["quicParams"] == {
+        "congestion": "bbr",
+        "disablePathMTUDiscovery": True,
+        "keepAlivePeriod": 10,
+    }
     # Plain HY2 must use the same native Xray shape as a working imported config.
     plain = SubscriptionService._hy2_link_to_xray_config(
         SubscriptionService.build_hy2_link(_hy2_node(), "11111111-2222-3333-4444-555555555555"),
