@@ -28,7 +28,10 @@ quic:
   maxConnReceiveWindow: 10485760
   maxIdleTimeout: 30s
   keepAlivePeriod: 10s
-  disablePathMTUDiscovery: false
+  # Some filtered/mobile paths pass the small QUIC handshake packets but black-hole
+  # larger packets selected by DPLPMTUD. Keep quic-go on its conservative base MTU
+  # so HY2 data streams work across those paths, at a small throughput cost.
+  disablePathMTUDiscovery: true
 
 tls:
   cert: /etc/hysteria/current/cert.pem

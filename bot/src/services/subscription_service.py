@@ -851,11 +851,10 @@ class SubscriptionService:
         lets the Hy2 location keep the SAME baked-in routing/DNS as the vless
         entries instead of forcing the whole subscription down to a flat link
         list. The client validates the real Let's
-        Encrypt cert (no allowInsecure). Plain HY2 deliberately omits finalmask:
-        Varmlen on Android can finish the QUIC handshake with finalmask.quicParams
-        but then stalls the streams used by its DNS probe. Xray's native default is
-        BBR when no bandwidth is specified. salamander obfs is added as
-        finalmask.udp only when the link carries it.
+        Encrypt cert (no allowInsecure). Plain HY2 deliberately omits finalmask
+        to match the native Xray HY2 shape used by compatible clients. Xray's
+        native default is BBR when no bandwidth is specified. salamander obfs is
+        added as finalmask.udp only when the link carries it.
         """
         if not link.startswith("hysteria2://"):
             return None
