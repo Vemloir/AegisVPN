@@ -1411,15 +1411,29 @@ def sync_bot_db_mtproxy(
 
 
 def sync_bot_db_hy2(
-    main_c: paramiko.SSHClient, host: str, obfs_password: str, hy2_sni: str
+    main_c: paramiko.SSHClient,
+    host: str,
+    obfs_password: str,
+    hy2_sni: str,
+    *,
+    force_enable: bool = False,
 ) -> None:
     """D) Mirror this node's Hy2 + tcp-inbound config into its bot DB row.
 
     Matches the servers row by host=<node IP> and writes tcp_port, hy2_port
     (= UDP :443), and hy2_sni (the LE cert domain). The hop range + up/down + obfs
-    are NULLed — Hy2 is now bare QUIC on :443 with BBR. The obfs_password arg is
-    "" and unused (hy2_capable no longer needs it).
+    are NULLed — Hy2 is now bare QUIC on :443. A previously provisioned node with
+    ``hy2_enabled=0`` stays disabled during a routine full-stack re-provision;
+    this preserves an operator quarantine such as a path-filtered node. A fresh
+    row (no hy2_port yet) is enabled, while the dedicated ``--enable-hy2`` path
+    passes ``force_enable=True`` to restore a quarantined node deliberately.
+    The obfs_password arg is "" and unused (hy2_capable no longer needs it).
     """
+    enabled_assignment = (
+        "hy2_enabled=1"
+        if force_enable
+        else "hy2_enabled=CASE WHEN hy2_port IS NULL THEN 1 ELSE hy2_enabled END"
+    )
     py = (
         "import asyncio\n"
         "from sqlalchemy import text\n"
@@ -1432,7 +1446,7 @@ def sync_bot_db_hy2(
         "async def q():\n"
         "    async with async_session_maker() as s:\n"
         "        res = await s.execute(text('UPDATE servers SET '\n"
-        "            'tcp_port=:tcp, hy2_enabled=1, hy2_port=:hp, '\n"
+        f"            'tcp_port=:tcp, {enabled_assignment}, hy2_port=:hp, '\n"
         "            'hy2_hop_start=NULL, hy2_hop_end=NULL, hy2_up=NULL, hy2_down=NULL, '\n"
         "            'hy2_obfs_password=:obfs, hy2_sni=:sni WHERE host=:h'),\n"
         "            {'tcp': TCP_PORT, 'hp': HY2_PORT, 'obfs': OBFS, 'sni': SNI, 'h': HOST})\n"
@@ -1583,7 +1597,13 @@ def enable_hy2(
     install_hy2_cert(node_c, host, cert_b64, key_b64)
     update_agent(node_c, host)
     verify_stack(node_c, host)
-    sync_bot_db_hy2(main_c, host, obfs_password, hy2_domain)
+    sync_bot_db_hy2(
+        main_c,
+        host,
+        obfs_password,
+        hy2_domain,
+        force_enable=True,
+    )
     print(f"  [{host}] Hy2 enabled without restarting Xray ✓")
 
 

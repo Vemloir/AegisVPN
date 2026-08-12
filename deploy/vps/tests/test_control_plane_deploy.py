@@ -656,6 +656,58 @@ def test_enable_hy2_does_not_restart_or_reconfigure_xray(monkeypatch):
     assert "REALITY_" not in env_source
 
 
+def test_hy2_db_sync_preserves_an_explicitly_disabled_provisioned_node(monkeypatch):
+    commands: list[str] = []
+
+    monkeypatch.setattr(
+        update_script,
+        "run",
+        lambda _client, command, label="", timeout=120: (
+            commands.append(command) or "rows updated: 1"
+        ),
+    )
+
+    update_script.sync_bot_db_hy2(
+        object(),
+        "192.0.2.10",
+        "",
+        "vpn-example.duckdns.org",
+    )
+
+    assert "hy2_enabled=CASE WHEN hy2_port IS NULL THEN 1 ELSE hy2_enabled END" in commands[0]
+
+
+def test_dedicated_enable_hy2_forces_db_capability_on(monkeypatch):
+    calls: list[dict] = []
+
+    monkeypatch.setattr(update_script, "run", lambda *args, **kwargs: "hysteria\n")
+    monkeypatch.setattr(
+        update_script,
+        "renew_hy2_cert_acme",
+        lambda _client: ("CERT", "KEY", "vpn-example.duckdns.org"),
+    )
+    monkeypatch.setattr(update_script, "provision_hy2_agent_env", lambda *args: "stats")
+    monkeypatch.setattr(update_script, "provision_firewall", lambda *args: None)
+    monkeypatch.setattr(update_script, "provision_hysteria", lambda *args: "")
+    monkeypatch.setattr(update_script, "install_hy2_cert", lambda *args: None)
+    monkeypatch.setattr(update_script, "update_agent", lambda *args: None)
+    monkeypatch.setattr(update_script, "verify_stack", lambda *args: None)
+    monkeypatch.setattr(
+        update_script,
+        "sync_bot_db_hy2",
+        lambda *args, **kwargs: calls.append(kwargs),
+    )
+
+    update_script.enable_hy2(
+        object(),
+        object(),
+        host="192.0.2.10",
+        geo_sni="www.example.edu",
+    )
+
+    assert calls == [{"force_enable": True}]
+
+
 def test_cli_exposes_dedicated_hy2_enable_without_full_stack(monkeypatch):
     monkeypatch.setattr(
         sys,
