@@ -177,9 +177,6 @@ MIGRATIONS: dict[str, list[Column]] = {
         # the SNI are secrets, and until they are present hy2_capable is False and
         # the bot falls back to vless rather than shipping a broken Hy2 link.
         Column("hy2_enabled", "BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE"),
-        # Optional client-facing UDP ingress. The Hy2 session still terminates
-        # on the node and therefore keeps that node's exit IP.
-        Column("hy2_host", "VARCHAR(255)", "VARCHAR(255)"),
         Column("hy2_port", "INTEGER", "INTEGER"),
         Column("hy2_hop_start", "INTEGER", "INTEGER"),
         Column("hy2_hop_end", "INTEGER", "INTEGER"),
