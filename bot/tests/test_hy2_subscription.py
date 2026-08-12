@@ -122,6 +122,7 @@ def test_xray_json_hy2_finalmask_added_only_with_obfs_password():
     )
     pproxy = next(o for o in plain["outbounds"] if o["tag"] == "proxy")
     assert "finalmask" not in pproxy["streamSettings"]
+    assert pproxy["streamSettings"]["tlsSettings"]["fingerprint"] == "qq"
 
 
 def test_build_hy2_link_none_when_not_capable():
