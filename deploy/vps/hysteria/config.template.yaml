@@ -36,6 +36,12 @@ quic:
 tls:
   cert: /etc/hysteria/current/cert.pem
   key: /etc/hysteria/current/key.pem
+  # Xray JSON profiles may use a large-provider ClientHello SNI on filtered
+  # paths while verifying this certificate against its real name through
+  # verifyPeerCertByName. Hysteria's default dns-san guard rejects that split
+  # before the client can verify anything. Disabling the SERVER-side guard does
+  # not disable client certificate validation or HY2 authentication.
+  sniGuard: disable
 
 auth:
   type: http
