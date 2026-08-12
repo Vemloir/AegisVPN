@@ -1,8 +1,7 @@
-"""Hysteria2 subscription emission: the hysteria2:// link shape (UDP :443, sni
-only, no obfs/hop/insecure), the hy2_capable gate (enabled + port + SNI), and the
-xray-JSON delivery path emitting the fork's hysteria outbound (BBR, no obfs) so a
-Happ/v2rayTun user who picks Hy2 keeps the baked-in routing instead of a flat
-link list.
+"""Hysteria2 subscription emission: the hysteria2:// link shape, hy2_capable
+gate (enabled + port + SNI), and the xray-JSON delivery path emitting the fork's
+hysteria outbound so a Happ/v2rayTun user who picks Hy2 keeps the baked-in
+routing instead of a flat link list.
 """
 
 import base64
@@ -107,7 +106,7 @@ def test_build_hy2_link_emits_obfs_when_node_has_password():
     assert q["sni"] == ["aegis.example.test"]
 
 
-def test_xray_json_hy2_finalmask_added_only_with_obfs_password():
+def test_xray_json_hy2_salamander_profile_uses_finalmask():
     server = _hy2_node(hy2_obfs_password="s4l4m")
     link = SubscriptionService.build_hy2_link(server, "11111111-2222-3333-4444-555555555555")
     cfg = SubscriptionService._hy2_link_to_xray_config(link, server)
@@ -128,6 +127,28 @@ def test_xray_json_hy2_finalmask_added_only_with_obfs_password():
     pproxy = next(o for o in plain["outbounds"] if o["tag"] == "proxy")
     assert "finalmask" not in pproxy["streamSettings"]
     assert pproxy["streamSettings"]["tlsSettings"]["fingerprint"] == "qq"
+
+
+def test_xray_json_hy2_congestion_is_independent_of_obfs():
+    server = _hy2_node(hy2_obfs_password=None, hy2_congestion=" ReNo ")
+    link = SubscriptionService.build_hy2_link(server, "11111111-2222-3333-4444-555555555555")
+    cfg = SubscriptionService._hy2_link_to_xray_config(link, server)
+    proxy = next(o for o in cfg["outbounds"] if o["tag"] == "proxy")
+    assert proxy["streamSettings"]["finalmask"] == {
+        "quicParams": {
+            "congestion": "reno",
+            "disablePathMTUDiscovery": True,
+            "keepAlivePeriod": 10,
+        }
+    }
+
+
+def test_xray_json_hy2_ignores_invalid_congestion():
+    server = _hy2_node(hy2_obfs_password=None, hy2_congestion="brutal")
+    link = SubscriptionService.build_hy2_link(server, "11111111-2222-3333-4444-555555555555")
+    cfg = SubscriptionService._hy2_link_to_xray_config(link, server)
+    proxy = next(o for o in cfg["outbounds"] if o["tag"] == "proxy")
+    assert "finalmask" not in proxy["streamSettings"]
 
 
 def test_build_hy2_link_none_when_not_capable():

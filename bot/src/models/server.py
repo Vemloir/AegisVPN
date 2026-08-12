@@ -85,6 +85,11 @@ class Server(Base):
     hy2_hop_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     hy2_hop_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
     hy2_obfs_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Optional Xray-fork client congestion controller. NULL preserves the
+    # client's native default; only the safe no-bandwidth modes are emitted.
+    # This is deliberately independent of Salamander so a plain-QUIC node can
+    # select Reno without carrying an obfuscation password.
+    hy2_congestion: Mapped[str | None] = mapped_column(String(16), nullable=True)
     hy2_up: Mapped[str | None] = mapped_column(String(32), nullable=True)
     hy2_down: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # Hy2 TLS SNI for this node's own certificate. Nodes sharing an SNI still
