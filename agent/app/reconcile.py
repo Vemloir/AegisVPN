@@ -256,6 +256,7 @@ async def reconcile_snapshot(
 
         if config_changed:
             await save_xray_config(config)
+            hysteria.refresh_from_config(config)
 
         live_delta_size = len(removals) + len(additions)
         use_live_api = not cascade_changed and live_delta_size <= max(0, settings.xray_live_delta_limit)
