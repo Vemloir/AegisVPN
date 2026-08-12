@@ -1430,9 +1430,9 @@ def sync_bot_db_hy2(
     The obfs_password arg is "" and unused (hy2_capable no longer needs it).
     """
     enabled_assignment = (
-        "hy2_enabled=1"
+        "hy2_enabled=TRUE"
         if force_enable
-        else "hy2_enabled=CASE WHEN hy2_port IS NULL THEN 1 ELSE hy2_enabled END"
+        else "hy2_enabled=CASE WHEN hy2_port IS NULL THEN TRUE ELSE hy2_enabled END"
     )
     py = (
         "import asyncio\n"

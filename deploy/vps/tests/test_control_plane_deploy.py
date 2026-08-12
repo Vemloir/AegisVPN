@@ -674,7 +674,7 @@ def test_hy2_db_sync_preserves_an_explicitly_disabled_provisioned_node(monkeypat
         "vpn-example.duckdns.org",
     )
 
-    assert "hy2_enabled=CASE WHEN hy2_port IS NULL THEN 1 ELSE hy2_enabled END" in commands[0]
+    assert "hy2_enabled=CASE WHEN hy2_port IS NULL THEN TRUE ELSE hy2_enabled END" in commands[0]
 
 
 def test_dedicated_enable_hy2_forces_db_capability_on(monkeypatch):

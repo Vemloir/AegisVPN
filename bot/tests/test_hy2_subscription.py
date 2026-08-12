@@ -5,6 +5,7 @@ routing instead of a flat link list.
 """
 
 import base64
+import json
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
@@ -192,7 +193,12 @@ def test_build_hy2_link_none_when_not_capable():
 # --- end-to-end delivery -----------------------------------------------------
 
 
-async def _seed_hy2_sub(*, capable: bool, tcp_port: int | None = None) -> str:
+async def _seed_hy2_sub(
+    *,
+    capable: bool,
+    tcp_port: int | None = None,
+    hy2_enabled: bool = True,
+) -> str:
     """One user + one Testland server (Hy2 capable or not) + an active sub synced
     to it + a protocol=hy2 pref. Returns the sub token."""
     async with engine.begin() as conn:
@@ -205,6 +211,7 @@ async def _seed_hy2_sub(*, capable: bool, tcp_port: int | None = None) -> str:
         server = _hy2_node(
             hy2_sni="aegis.example.test" if capable else None,
             tcp_port=tcp_port,
+            hy2_enabled=hy2_enabled,
         )
         session.add(server)
         await session.flush()
@@ -227,9 +234,9 @@ async def _seed_hy2_sub(*, capable: bool, tcp_port: int | None = None) -> str:
 
 
 async def test_misconfigured_hy2_falls_back_to_tcp_vision(monkeypatch):
-    # Server enabled for Hy2 but missing its SNI: the pref resolves to vless, so
-    # the Hy2 short-circuit is skipped. The key assertion is that NO hysteria2://
-    # link is produced from a misconfigured node.
+    # A path-filtered node is explicitly disabled while all of its provisioned
+    # fields remain present. The stale Hy2 preference must resolve to VLESS/TCP,
+    # matching the Switzerland production quarantine.
     async def fake_get_subscription(self, token, profile="safe"):
         return (
             "vless://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@203.0.113.10:443"
@@ -238,7 +245,11 @@ async def test_misconfigured_hy2_falls_back_to_tcp_vision(monkeypatch):
         )
 
     monkeypatch.setattr(AgentClient, "get_subscription", fake_get_subscription)
-    token = await _seed_hy2_sub(capable=False, tcp_port=2053)
+    token = await _seed_hy2_sub(
+        capable=True,
+        tcp_port=2053,
+        hy2_enabled=False,
+    )
     async with async_session_maker() as session:
         encoded = await SubscriptionService.get_subscription_vless_links(session, token)
     body = base64.b64decode(encoded).decode() if encoded else ""
@@ -257,3 +268,86 @@ async def test_capable_hy2_preference_emits_hysteria_link():
     body = base64.b64decode(encoded).decode() if encoded else ""
     assert body.startswith("hysteria2://")
     assert "sni=aegis.example.test" in body
+
+
+async def test_disabled_swiss_falls_back_without_disabling_hy2_elsewhere(monkeypatch):
+    """Capability is per server: quarantine Swiss, retain Germany Hy2."""
+
+    async def fake_get_subscription(self, token, profile="safe"):
+        return (
+            "vless://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@203.0.113.20:443"
+            "?type=xhttp&security=reality&encryption=none&sni=www.example.test"
+            "&fp=firefox&pbk=PBK&sid=SID&path=%2F#Switzerland"
+        )
+
+    monkeypatch.setattr(AgentClient, "get_subscription", fake_get_subscription)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    async with async_session_maker() as session:
+        user = User(tg_id=920002)
+        session.add(user)
+        await session.flush()
+        swiss = _hy2_node(
+            name="Switzerland | Zurich",
+            host="203.0.113.20",
+            tcp_port=2053,
+            hy2_enabled=False,
+        )
+        germany = _hy2_node(
+            name="Germany | Frankfurt",
+            host="203.0.113.30",
+            tcp_port=2053,
+        )
+        session.add_all([swiss, germany])
+        await session.flush()
+        now = datetime.now(UTC).replace(tzinfo=None)
+        sub = Subscription(
+            user_id=user.id,
+            sub_token="tok-hy2-mixed",
+            client_uuid="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            plan_days=30,
+            started_at=now,
+            expires_at=now + timedelta(days=30),
+            is_active=True,
+        )
+        session.add(sub)
+        await session.flush()
+        session.add_all(
+            [
+                SubscriptionServer(subscription_id=sub.id, server_id=swiss.id, is_synced=True),
+                SubscriptionServer(subscription_id=sub.id, server_id=germany.id, is_synced=True),
+                ServerTransportPref(user_id=user.id, server_id=swiss.id, protocol="hy2", transport="tcp"),
+                ServerTransportPref(user_id=user.id, server_id=germany.id, protocol="hy2", transport="tcp"),
+            ]
+        )
+        await session.commit()
+
+    async with async_session_maker() as session:
+        encoded = await SubscriptionService.get_subscription_vless_links(session, "tok-hy2-mixed")
+    links = base64.b64decode(encoded).decode().splitlines()
+    assert len(links) == 2
+    swiss_link = next(link for link in links if "Switzerland" in link)
+    germany_link = next(link for link in links if "Germany" in link)
+    assert swiss_link.startswith("vless://")
+    assert urlsplit(swiss_link).port == 2053
+    assert parse_qs(urlsplit(swiss_link).query)["flow"] == ["xtls-rprx-vision"]
+    assert germany_link.startswith("hysteria2://")
+
+    async with async_session_maker() as session:
+        kind, body = await SubscriptionService.build_xray_json_subscription(
+            session,
+            "tok-hy2-mixed",
+        )
+    assert kind == "json"
+    configs = json.loads(body)
+    proxies = {
+        cfg["remarks"]: next(outbound for outbound in cfg["outbounds"] if outbound["tag"] == "proxy")
+        for cfg in configs
+    }
+    swiss_proxy = next(proxy for name, proxy in proxies.items() if "Switzerland" in name)
+    germany_proxy = next(proxy for name, proxy in proxies.items() if "Germany" in name)
+    assert swiss_proxy["protocol"] == "vless"
+    assert swiss_proxy["streamSettings"]["network"] == "tcp"
+    assert swiss_proxy["settings"]["vnext"][0]["users"][0]["flow"] == "xtls-rprx-vision"
+    assert germany_proxy["protocol"] == "hysteria"
