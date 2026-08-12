@@ -205,7 +205,9 @@ class SubscriptionService:
         device suspension / conn-limit / re-issue key identically on the node
         (Hy2 auth maps that UUID -> the device's email via the agent). The node
         serves a real Let's Encrypt cert for server.hy2_sni, so the client
-        validates normally (no insecure). The server runs BBR (low gaming latency).
+        validates normally (no insecure). Xray JSON clients may additionally use
+        the node's explicit Reno/BBR selection; a NULL selection keeps their
+        native congestion-control default.
 
         salamander obfs is emitted ONLY when the node carries an obfs password
         (``server.hy2_obfs_password``). On some networks a no-obfs connection
@@ -851,10 +853,12 @@ class SubscriptionService:
         lets the Hy2 location keep the SAME baked-in routing/DNS as the vless
         entries instead of forcing the whole subscription down to a flat link
         list. The client validates the real Let's
-        Encrypt cert (no allowInsecure). Plain HY2 deliberately omits finalmask
-        to match the native Xray HY2 shape used by compatible clients. Xray's
-        native default is BBR when no bandwidth is specified. salamander obfs is
-        added as finalmask.udp only when the link carries it.
+        Encrypt cert (no allowInsecure). Plain HY2 normally omits finalmask to
+        match the native Xray HY2 shape used by compatible clients. An explicit
+        per-node congestion controller is the one exception: it is emitted as
+        finalmask.quicParams independently of Salamander. Xray's native default
+        is BBR when no bandwidth is specified. Salamander obfs is added as
+        finalmask.udp only when the link carries it.
         """
         if not link.startswith("hysteria2://"):
             return None
@@ -887,30 +891,39 @@ class SubscriptionService:
                 },
             },
         }
-        # salamander obfs (when the link carries it) keeps the QUIC stream packets
-        # intact on paths that drop un-obfuscated streams (handshake passes, then
-        # "accepting stream failed: timeout"). Lives under finalmask.udp in the
-        # xray fork's hysteria outbound. Disable client-side path-MTU discovery on
-        # these exceptional paths as well: the server-side switch cannot prevent
-        # a client from probing a larger UDP payload that an asymmetric route
-        # silently drops after the small handshake packets succeeded. Plain HY2
-        # above has no finalmask at all for Android client compatibility.
-        if q.get("obfs") == "salamander" and q.get("obfs-password"):
-            proxy["streamSettings"]["finalmask"] = {
-                "udp": [{"type": "salamander", "settings": {"password": q["obfs-password"]}}],
-                "quicParams": {
-                    # Xray switches to its custom BBR only *after* the HY2 auth
-                    # exchange. On higher-RTT/lossy paths, late ACK/loss events
-                    # from that exchange can then reach a fresh controller that
-                    # never sent those packets and stall the first data stream.
-                    # Reno keeps quic-go's original sender/state intact across
-                    # auth. This block is emitted only for the exceptional
-                    # obfs-enabled path; ordinary working nodes stay unchanged.
-                    "congestion": "reno",
-                    "disablePathMTUDiscovery": True,
-                    "keepAlivePeriod": 10,
-                },
+        # Both Salamander and Xray's QUIC tuning live under ``finalmask``, but
+        # they are independent: a plain-QUIC node may need Reno while carrying
+        # no UDP mask at all. Keep NULL/unknown operator values out of generated
+        # configs; ``brutal`` is intentionally excluded because it additionally
+        # requires valid per-user bandwidth settings.
+        finalmask: dict = {}
+        has_obfs = q.get("obfs") == "salamander" and bool(q.get("obfs-password"))
+        if has_obfs:
+            finalmask["udp"] = [{"type": "salamander", "settings": {"password": q["obfs-password"]}}]
+
+        congestion = (getattr(server, "hy2_congestion", None) or "").strip().lower()
+        if congestion not in {"reno", "bbr"}:
+            congestion = ""
+        if congestion:
+            finalmask["quicParams"] = {
+                "congestion": congestion,
+                # Keep the explicit controller usable on lossy/mobile paths:
+                # Xray otherwise enables PMTU probing and has no HY2 keepalive
+                # by default. Both knobs are valid independently of obfs.
+                "disablePathMTUDiscovery": True,
+                "keepAlivePeriod": 10,
             }
+        elif has_obfs:
+            # Preserve the already deployed exceptional Salamander profile until
+            # an operator chooses an explicit per-node controller.
+            finalmask["quicParams"] = {
+                "congestion": "reno",
+                "disablePathMTUDiscovery": True,
+                "keepAlivePeriod": 10,
+            }
+
+        if finalmask:
+            proxy["streamSettings"]["finalmask"] = finalmask
         return {
             "remarks": unquote(parts.fragment) if parts.fragment else (server.name or "").strip(),
             "dns": _XRAY_CLEAN_DNS,

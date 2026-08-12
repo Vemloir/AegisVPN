@@ -181,6 +181,9 @@ MIGRATIONS: dict[str, list[Column]] = {
         Column("hy2_hop_start", "INTEGER", "INTEGER"),
         Column("hy2_hop_end", "INTEGER", "INTEGER"),
         Column("hy2_obfs_password", "VARCHAR(255)", "VARCHAR(255)"),
+        # Optional Xray-fork QUIC congestion controller (currently reno/bbr).
+        # Operator-set; NULL leaves the client's native default untouched.
+        Column("hy2_congestion", "VARCHAR(16)", "VARCHAR(16)"),
         Column("hy2_up", "VARCHAR(32)", "VARCHAR(32)"),
         Column("hy2_down", "VARCHAR(32)", "VARCHAR(32)"),
         # The Hy2 TLS SNI (the shared CA/Let's Encrypt cert domain) is set
