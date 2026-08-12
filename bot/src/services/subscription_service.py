@@ -891,6 +891,19 @@ class SubscriptionService:
                 },
             },
         }
+        # Some filtered paths classify QUIC by ClientHello SNI even after the
+        # TLS/HY2 auth exchange succeeds. Keep the URI's SNI as the certificate
+        # name for native clients, but Xray JSON can safely separate the visible
+        # SNI from certificate verification. ``verifyPeerCertByName`` performs
+        # normal system-root validation against the real name; unlike
+        # allowInsecure, a forged or MITM certificate is still rejected.
+        certificate_sni = q.get("sni", "").strip()
+        camouflage_sni = (getattr(server, "hy2_camouflage_sni", None) or "").strip()
+        if camouflage_sni and certificate_sni and camouflage_sni != certificate_sni:
+            tls_settings = proxy["streamSettings"]["tlsSettings"]
+            tls_settings["serverName"] = camouflage_sni
+            tls_settings["verifyPeerCertByName"] = certificate_sni
+
         # Both Salamander and Xray's QUIC tuning live under ``finalmask``, but
         # they are independent: a plain-QUIC node may need Reno while carrying
         # no UDP mask at all. Keep NULL/unknown operator values out of generated
