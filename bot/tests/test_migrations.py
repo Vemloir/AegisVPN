@@ -70,7 +70,7 @@ async def test_hy2_columns_are_added_but_never_populated():
         row = (
             await session.execute(
                 text(
-                    "SELECT tcp_port, hy2_enabled, hy2_port, hy2_hop_start, hy2_hop_end, "
+                    "SELECT tcp_port, hy2_enabled, hy2_host, hy2_port, hy2_hop_start, hy2_hop_end, "
                     "hy2_obfs_password, hy2_sni, hy2_up, hy2_down FROM servers WHERE id = 1"
                 )
             )
@@ -78,6 +78,7 @@ async def test_hy2_columns_are_added_but_never_populated():
 
     assert row.tcp_port is None
     assert row.hy2_enabled in (0, False, None)
+    assert row.hy2_host is None
     assert row.hy2_port is None
     assert row.hy2_hop_start is None
     assert row.hy2_hop_end is None

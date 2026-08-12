@@ -219,7 +219,8 @@ class SubscriptionService:
             return None
         userinfo = quote(device_uuid, safe="")
         fragment = SubscriptionService.format_server_label(server, duplicate_name_keys)
-        netloc = f"{userinfo}@{server.host}:{server.hy2_port}"
+        endpoint_host = (server.hy2_host or server.host).strip()
+        netloc = f"{userinfo}@{endpoint_host}:{server.hy2_port}"
         query = {"sni": server.hy2_sni}
         if server.hy2_obfs_password:
             query["obfs"] = "salamander"

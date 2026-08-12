@@ -81,6 +81,11 @@ class Server(Base):
     # Client target port (the Hy2 server :listen port); the port-hop range start
     # in mport lets the client rotate UDP ports when a network throttles a
     # long-lived flow on a single port.
+    # hy2_host optionally points the client at a UDP ingress relay while the
+    # actual node remains the authenticated Hy2 terminator and exit. This is
+    # useful when a provider-specific path passes the QUIC handshake but drops
+    # subsequent data packets. NULL keeps the normal direct server.host path.
+    hy2_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
     hy2_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
     hy2_hop_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     hy2_hop_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
