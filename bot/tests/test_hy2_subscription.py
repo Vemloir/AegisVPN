@@ -107,22 +107,23 @@ def test_build_hy2_link_emits_obfs_when_node_has_password():
     assert q["sni"] == ["aegis.example.test"]
 
 
-def test_xray_json_hy2_obfs_added_only_with_password():
+def test_xray_json_hy2_finalmask_added_only_with_obfs_password():
     server = _hy2_node(hy2_obfs_password="s4l4m")
     link = SubscriptionService.build_hy2_link(server, "11111111-2222-3333-4444-555555555555")
     cfg = SubscriptionService._hy2_link_to_xray_config(link, server)
     proxy = next(o for o in cfg["outbounds"] if o["tag"] == "proxy")
     fm = proxy["streamSettings"]["finalmask"]
-    assert fm["quicParams"]["congestion"] == "bbr"  # BBR kept alongside obfs
     assert fm["udp"][0]["type"] == "salamander"
     assert fm["udp"][0]["settings"]["password"] == "s4l4m"
-    # And the no-obfs node has NO finalmask.udp.
+    # Plain HY2 must use the native Xray shape. Varmlen's Android wrapper can
+    # establish QUIC with finalmask.quicParams but then stalls every data stream,
+    # causing its DNS connectivity probe to time out.
     plain = SubscriptionService._hy2_link_to_xray_config(
         SubscriptionService.build_hy2_link(_hy2_node(), "11111111-2222-3333-4444-555555555555"),
         _hy2_node(),
     )
     pproxy = next(o for o in plain["outbounds"] if o["tag"] == "proxy")
-    assert "udp" not in pproxy["streamSettings"]["finalmask"]
+    assert "finalmask" not in pproxy["streamSettings"]
 
 
 def test_build_hy2_link_none_when_not_capable():
