@@ -163,6 +163,41 @@ async def test_reconcile_applies_exact_state_and_is_idempotent(monkeypatch, tmp_
     assert additions == removals == events == []
 
 
+async def test_add_only_refreshes_hysteria_auth_without_restart(monkeypatch, tmp_path):
+    config_path, additions, removals, events = await _patch_runtime(
+        monkeypatch,
+        tmp_path,
+    )
+    config = json.loads(config_path.read_text())
+    for inbound in config["inbounds"]:
+        if inbound.get("protocol") == "vless":
+            inbound["settings"]["clients"] = [
+                client for client in inbound["settings"]["clients"] if client["id"] == "keep"
+            ]
+    config_path.write_text(json.dumps(config))
+
+    result = await reconcile.reconcile_snapshot(_snapshot(), observe=False)
+
+    assert result.added == 2
+    assert result.removed == 0
+    assert len(additions) == 2
+    assert removals == []
+    refreshes = [payload for kind, payload in events if kind == "refresh"]
+    assert len(refreshes) == 1
+    assert {
+        client["id"]
+        for inbound in refreshes[0]["inbounds"]
+        if inbound.get("protocol") == "vless"
+        for client in inbound["settings"]["clients"]
+    } == {"keep", "new-device"}
+    assert all(kind != "kick" for kind, _ in events)
+
+    events.clear()
+    repeated = await reconcile.reconcile_snapshot(_snapshot(), observe=False)
+    assert repeated.changed is False
+    assert events == []
+
+
 async def test_large_client_delta_uses_one_verified_reload(monkeypatch, tmp_path):
     _, additions, removals, _ = await _patch_runtime(monkeypatch, tmp_path)
     reloads: list[bool] = []
