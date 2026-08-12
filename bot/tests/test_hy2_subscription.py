@@ -18,6 +18,7 @@ from src.models import (
 )
 from src.models.base import Base
 from src.services import SubscriptionService
+from src.services.agent_client import AgentClient
 
 
 def _hy2_node(**overrides) -> Server:
@@ -191,7 +192,7 @@ def test_build_hy2_link_none_when_not_capable():
 # --- end-to-end delivery -----------------------------------------------------
 
 
-async def _seed_hy2_sub(*, capable: bool) -> str:
+async def _seed_hy2_sub(*, capable: bool, tcp_port: int | None = None) -> str:
     """One user + one Testland server (Hy2 capable or not) + an active sub synced
     to it + a protocol=hy2 pref. Returns the sub token."""
     async with engine.begin() as conn:
@@ -201,7 +202,10 @@ async def _seed_hy2_sub(*, capable: bool) -> str:
         user = User(tg_id=920001)
         session.add(user)
         await session.flush()
-        server = _hy2_node(hy2_sni="aegis.example.test" if capable else None)
+        server = _hy2_node(
+            hy2_sni="aegis.example.test" if capable else None,
+            tcp_port=tcp_port,
+        )
         session.add(server)
         await session.flush()
         now = datetime.now(UTC).replace(tzinfo=None)
@@ -222,15 +226,28 @@ async def _seed_hy2_sub(*, capable: bool) -> str:
         return sub.sub_token
 
 
-async def test_misconfigured_hy2_falls_back_not_emitted_as_hy2():
+async def test_misconfigured_hy2_falls_back_to_tcp_vision(monkeypatch):
     # Server enabled for Hy2 but missing its SNI: the pref resolves to vless, so
     # the Hy2 short-circuit is skipped. The key assertion is that NO hysteria2://
     # link is produced from a misconfigured node.
-    token = await _seed_hy2_sub(capable=False)
+    async def fake_get_subscription(self, token, profile="safe"):
+        return (
+            "vless://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@203.0.113.10:443"
+            "?type=xhttp&security=reality&encryption=none&sni=www.example.test"
+            "&fp=firefox&pbk=PBK&sid=SID&path=%2F#Testland"
+        )
+
+    monkeypatch.setattr(AgentClient, "get_subscription", fake_get_subscription)
+    token = await _seed_hy2_sub(capable=False, tcp_port=2053)
     async with async_session_maker() as session:
         encoded = await SubscriptionService.get_subscription_vless_links(session, token)
     body = base64.b64decode(encoded).decode() if encoded else ""
+    assert body.startswith("vless://")
     assert "hysteria2://" not in body
+    query = parse_qs(urlsplit(body).query)
+    assert urlsplit(body).port == 2053
+    assert query["type"] == ["tcp"]
+    assert query["flow"] == ["xtls-rprx-vision"]
 
 
 async def test_capable_hy2_preference_emits_hysteria_link():

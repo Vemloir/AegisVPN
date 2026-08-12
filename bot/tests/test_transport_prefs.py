@@ -112,3 +112,33 @@ async def test_stale_tcp_pref_on_xhttp_only_server_falls_back_to_xhttp():
     async with async_session_maker() as session:
         mapping = await SubscriptionService._transport_prefs_for_user(session, user_id, [server_id])
         assert mapping == {server_id: "xhttp"}
+
+
+async def test_stale_hy2_pref_is_displayed_as_effective_vless_tcp():
+    """The settings UI must show what the subscription actually emits.
+
+    Keep the stored row intact so an operator can re-enable Hy2 later, but when
+    this node loses Hy2 capability expose the current VLESS/TCP fallback rather
+    than a selected-but-disabled Hy2 value.
+    """
+    user_id, server_id = await _seed()
+    async with async_session_maker() as session:
+        session.add(
+            ServerTransportPref(
+                user_id=user_id,
+                server_id=server_id,
+                protocol="hy2",
+                transport="xhttp",
+            )
+        )
+        await session.commit()
+
+    async with async_session_maker() as session:
+        protocol, transport = await SubscriptionService.get_transport_pref(
+            session, user_id, server_id
+        )
+        stored = await session.get(ServerTransportPref, (user_id, server_id))
+
+    assert (protocol, transport) == ("vless", "tcp")
+    assert stored is not None
+    assert (stored.protocol, stored.transport) == ("hy2", "xhttp")

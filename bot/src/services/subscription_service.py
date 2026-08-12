@@ -245,17 +245,27 @@ class SubscriptionService:
 
     @staticmethod
     async def get_transport_pref(session: AsyncSession, user_id: int, server_id: int) -> tuple[str, str]:
-        """The stored choice, or this location's capability-aware default."""
+        """The effective choice shown by the UI and emitted right now.
+
+        Keep stale rows in storage so an explicitly selected protocol can become
+        active again after an operator restores that capability.  The user must
+        nevertheless see the current fallback, not a selected-but-unavailable
+        protocol that the subscription builder has already collapsed to VLESS.
+        """
         pref = await session.get(ServerTransportPref, (user_id, server_id))
+        server = await session.get(Server, server_id)
         if pref is None:
-            server = await session.get(Server, server_id)
             transport = (
                 SubscriptionService.default_transport_for(server)
                 if server is not None
                 else SubscriptionService.DEFAULT_TRANSPORT
             )
             return SubscriptionService.DEFAULT_PROTOCOL, transport
-        return pref.protocol, pref.transport
+        if server is None:
+            return SubscriptionService.DEFAULT_PROTOCOL, SubscriptionService.DEFAULT_TRANSPORT
+        protocol = SubscriptionService.resolve_protocol(server, pref.protocol)
+        transport = SubscriptionService.resolve_transport(server, pref.protocol, pref.transport)
+        return protocol, transport
 
     @staticmethod
     async def set_transport_pref(
