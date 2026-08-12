@@ -151,6 +151,34 @@ def test_xray_json_hy2_ignores_invalid_congestion():
     assert "finalmask" not in proxy["streamSettings"]
 
 
+def test_xray_json_hy2_camouflage_sni_keeps_certificate_verification():
+    server = _hy2_node(
+        hy2_sni="node-cert.example.test",
+        hy2_camouflage_sni="www.large-provider.example",
+    )
+    link = SubscriptionService.build_hy2_link(server, "11111111-2222-3333-4444-555555555555")
+    # Native-link clients retain the actual certificate SNI; only the Xray JSON
+    # representation can safely split visible SNI and verification name.
+    assert parse_qs(urlsplit(link).query)["sni"] == ["node-cert.example.test"]
+
+    cfg = SubscriptionService._hy2_link_to_xray_config(link, server)
+    proxy = next(o for o in cfg["outbounds"] if o["tag"] == "proxy")
+    tls = proxy["streamSettings"]["tlsSettings"]
+    assert tls["serverName"] == "www.large-provider.example"
+    assert tls["verifyPeerCertByName"] == "node-cert.example.test"
+    assert "allowInsecure" not in tls
+
+
+def test_xray_json_hy2_without_camouflage_uses_certificate_sni_normally():
+    server = _hy2_node(hy2_sni="node-cert.example.test", hy2_camouflage_sni=None)
+    link = SubscriptionService.build_hy2_link(server, "11111111-2222-3333-4444-555555555555")
+    cfg = SubscriptionService._hy2_link_to_xray_config(link, server)
+    proxy = next(o for o in cfg["outbounds"] if o["tag"] == "proxy")
+    tls = proxy["streamSettings"]["tlsSettings"]
+    assert tls["serverName"] == "node-cert.example.test"
+    assert "verifyPeerCertByName" not in tls
+
+
 def test_build_hy2_link_none_when_not_capable():
     # No CA cert SNI -> not emittable -> None (caller falls back to vless).
     assert SubscriptionService.build_hy2_link(_hy2_node(hy2_sni=None), "uuid") is None

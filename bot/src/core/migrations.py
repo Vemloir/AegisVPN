@@ -184,6 +184,9 @@ MIGRATIONS: dict[str, list[Column]] = {
         # Optional Xray-fork QUIC congestion controller (currently reno/bbr).
         # Operator-set; NULL leaves the client's native default untouched.
         Column("hy2_congestion", "VARCHAR(16)", "VARCHAR(16)"),
+        # Optional ClientHello SNI for filtered paths. The real certificate name
+        # remains hy2_sni and is verified separately by Xray JSON clients.
+        Column("hy2_camouflage_sni", "VARCHAR(255)", "VARCHAR(255)"),
         Column("hy2_up", "VARCHAR(32)", "VARCHAR(32)"),
         Column("hy2_down", "VARCHAR(32)", "VARCHAR(32)"),
         # The Hy2 TLS SNI (the shared CA/Let's Encrypt cert domain) is set

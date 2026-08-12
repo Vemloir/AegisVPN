@@ -90,6 +90,11 @@ class Server(Base):
     # This is deliberately independent of Salamander so a plain-QUIC node can
     # select Reno without carrying an obfuscation password.
     hy2_congestion: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Optional ClientHello SNI used only by Xray-JSON clients. The certificate
+    # is still verified against ``hy2_sni`` via verifyPeerCertByName, allowing a
+    # filtered path to use a known-good large-provider SNI without disabling TLS
+    # verification or changing the node certificate.
+    hy2_camouflage_sni: Mapped[str | None] = mapped_column(String(255), nullable=True)
     hy2_up: Mapped[str | None] = mapped_column(String(32), nullable=True)
     hy2_down: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # Hy2 TLS SNI for this node's own certificate. Nodes sharing an SNI still
