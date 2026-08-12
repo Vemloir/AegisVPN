@@ -899,7 +899,14 @@ class SubscriptionService:
             proxy["streamSettings"]["finalmask"] = {
                 "udp": [{"type": "salamander", "settings": {"password": q["obfs-password"]}}],
                 "quicParams": {
-                    "congestion": "bbr",
+                    # Xray switches to its custom BBR only *after* the HY2 auth
+                    # exchange. On higher-RTT/lossy paths, late ACK/loss events
+                    # from that exchange can then reach a fresh controller that
+                    # never sent those packets and stall the first data stream.
+                    # Reno keeps quic-go's original sender/state intact across
+                    # auth. This block is emitted only for the exceptional
+                    # obfs-enabled path; ordinary working nodes stay unchanged.
+                    "congestion": "reno",
                     "disablePathMTUDiscovery": True,
                     "keepAlivePeriod": 10,
                 },

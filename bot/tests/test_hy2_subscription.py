@@ -116,7 +116,7 @@ def test_xray_json_hy2_finalmask_added_only_with_obfs_password():
     assert fm["udp"][0]["type"] == "salamander"
     assert fm["udp"][0]["settings"]["password"] == "s4l4m"
     assert fm["quicParams"] == {
-        "congestion": "bbr",
+        "congestion": "reno",
         "disablePathMTUDiscovery": True,
         "keepAlivePeriod": 10,
     }
