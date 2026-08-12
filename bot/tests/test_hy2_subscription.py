@@ -107,6 +107,17 @@ def test_build_hy2_link_emits_obfs_when_node_has_password():
     assert q["sni"] == ["aegis.example.test"]
 
 
+def test_build_hy2_link_can_use_separate_udp_ingress_without_changing_node_identity():
+    link = SubscriptionService.build_hy2_link(
+        _hy2_node(host="141.227.150.95", hy2_host="91.92.43.10", hy2_port=2443),
+        "11111111-2222-3333-4444-555555555555",
+    )
+    parts = urlsplit(link)
+    assert parts.hostname == "91.92.43.10"
+    assert parts.port == 2443
+    assert "Testland" in link
+
+
 def test_xray_json_hy2_finalmask_added_only_with_obfs_password():
     server = _hy2_node(hy2_obfs_password="s4l4m")
     link = SubscriptionService.build_hy2_link(server, "11111111-2222-3333-4444-555555555555")
