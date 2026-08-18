@@ -82,7 +82,10 @@ This is what makes multi-server subscriptions possible:
 
 - one Telegram bot (+ one public website)
 - one main database
-- many VPN nodes, each with its own protocol capabilities
+- many VPN nodes, each independently configured (VLESS everywhere; Hysteria2
+  on top wherever the operator has turned it on for that node — the code and
+  the compose service are the same on every node, "on" is just a per-node
+  choice)
 - per-server access control
 
 ## Protocols
@@ -90,13 +93,16 @@ This is what makes multi-server subscriptions possible:
 - **VLESS + Reality** (Xray) is the default protocol on every node. The
   default transport is TCP with XTLS Vision flow; `xhttp` is available as an
   alternate transport per location.
-- **Hysteria2** (`hy2`) is an opt-in, per-location alternative data plane. A
-  server is "Hy2-capable" only when it has Hysteria2 enabled, a port, and a
-  certificate SNI configured (`Server.hy2_capable`); it exposes its own
-  camouflage SNI and obfuscation password, separate from the certificate SNI.
-  Users pick VLESS or Hysteria2 per location from `/settings` → locations; the
-  choice is stored per user/server and only takes effect where the server
-  actually supports it.
+- **Hysteria2** (`hy2`) is an opt-in, per-location alternative data plane. Every
+  node runs the identical agent code and the same `hysteria` compose service —
+  there is no per-node technical constraint on whether Hysteria2 can run.
+  "Hy2-capable" (`Server.hy2_capable`) just tracks whether an operator has
+  turned it on for that particular node (enabled it, and configured a port and
+  a certificate SNI); it's a deployment choice per node, not a difference in
+  what the node is able to run. Once on, it exposes its own camouflage SNI and
+  obfuscation password, separate from the certificate SNI. Users pick VLESS or
+  Hysteria2 per location from `/settings` → locations; the choice is stored
+  per user/server and only takes effect where the operator has enabled it.
 - The subscription builder emits a `hysteria2://` link for locations pinned to
   Hy2. For xray-JSON clients (Happ, v2rayTun, v2rayNG, v2rayN, NekoBox/NekoRay,
   Streisand, FoXray, Varmlen, INCY - matched by User-Agent), both VLESS and Hy2
@@ -147,7 +153,8 @@ This is what makes multi-server subscriptions possible:
 - public website (aegisvpn.org) with its own checkout and Telegram Login,
   sharing the bot's database
 - separate support bot for two-way user/operator feedback
-- optional MTProto proxy per node
+- optional MTProto proxy (`aegis-mtg`, control host only — it's not a
+  per-VPN-node service)
 
 ## User Commands
 
@@ -288,7 +295,8 @@ Instead:
 2. checks that it is active
 3. reconciles allowed servers for the user
 4. for each server, resolves the user's chosen protocol/transport for that
-   location (VLESS/TCP by default, VLESS/xhttp, or Hysteria2 where capable)
+   location (VLESS/TCP by default, VLESS/xhttp, or Hysteria2 where the
+   operator has enabled it on that node)
 5. builds a `vless://` or `hysteria2://` URI accordingly, from the node's
    authenticated outbound telemetry
 6. normalizes the URI parameters
@@ -401,9 +409,11 @@ an existing verified `~/.ssh/known_hosts` entry can be used instead. Cloud-image
 users such as `ubuntu` are supported through `sudo` without enabling root login
 or password authentication.
 
-The flag emoji prefix in `--server-name` is parsed automatically. Hysteria2 and
-MTProto-proxy capability on a new node are configured separately (see
-[deploy/vps/README.md](deploy/vps/README.md)).
+The flag emoji prefix in `--server-name` is parsed automatically. Hysteria2 on
+a new node is configured separately (see
+[deploy/vps/README.md](deploy/vps/README.md)) — the MTProto proxy (`aegis-mtg`)
+is a control-host service, not something `add_server.py` sets up on VPN exit
+nodes.
 
 CA initialization, one-node promotion, rollback, rotation, and incident
 procedures are documented in
