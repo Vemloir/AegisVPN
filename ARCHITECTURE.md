@@ -1,12 +1,24 @@
 # Architecture
 
+> This file predates the current Hysteria2, public-website, and multi-plan
+> work and is kept as a lighter-weight companion to the root
+> [README.md](README.md). Where the two disagree, trust the README - it is
+> reconciled against the code as of this writing; this file has only had its
+> most misleading claims patched below.
+
 ## Overview
 
-Aegis VPN is split into three main layers:
+Aegis VPN is split into four main layers:
 
-- `bot` - Telegram bot, subscription logic, admin panel, HTTP subscription endpoint
-- `agent` - local control plane on each VPN server
-- `xray` - actual VPN traffic engine
+- `bot` - Telegram bot, subscription logic, admin panel, HTTP subscription
+  endpoint, and the public website's HTTP API (`src/api`, run as the
+  `siteapi` service)
+- `agent` - local control plane on each VPN server, managing both Xray and
+  (optionally) Hysteria2
+- `xray` / `hysteria` - the VPN traffic engines; Xray always runs (VLESS +
+  Reality), Hysteria2 is opt-in per node
+- `web` - the public marketing/checkout site (static SPA), served by Caddy
+  alongside a separate `support_bot` Telegram bot for user feedback
 
 There is one main control server and one or more VPN nodes.
 
@@ -75,7 +87,9 @@ Runs:
 - `aegis-caddy`
 
 Caddy is the only TCP/443 listener. The optional local `agent` and `xray`
-services are gated behind the `local-exit` profile and are disabled on the
+services are gated behind the `local-exit` profile, an optional `hysteria`
+service behind the `hysteria` profile, and an optional MTProto proxy
+(`aegis-mtg`) behind the `mtproxy` profile - all disabled by default on the
 production control host.
 
 Defined in [deploy/vps/docker-compose.yml](C:/Users/detko/Documents/VPN/deploy/vps/docker-compose.yml).
