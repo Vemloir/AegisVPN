@@ -12,7 +12,7 @@ handling.
 
 The project is a split architecture:
 
-- `bot` stores users, subscriptions, plans, server access rules, referrals,
+- `bot` stores users, subscriptions, plans, server access rules,
   devices, and serves the subscription URL and the website's public API.
 - `agent` runs on each VPN server, manages the local Xray and (optionally)
   Hysteria2 state, and initiates an authenticated outbound control connection
@@ -128,8 +128,6 @@ This is what makes multi-server subscriptions possible:
   only the bootstrap fallback when no plan has been configured yet
 - lifetime subscriptions (admin-issuable, `days = 0`)
 - renew instead of duplicate buy for active users
-- referral program: bonus days for the referrer when a referred user is
-  active
 - subscription reminders before expiration
 - automatic subscription disable on expiry
 - multi-server subscriptions with per-location protocol choice (VLESS/Reality
@@ -228,7 +226,7 @@ The admin panel is inline-button driven and currently supports:
 The bot code in [bot/src](bot/src):
 
 - stores users, plans, subscriptions, payments, servers, allowlist grants,
-  referrals, and devices
+  and devices
 - exposes `/sub/{token}`, `/sub-safe/{token}`, `/sub-fast/{token}` over HTTP
 - generates the final subscription content on the fly (Base64 link list, or
   xray-JSON for recognized clients)
