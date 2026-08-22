@@ -81,85 +81,27 @@ async def test_autoselect_entry_bundles_every_location(monkeypatch):
     configs = json.loads(body)
     assert len(configs) == 3  # the auto-select bundle + Germany, Finland
     # It leads the list: it is the entry most users should take.
-    assert configs[0]["remarks"] == "\U0001f1fa\U0001f1f3 Автовыбор"
+    assert configs[0]["remarks"] == "\U0001f1ea\U0001f1fa Автовыбор"
 
-    auto = next(cfg for cfg in configs if cfg["remarks"] == "\U0001f1fa\U0001f1f3 Автовыбор")
+    auto = next(cfg for cfg in configs if cfg["remarks"] == "\U0001f1ea\U0001f1fa Автовыбор")
     proxy_tags = [ob["tag"] for ob in auto["outbounds"] if ob["protocol"] == "vless"]
     assert proxy_tags == ["proxy", "proxy-2"]
     assert auto["burstObservatory"]["subjectSelector"] == ["proxy"]
     assert auto["routing"]["balancers"][0]["selector"] == ["proxy"]
+    # expected > 1 is what spreads load across comparable nodes.
+    assert auto["routing"]["balancers"][0]["strategy"]["settings"]["expected"] == 2
+    # Nothing may send traffic outside the tunnel when selection comes up empty.
+    assert "fallbackTag" not in auto["routing"]["balancers"][0]
     assert auto["routing"]["rules"][-1]["balancerTag"] == "auto"
 
 
-async def test_autoselect_drops_an_overloaded_outlier(monkeypatch):
-    async def fake_get_subscription(self, token, profile="safe"):
-        host = self.base_url.split("//", 1)[1].split(":", 1)[0]
-        return (
-            f"vless://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@{host}:443"
-            "?type=xhttp&security=reality&encryption=none&sni=www.example.test"
-            f"&fp=firefox&pbk=PBK&sid=SID&path=%2F#{host}"
-        )
-
-    monkeypatch.setattr(AgentClient, "get_subscription", fake_get_subscription)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
-    async with async_session_maker() as session:
-        user = User(tg_id=930003)
-        session.add(user)
-        await session.flush()
-        quiet_a = _node(
-            name="Germany | Frankfurt",
-            host="203.0.113.30",
-            agent_url="http://203.0.113.30",
-            last_seen_online_clients=10,
-        )
-        quiet_b = _node(
-            name="Finland | Helsinki",
-            host="203.0.113.40",
-            agent_url="http://203.0.113.40",
-            last_seen_online_clients=12,
-        )
-        overloaded = _node(
-            name="Poland | Warsaw",
-            host="203.0.113.50",
-            agent_url="http://203.0.113.50",
-            last_seen_online_clients=500,
-        )
-        session.add_all([quiet_a, quiet_b, overloaded])
-        await session.flush()
-        now = datetime.now(UTC).replace(tzinfo=None)
-        sub = Subscription(
-            user_id=user.id,
-            sub_token="tok-auto-load",
-            client_uuid="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-            plan_days=30,
-            started_at=now,
-            expires_at=now + timedelta(days=30),
-            is_active=True,
-        )
-        session.add(sub)
-        await session.flush()
-        session.add_all(
-            [
-                SubscriptionServer(subscription_id=sub.id, server_id=quiet_a.id, is_synced=True),
-                SubscriptionServer(subscription_id=sub.id, server_id=quiet_b.id, is_synced=True),
-                SubscriptionServer(subscription_id=sub.id, server_id=overloaded.id, is_synced=True),
-            ]
-        )
-        await session.commit()
-
-    async with async_session_maker() as session:
-        kind, body = await SubscriptionService.build_xray_json_subscription(session, "tok-auto-load")
-    assert kind == "json"
-    configs = json.loads(body)
-    assert len(configs) == 4  # the auto-select bundle + 3 locations
-
-    auto = next(cfg for cfg in configs if cfg["remarks"] == "\U0001f1fa\U0001f1f3 Автовыбор")
-    proxy_tags = [ob["tag"] for ob in auto["outbounds"] if ob["protocol"] == "vless"]
-    # Only the two quiet nodes make it into the balancer — Warsaw's 500 online
-    # clients is far above the group average, so it's excluded as an outlier.
-    assert len(proxy_tags) == 2
+async def test_load_telemetry_never_removes_a_candidate(monkeypatch):
+    """The bot offers every location it can, however lopsided its own load
+    numbers look. It cannot see the latency between THIS user and each node —
+    the number that actually decides the outcome — so a list it trimmed on load
+    alone would be trimmed blind. Spreading is the client's job via `expected`."""
+    await _seed_loaded_fleet(monkeypatch, "tok-lopsided", 930003, [10, 12, 500])
+    assert await _balancer_size("tok-lopsided") == 3
 
 
 async def test_autoselect_omitted_for_a_single_location(monkeypatch):
@@ -254,22 +196,5 @@ async def _seed_loaded_fleet(monkeypatch, token: str, tg_id: int, loads: list[in
 async def _balancer_size(token: str) -> int:
     async with async_session_maker() as session:
         _kind, body = await SubscriptionService.build_xray_json_subscription(session, token)
-    auto = next(cfg for cfg in json.loads(body) if cfg["remarks"] == "\U0001f1fa\U0001f1f3 Автовыбор")
+    auto = next(cfg for cfg in json.loads(body) if cfg["remarks"] == "\U0001f1ea\U0001f1fa Автовыбор")
     return len([ob for ob in auto["outbounds"] if ob["protocol"] == "vless"])
-
-
-async def test_zero_clients_counts_as_a_reading_not_as_missing_telemetry(monkeypatch):
-    # Idle nodes report 0, which is real data. If 0 were treated as "unknown"
-    # like None is, the average here would be computed from the single busy node
-    # (60), leaving fewer than two samples — the filter would switch itself off
-    # and admit the overloaded node. Counting the zeros gives an average of 20,
-    # a ceiling of 30, and drops the node at 60.
-    await _seed_loaded_fleet(monkeypatch, "tok-zeros", 930004, [0, 0, 60])
-    assert await _balancer_size("tok-zeros") == 2
-
-
-async def test_a_node_is_not_overloaded_just_by_being_above_a_tiny_average(monkeypatch):
-    # Average 1.67, so 5 connections is 3x the group — but 5 connections is an
-    # idle node, and excluding it would strand users on a false positive.
-    await _seed_loaded_fleet(monkeypatch, "tok-smallnumbers", 930005, [0, 0, 5])
-    assert await _balancer_size("tok-smallnumbers") == 3
