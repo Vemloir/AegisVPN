@@ -39,9 +39,11 @@ async def render_server_details(server_id: int) -> tuple[str, InlineKeyboardMark
             else:
                 access_lines.append("- Пока никого не добавили")
 
+        hide_line = "Выдача подписки: скрыта (существующие клиенты продолжают работать)\n" if server.hidden_from_subscription else ""
         text = (
             f"{html.bold(SubscriptionService.format_server_label(server))}\n\n"
             f"Статус: {status}\n"
+            f"{hide_line}"
             f"Хост: {server.host}:{server.port}\n" + "\n".join(access_lines)
         )
         return text, server_manage_keyboard(server)

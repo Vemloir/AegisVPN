@@ -134,6 +134,17 @@ MIGRATIONS: dict[str, list[Column]] = {
             post_sql="UPDATE servers SET subscription_group = 'safe' WHERE subscription_group IS NULL",
         ),
         Column("display_order", "INTEGER DEFAULT 0", "INTEGER DEFAULT 0"),
+        # Delist from the rendered subscription without touching access control
+        # or the control-plane desired-state (see Server.hidden_from_subscription).
+        Column(
+            "hidden_from_subscription",
+            "BOOLEAN DEFAULT 0",
+            "BOOLEAN DEFAULT FALSE",
+            post_sql="UPDATE servers SET hidden_from_subscription = 0 WHERE hidden_from_subscription IS NULL",
+        ),
+        # Last periodic health-check's online-client count, used to keep
+        # over-loaded nodes out of the "Автовыбор" balancer candidate set.
+        Column("last_seen_online_clients", "INTEGER", "INTEGER"),
         # Lifetime per-location traffic, kept on the server row so it outlives the
         # SubscriptionServer links (which reconcile deletes on disable/re-sync,
         # taking their per-location bytes with them). Seeded once from whatever the

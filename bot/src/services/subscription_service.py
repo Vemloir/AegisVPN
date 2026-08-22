@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import copy
 import hashlib
 import json
 import re
@@ -125,6 +126,11 @@ _XRAY_CLEAN_ROUTING = {
         {"type": "field", "domain": _RU_CN_DIRECT_DOMAINS, "outboundTag": "direct"},
     ],
 }
+# 🇺🇳 is the one Unicode-supported flag that both (a) actually renders as a flag
+# glyph in xray-JSON clients that key their location icon off a real regional-
+# indicator sequence, and (b) isn't any single country's claim — unlike 🇪🇺 it
+# also doesn't imply "Europe only", which matters once a non-EU node exists.
+_XRAY_AUTOSELECT_REMARKS = "🇺🇳 Автовыбор"
 
 
 def _cascade_visible_servers(
@@ -634,10 +640,11 @@ class SubscriptionService:
             return []
 
         if include_all_profiles:
-            server_filter = Server.is_active == True
+            server_filter = and_(Server.is_active == True, Server.hidden_from_subscription == False)
         else:
             server_filter = and_(
                 Server.is_active == True,
+                Server.hidden_from_subscription == False,
                 or_(
                     Server.subscription_group == normalized_profile,
                     Server.subscription_group == "both",
@@ -793,8 +800,73 @@ class SubscriptionService:
                 # only a safety net).
                 body = "\n".join(lnk for _, lnk in pairs)
                 return "links", (base64.b64encode(body.encode("utf-8")).decode("utf-8") if body else "")
-            configs.append(cfg)
-        return "json", (json.dumps(configs, ensure_ascii=False) if configs else "")
+            configs.append((server, cfg))
+        autoselect = SubscriptionService._build_autoselect_config(configs)
+        plain_configs = [cfg for _server, cfg in configs]
+        if autoselect is not None:
+            plain_configs.append(autoselect)
+        return "json", (json.dumps(plain_configs, ensure_ascii=False) if plain_configs else "")
+
+    @staticmethod
+    def _build_autoselect_config(configs: list[tuple[Server, dict]]) -> dict | None:
+        """One extra xray-JSON entry that bundles every location's proxy outbound
+        into a single leastLoad balancer, so the client itself (not us) measures
+        real per-user RTT to each node and picks the fastest — the thing a
+        server-rendered subscription structurally cannot do on its own. Skipped
+        below 2 locations, where there is nothing to choose between.
+
+        Candidates whose last known online-client count is well above the group
+        average are dropped first, so the balancer never funnels new picks onto a
+        node that's already carrying more than its share — purely relative to the
+        current candidate set, no hardcoded per-node capacity number. Falls back
+        to the unfiltered set if that would leave fewer than 2 candidates (stale/
+        missing telemetry shouldn't ever empty the pool)."""
+        candidates = configs
+        loads = [server.last_seen_online_clients for server, _cfg in configs if server.last_seen_online_clients]
+        if len(loads) >= 2:
+            average = sum(loads) / len(loads)
+            filtered = [
+                (server, cfg)
+                for server, cfg in configs
+                if not server.last_seen_online_clients or server.last_seen_online_clients <= average * 1.5
+            ]
+            if len(filtered) >= 2:
+                candidates = filtered
+        if len(candidates) < 2:
+            return None
+        outbounds: list[dict] = []
+        for i, (_server, cfg) in enumerate(candidates, start=1):
+            proxy = copy.deepcopy(cfg["outbounds"][0])
+            proxy["tag"] = "proxy" if i == 1 else f"proxy-{i}"
+            outbounds.append(proxy)
+        outbounds.append({"tag": "direct", "protocol": "freedom", "settings": {"domainStrategy": "UseIP"}})
+        outbounds.append({"tag": "block", "protocol": "blackhole"})
+        routing = copy.deepcopy(_XRAY_CLEAN_ROUTING)
+        routing["rules"].append({"type": "field", "network": "tcp,udp", "balancerTag": "auto"})
+        routing["balancers"] = [
+            {
+                "tag": "auto",
+                "selector": ["proxy"],
+                "strategy": {"type": "leastLoad"},
+            }
+        ]
+        return {
+            "remarks": _XRAY_AUTOSELECT_REMARKS,
+            "dns": _XRAY_CLEAN_DNS,
+            "inbounds": _XRAY_CLEAN_INBOUNDS,
+            "outbounds": outbounds,
+            "routing": routing,
+            "burstObservatory": {
+                "subjectSelector": ["proxy"],
+                "pingConfig": {
+                    "destination": "http://www.gstatic.com/generate_204",
+                    "connectivity": "",
+                    "interval": "1m",
+                    "sampling": 3,
+                    "timeout": "3s",
+                },
+            },
+        }
 
     @staticmethod
     def _vless_link_to_xray_config(link: str, server: Server) -> dict | None:

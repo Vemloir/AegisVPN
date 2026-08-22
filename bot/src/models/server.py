@@ -54,6 +54,13 @@ class Server(Base):
     access_mode: Mapped[str] = mapped_column(String(32), default="public")
     subscription_group: Mapped[str] = mapped_column(String(16), default="safe")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Delist from the rendered subscription (vless list / xray-JSON) without
+    # touching access control or the control-plane desired-state: existing
+    # clients already synced to this node keep connecting on their saved
+    # config, only the subscription output stops advertising it as an option.
+    # Distinct from is_active/access_mode, which both flow through
+    # ServerAccessService reconcile and DO strip the node's live client list.
+    hidden_from_subscription: Mapped[bool] = mapped_column(Boolean, default=False)
     display_order: Mapped[int] = mapped_column(Integer, default=0)
     mtproxy_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # MTProto-proxy (fake-TLS mtg) listen port. Together with mtproxy_secret it
@@ -72,6 +79,12 @@ class Server(Base):
     # reconcile, this total is not.
     traffic_up_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     traffic_down_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+
+    # Snapshot of the last periodic health check's online-client count
+    # (check_servers_health, bot/src/scheduler/tasks.py). Used to keep
+    # over-loaded nodes out of the "Автовыбор" balancer candidate set without
+    # an extra live call at subscription-render time.
+    last_seen_online_clients: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # --- Hysteria2 capability (a separate process; xray-core cannot speak it) ---
     # A node is Hy2-capable only when hy2_enabled AND an obfs password is set.

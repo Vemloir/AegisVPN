@@ -58,6 +58,8 @@ def server_list_keyboard(servers: list[Server]) -> InlineKeyboardMarkup:
         # no decorative emoji). Active ones stay clean so OFF entries stand out.
         if not server.is_active:
             label = f"OFF · {label}"
+        elif server.hidden_from_subscription:
+            label = f"HIDDEN · {label}"
         rows.append([InlineKeyboardButton(text=label, callback_data=f"admin_server_manage:{server.id}")])
     rows.append([InlineKeyboardButton(text="Назад в админку", callback_data="admin_back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -66,10 +68,12 @@ def server_list_keyboard(servers: list[Server]) -> InlineKeyboardMarkup:
 def server_manage_keyboard(server: Server) -> InlineKeyboardMarkup:
     active_text = "Включить локацию" if not server.is_active else "Отключить локацию"
     toggle_text = "Сделать доступным всем" if server.access_mode == "restricted" else "Ограничить доступ"
+    hide_text = "Вернуть в выдачу подписки" if server.hidden_from_subscription else "Убрать из выдачи подписки"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=active_text, callback_data=f"admin_server_active_toggle:{server.id}")],
             [InlineKeyboardButton(text=toggle_text, callback_data=f"admin_server_toggle:{server.id}")],
+            [InlineKeyboardButton(text=hide_text, callback_data=f"admin_server_hide_toggle:{server.id}")],
             [
                 InlineKeyboardButton(
                     text="Разрешить пользователю", callback_data=f"admin_server_allow_start:{server.id}"
