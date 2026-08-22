@@ -1,4 +1,4 @@
-"""The synthetic "Автовыбор" xray-JSON entry: one leastLoad balancer over every
+"""The synthetic "Автовыбор" xray-JSON entry: one leastPing balancer over every
 location's proxy outbound, so the client (not the bot) measures real per-user
 RTT and picks the fastest node. Server-rendered subscriptions cannot do that
 themselves — this only assembles the candidate list and lets xray-core's own
@@ -88,8 +88,9 @@ async def test_autoselect_entry_bundles_every_location(monkeypatch):
     assert proxy_tags == ["proxy", "proxy-2"]
     assert auto["burstObservatory"]["subjectSelector"] == ["proxy"]
     assert auto["routing"]["balancers"][0]["selector"] == ["proxy"]
-    # expected > 1 is what spreads load across comparable nodes.
-    assert auto["routing"]["balancers"][0]["strategy"]["settings"]["expected"] == 2
+    # leastPing ranks on measured delay. leastLoad sorts on jitter first and
+    # handed European users Hong Kong.
+    assert auto["routing"]["balancers"][0]["strategy"]["type"] == "leastPing"
     # Nothing may send traffic outside the tunnel when selection comes up empty.
     assert "fallbackTag" not in auto["routing"]["balancers"][0]
     assert auto["routing"]["rules"][-1]["balancerTag"] == "auto"
