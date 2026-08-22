@@ -1,6 +1,6 @@
 {
   "log": {
-    "loglevel": "error",
+    "loglevel": "none",
     "access": "none",
     "dnsLog": false
   },
