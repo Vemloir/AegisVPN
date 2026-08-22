@@ -946,14 +946,41 @@ def main() -> int:
             )
             mtproxy_secret = secret_out.strip()
             if code == 0 and mtproxy_secret:
+                # `mtg run` takes a TOML CONFIG PATH, not a secret: passing the
+                # secret positionally made mtg exit 80 immediately with
+                # "stat /<secret>: no such file or directory" while every step
+                # here still reported success, so the node advertised a proxy
+                # link pointing at a dead port. `simple-run <bind> <secret>` is
+                # the flag-free form (same as update.py's provision_mtproxy).
+                # `compose run` also ignores the service's restart policy, so
+                # the container is re-tagged unless-stopped explicitly.
                 run_or_die(
                     new_client,
                     f"cd /root/aegis/deploy/vps && "
                     f"docker compose --profile mtproxy run -d --name aegis-mtg "
-                    f"--no-deps mtg run {mtproxy_secret} --bind 0.0.0.0:80 2>&1 | tail -2",
+                    f"--no-deps mtg simple-run 0.0.0.0:80 {mtproxy_secret} 2>&1 | tail -2",
                     "start mtg",
                     timeout=60,
                 )
+                exec_command(
+                    new_client,
+                    "docker update --restart unless-stopped aegis-mtg",
+                    timeout=30,
+                )
+                # Verify it is actually serving before claiming success — the
+                # bug above stayed invisible precisely because nothing checked.
+                mtg_code, mtg_state, _ = exec_command(
+                    new_client,
+                    "sleep 3; docker inspect -f '{{.State.Running}}' aegis-mtg",
+                    timeout=30,
+                )
+                if mtg_code != 0 or mtg_state.strip() != "true":
+                    _, mtg_log, _ = exec_command(
+                        new_client, "docker logs aegis-mtg 2>&1 | tail -3", timeout=30
+                    )
+                    raise SystemExit(
+                        f"MTProxy failed to start on {args.new_host}: {mtg_log.strip()}"
+                    )
                 # Store secret AND port in the bot DB. Server.mtproxy_capable
                 # requires both — writing only the secret left mtproxy_port NULL,
                 # so the node ran mtg happily and the bot never showed anyone the
