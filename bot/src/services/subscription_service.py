@@ -132,6 +132,12 @@ _XRAY_CLEAN_ROUTING = {
 # also doesn't imply "Europe only", which matters once a non-EU node exists.
 _XRAY_AUTOSELECT_REMARKS = "🇺🇳 Автовыбор"
 
+# Floor below which a node is never treated as overloaded, however far above the
+# group average it sits. Without it the relative rule fires on noise: when most
+# of the fleet reports 0 online clients, a node serving a handful is several
+# times the average while being, in absolute terms, idle.
+_AUTOSELECT_MIN_BUSY_CLIENTS = 25
+
 
 def _cascade_visible_servers(
     servers: list[Server],
@@ -817,18 +823,31 @@ class SubscriptionService:
 
         Candidates whose last known online-client count is well above the group
         average are dropped first, so the balancer never funnels new picks onto a
-        node that's already carrying more than its share — purely relative to the
-        current candidate set, no hardcoded per-node capacity number. Falls back
-        to the unfiltered set if that would leave fewer than 2 candidates (stale/
-        missing telemetry shouldn't ever empty the pool)."""
+        node that's already carrying more than its share — relative to the current
+        candidate set, no hardcoded per-node capacity number. Falls back to the
+        unfiltered set if that would leave fewer than 2 candidates (stale/missing
+        telemetry shouldn't ever empty the pool).
+
+        Two things the ratio alone gets wrong. A count of 0 is a real reading —
+        "this node is idle" — not absent telemetry, so it has to be told apart
+        from None or the average is computed over only the busy nodes and comes
+        out inflated. And a ratio on small numbers is noise: with an average of
+        1.25 a node serving 5 connections is 4x "over" while being completely
+        idle, so a node also has to carry a meaningful absolute number before
+        being considered overloaded at all."""
         candidates = configs
-        loads = [server.last_seen_online_clients for server, _cfg in configs if server.last_seen_online_clients]
+        loads = [
+            server.last_seen_online_clients
+            for server, _cfg in configs
+            if server.last_seen_online_clients is not None
+        ]
         if len(loads) >= 2:
             average = sum(loads) / len(loads)
+            ceiling = max(average * 1.5, _AUTOSELECT_MIN_BUSY_CLIENTS)
             filtered = [
                 (server, cfg)
                 for server, cfg in configs
-                if not server.last_seen_online_clients or server.last_seen_online_clients <= average * 1.5
+                if server.last_seen_online_clients is None or server.last_seen_online_clients <= ceiling
             ]
             if len(filtered) >= 2:
                 candidates = filtered
