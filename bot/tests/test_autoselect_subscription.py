@@ -199,3 +199,75 @@ async def test_autoselect_omitted_for_a_single_location(monkeypatch):
     assert kind == "json"
     configs = json.loads(body)
     assert len(configs) == 1
+
+
+async def _seed_loaded_fleet(monkeypatch, token: str, tg_id: int, loads: list[int | None]) -> None:
+    """Three locations whose only difference is their last known online-client count."""
+
+    async def fake_get_subscription(self, token, profile="safe"):
+        host = self.base_url.split("//", 1)[1].split(":", 1)[0]
+        return (
+            f"vless://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@{host}:443"
+            "?type=xhttp&security=reality&encryption=none&sni=www.example.test"
+            f"&fp=firefox&pbk=PBK&sid=SID&path=%2F#{host}"
+        )
+
+    monkeypatch.setattr(AgentClient, "get_subscription", fake_get_subscription)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    async with async_session_maker() as session:
+        user = User(tg_id=tg_id)
+        session.add(user)
+        await session.flush()
+        servers = [
+            _node(
+                name=f"Land {i}",
+                host=f"203.0.113.{30 + i}",
+                agent_url=f"http://203.0.113.{30 + i}",
+                last_seen_online_clients=load,
+            )
+            for i, load in enumerate(loads)
+        ]
+        session.add_all(servers)
+        await session.flush()
+        now = datetime.now(UTC).replace(tzinfo=None)
+        sub = Subscription(
+            user_id=user.id,
+            sub_token=token,
+            client_uuid="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            plan_days=30,
+            started_at=now,
+            expires_at=now + timedelta(days=30),
+            is_active=True,
+        )
+        session.add(sub)
+        await session.flush()
+        session.add_all(
+            [SubscriptionServer(subscription_id=sub.id, server_id=s.id, is_synced=True) for s in servers]
+        )
+        await session.commit()
+
+
+async def _balancer_size(token: str) -> int:
+    async with async_session_maker() as session:
+        _kind, body = await SubscriptionService.build_xray_json_subscription(session, token)
+    auto = next(cfg for cfg in json.loads(body) if cfg["remarks"] == "\U0001f1fa\U0001f1f3 Автовыбор")
+    return len([ob for ob in auto["outbounds"] if ob["protocol"] == "vless"])
+
+
+async def test_zero_clients_counts_as_a_reading_not_as_missing_telemetry(monkeypatch):
+    # Idle nodes report 0, which is real data. If 0 were treated as "unknown"
+    # like None is, the average here would be computed from the single busy node
+    # (60), leaving fewer than two samples — the filter would switch itself off
+    # and admit the overloaded node. Counting the zeros gives an average of 20,
+    # a ceiling of 30, and drops the node at 60.
+    await _seed_loaded_fleet(monkeypatch, "tok-zeros", 930004, [0, 0, 60])
+    assert await _balancer_size("tok-zeros") == 2
+
+
+async def test_a_node_is_not_overloaded_just_by_being_above_a_tiny_average(monkeypatch):
+    # Average 1.67, so 5 connections is 3x the group — but 5 connections is an
+    # idle node, and excluding it would strand users on a false positive.
+    await _seed_loaded_fleet(monkeypatch, "tok-smallnumbers", 930005, [0, 0, 5])
+    assert await _balancer_size("tok-smallnumbers") == 3
