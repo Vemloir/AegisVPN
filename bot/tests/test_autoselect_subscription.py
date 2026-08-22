@@ -79,7 +79,9 @@ async def test_autoselect_entry_bundles_every_location(monkeypatch):
         kind, body = await SubscriptionService.build_xray_json_subscription(session, token)
     assert kind == "json"
     configs = json.loads(body)
-    assert len(configs) == 3  # Germany, Finland, + the auto-select bundle
+    assert len(configs) == 3  # the auto-select bundle + Germany, Finland
+    # It leads the list: it is the entry most users should take.
+    assert configs[0]["remarks"] == "\U0001f1fa\U0001f1f3 Автовыбор"
 
     auto = next(cfg for cfg in configs if cfg["remarks"] == "\U0001f1fa\U0001f1f3 Автовыбор")
     proxy_tags = [ob["tag"] for ob in auto["outbounds"] if ob["protocol"] == "vless"]
@@ -151,7 +153,7 @@ async def test_autoselect_drops_an_overloaded_outlier(monkeypatch):
         kind, body = await SubscriptionService.build_xray_json_subscription(session, "tok-auto-load")
     assert kind == "json"
     configs = json.loads(body)
-    assert len(configs) == 4  # 3 locations + the auto-select bundle
+    assert len(configs) == 4  # the auto-select bundle + 3 locations
 
     auto = next(cfg for cfg in configs if cfg["remarks"] == "\U0001f1fa\U0001f1f3 Автовыбор")
     proxy_tags = [ob["tag"] for ob in auto["outbounds"] if ob["protocol"] == "vless"]

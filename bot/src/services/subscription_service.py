@@ -810,7 +810,9 @@ class SubscriptionService:
         autoselect = SubscriptionService._build_autoselect_config(configs)
         plain_configs = [cfg for _server, cfg in configs]
         if autoselect is not None:
-            plain_configs.append(autoselect)
+            # First, not last: it is the entry most users should take, and the
+            # one that stops mattering the moment it is scrolled past.
+            plain_configs.insert(0, autoselect)
         return "json", (json.dumps(plain_configs, ensure_ascii=False) if plain_configs else "")
 
     @staticmethod
