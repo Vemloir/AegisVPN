@@ -849,18 +849,25 @@ class SubscriptionService:
             {
                 "tag": "auto",
                 "selector": ["proxy"],
-                # expected > 1 is what spreads load: the client picks at random
-                # among the N best-ranked nodes instead of every user landing on
-                # the same single winner. Ranking runs first, so this only ever
-                # spreads across nodes that are actually comparable.
+                # leastPing, NOT leastLoad. leastLoad sorts on RTTDeviationCost
+                # — the jitter of the link — and only breaks ties on average
+                # RTT, so a far-away node with a metronome-steady connection
+                # outranks a near one that wobbles. In practice that handed
+                # European users Hong Kong. leastPing ranks on the single number
+                # that matters here, lowest measured delay.
                 #
-                # No maxRTT and no fallbackTag on purpose. leastLoad returns
-                # nothing when its filters reject everything, and the caller then
+                # The cost is that leastPing returns exactly one node, so there
+                # is no spreading across comparable nodes any more. That is the
+                # right trade while no node is anywhere near saturated: picking
+                # the wrong continent is a real, visible defect, and uneven load
+                # is currently hypothetical.
+                #
+                # No fallbackTag on purpose: the strategy returns nothing when
+                # the observatory has no usable report, and the caller then
                 # defers to fallbackTag — pointing that at "direct" would push
                 # traffic outside the tunnel while the user still sees a
-                # connected VPN, and maxRTT is what would most plausibly reject
-                # everything for someone on a slow mobile link.
-                "strategy": {"type": "leastLoad", "settings": {"expected": 2}},
+                # connected VPN.
+                "strategy": {"type": "leastPing"},
             }
         ]
         return {
