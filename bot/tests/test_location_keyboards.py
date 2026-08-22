@@ -3,7 +3,8 @@ transport choosers, and the callbacks they emit.
 
 The screen shows the current protocol/transport AS button labels (no markers);
 the choosers mark the current option with a localized suffix. Hysteria2 is
-selectable only on a capable node and disabled everywhere else."""
+offered only on a capable node; the row is omitted everywhere else rather than
+shown disabled."""
 
 from src.handlers.user.keyboards import (
     location_protocol_keyboard,
@@ -62,7 +63,6 @@ def test_protocol_chooser_enables_hy2_only_on_capable_node():
     unavailable = location_protocol_keyboard("ru", 7, "vless", hy2_capable=False)
     assert _callbacks(unavailable) == [
         "loc_proto_set:7:vless",
-        "loc_hy2:7",
         "loc:7",
     ]
 
