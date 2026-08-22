@@ -761,6 +761,16 @@ async def check_servers_health(bot: Bot):
             return server, ok, reason, clients
 
     results = await asyncio.gather(*(check_with_retry(server) for server in servers))
+
+    clients_by_id = {server.id: clients for server, _ok, _reason, clients in results if clients is not None}
+    if clients_by_id:
+        async with async_session_maker() as session:
+            for server_id, clients in clients_by_id.items():
+                await session.execute(
+                    update(Server).where(Server.id == server_id).values(last_seen_online_clients=clients)
+                )
+            await session.commit()
+
     for server, ok, reason, clients in results:
         was_down = server.id in _down_servers
         if ok:

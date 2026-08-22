@@ -124,6 +124,35 @@ async def cq_admin_server_active_toggle(call: CallbackQuery, state: FSMContext):
     await call.answer("Локация включена" if target else "Локация отключена — убрана у всех пользователей")
 
 
+@router.callback_query(F.data.startswith("admin_server_hide_toggle:"))
+async def cq_admin_server_hide_toggle(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        await call.answer("Доступ запрещён", show_alert=True)
+        return
+
+    server_id = int(call.data.split(":", 1)[1])  # type: ignore[arg-type]
+    async with async_session_maker() as session:
+        server = await session.get(Server, server_id)
+        if server is None:
+            await call.answer("Сервер не найден", show_alert=True)
+            return
+
+        # Deliberately NOT ServerAccessService: that path reconciles access and
+        # strips the node's live control-plane client list. This flag only
+        # changes what SubscriptionService renders — existing clients already
+        # synced to this server keep connecting on their saved config.
+        server.hidden_from_subscription = not server.hidden_from_subscription
+        target = server.hidden_from_subscription
+        await session.commit()
+
+    await state.clear()
+    rendered = await render_server_details(server_id)
+    assert rendered is not None
+    text, keyboard = rendered
+    await call.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)  # type: ignore
+    await call.answer("Убрана из выдачи подписки" if target else "Возвращена в выдачу подписки")
+
+
 @router.callback_query(F.data.startswith("admin_server_allow_start:"))
 async def cq_admin_server_allow_start(call: CallbackQuery, state: FSMContext):
     if not is_admin(call.from_user.id):
