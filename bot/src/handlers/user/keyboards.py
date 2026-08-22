@@ -144,7 +144,9 @@ def location_protocol_keyboard(
     protocol: str,
     hy2_capable: bool = False,
 ) -> InlineKeyboardMarkup:
-    """Protocol chooser with Hy2 selectable only on a capable node."""
+    """Protocol chooser. Hy2 is not offered at all on a node that can't serve it —
+    a picker with a dead option invites a tap just to learn that, so the row is
+    omitted rather than shown disabled."""
     mark = t(language, "location_selected_mark")
     rows: list[list[InlineKeyboardButton]] = [
         [
@@ -153,14 +155,17 @@ def location_protocol_keyboard(
                 callback_data=f"loc_proto_set:{server_id}:vless",
             )
         ],
-        [
-            InlineKeyboardButton(
-                text=t(language, "location_proto_hy2") + (mark if protocol == "hy2" else ""),
-                callback_data=(f"loc_proto_set:{server_id}:hy2" if hy2_capable else f"loc_hy2:{server_id}"),
-            )
-        ],
-        [InlineKeyboardButton(text=t(language, "back"), callback_data=f"loc:{server_id}")],
     ]
+    if hy2_capable:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=t(language, "location_proto_hy2") + (mark if protocol == "hy2" else ""),
+                    callback_data=f"loc_proto_set:{server_id}:hy2",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text=t(language, "back"), callback_data=f"loc:{server_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
