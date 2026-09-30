@@ -77,3 +77,19 @@ def test_lb_probe_rule_precedes_the_private_block(monkeypatch):
     probes = [o for o in cfg["outbounds"] if o["tag"] == "lb-probe"]
     assert probes == [{"tag": "lb-probe", "protocol": "freedom", "settings": {"redirect": "127.0.0.1:10086"}}]
     assert cfg["outbounds"][0]["tag"] == "direct"  # default outbound unchanged
+
+
+def test_catch_all_dropped_so_appended_conn_limit_rule_is_reached():
+    cfg = _legacy_config()
+    cfg["outbounds"] = [{"tag": "warp"}, {"tag": "direct", "protocol": "freedom"}, {"tag": "block"}]
+    fn = _entrypoint_fn("ensure_conn_limit_reachable")
+    fn(cfg)
+    fn(cfg)  # idempotent
+    rules = cfg["routing"]["rules"]
+    assert not [r for r in rules if r.get("network") == "tcp,udp"]
+    # Unmatched traffic goes to the first outbound, which must be direct.
+    assert cfg["outbounds"][0]["tag"] == "direct"
+    # A sib-style appended rule is now the last word for unmatched traffic.
+    rules.append({"type": "field", "source": ["198.51.100.7"], "outboundTag": "block", "ruleTag": "conn-limit"})
+    assert rules[-1]["ruleTag"] == "conn-limit"
+    assert not [r for r in rules[:-1] if set(r) <= {"type", "network", "outboundTag"}]

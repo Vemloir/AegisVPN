@@ -117,11 +117,6 @@
           "geosite:category-ads-all"
         ],
         "outboundTag": "block"
-      },
-      {
-        "type": "field",
-        "network": "tcp,udp",
-        "outboundTag": "direct"
       }
     ]
   },
