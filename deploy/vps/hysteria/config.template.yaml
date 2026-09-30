@@ -54,3 +54,21 @@ trafficStats:
 
 masquerade:        # a raw (non-Hy2) probe to :443 gets a plain 404
   type: 404
+
+# Keep Hy2 users off the node's own network: loopback carries the Xray API, the
+# agent and these trafficStats, and 169.254.169.254 is the provider's metadata
+# service. Hostnames are resolved before the IP rules match, so a public name
+# pointing at 127.0.0.1 is rejected too. Everything else goes out directly.
+acl:
+  inline:
+    - reject(0.0.0.0/8)
+    - reject(10.0.0.0/8)
+    - reject(100.64.0.0/10)
+    - reject(127.0.0.0/8)
+    - reject(169.254.0.0/16)
+    - reject(172.16.0.0/12)
+    - reject(192.168.0.0/16)
+    - reject(::1/128)
+    - reject(fc00::/7)
+    - reject(fe80::/10)
+    - reject(localhost)
