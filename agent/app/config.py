@@ -41,6 +41,15 @@ class Settings(BaseSettings):
     conn_limit_ip_concurrency: int = 12
     conn_limit_stats_timeout: float = 30.0
 
+    # Load probe answered on behalf of the "Автовыбор" health check (see
+    # lbprobe.py). Xray redirects lb_probe_host:80 here; 0 disables it.
+    lb_probe_port: int = 10086
+    lb_load_base_ms: float = 20.0
+    lb_switch_penalty_ms: float = 30.0
+    lb_full_load: float = 0.95
+    # Measured link speed; 0 leaves the network out of the load figure.
+    lb_link_mbps: float = 0.0
+
     # Local Hysteria2 process. Disabled by default: on a node without Hy2,
     # every Hy2 path is a no-op and the agent behaves exactly as before.
     hy2_enabled: bool = False
