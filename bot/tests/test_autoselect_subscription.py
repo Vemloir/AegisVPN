@@ -199,3 +199,29 @@ async def _balancer_size(token: str) -> int:
         _kind, body = await SubscriptionService.build_xray_json_subscription(session, token)
     auto = next(cfg for cfg in json.loads(body) if cfg["remarks"] == "\U0001f1ea\U0001f1fa Автовыбор")
     return len([ob for ob in auto["outbounds"] if ob["protocol"] == "vless"])
+
+
+async def _autoselect_ping_config(monkeypatch) -> dict:
+    token = await _seed_two_node_sub(monkeypatch)
+    async with async_session_maker() as session:
+        _, body = await SubscriptionService.build_xray_json_subscription(session, token)
+    return json.loads(body)[0]["burstObservatory"]["pingConfig"]
+
+
+async def test_health_checks_default_to_public_url(monkeypatch):
+    ping = await _autoselect_ping_config(monkeypatch)
+    assert ping["destination"] == "http://www.gstatic.com/generate_204"
+    # A dead node stays "alive" for about one round (interval x sampling).
+    assert ping["interval"] == "20s" and ping["sampling"] == 3
+
+
+async def test_load_probe_url_carries_a_hash_not_the_uuid(monkeypatch):
+    import hashlib
+
+    from src.core.config import settings
+
+    monkeypatch.setattr(settings, "autoselect_load_probe", True)
+    ping = await _autoselect_ping_config(monkeypatch)
+    uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    assert ping["destination"] == f"http://lb.aegisvpn.org/p/{hashlib.sha256(uuid.encode()).hexdigest()[:16]}"
+    assert uuid not in ping["destination"]

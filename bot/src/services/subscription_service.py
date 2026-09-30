@@ -818,23 +818,22 @@ class SubscriptionService:
     @staticmethod
     def _build_autoselect_config(configs: list[tuple[Server, dict]]) -> dict | None:
         """One extra xray-JSON entry that bundles every location's proxy outbound
-        into a single balancer, so the client itself (not us) measures real
-        per-user RTT to each node and picks between them — the thing a
+        into a single leastPing balancer, so the client itself (not us) measures
+        real per-user RTT to each node and picks between them — the thing a
         server-rendered subscription structurally cannot do on its own. Skipped
         below 2 locations, where there is nothing to choose between.
 
-        Load is balanced without the bot deciding anything. `expected` makes the
-        client spread traffic randomly across the best-ranked nodes rather than
-        funnelling everyone onto a single winner, so across the user base the
-        split evens out on its own — no per-node capacity number, no threshold,
-        and no dependence on telemetry that can be stale or missing. Ranking
-        still comes first, so a node that is meaningfully worse than the others
-        never enters the set being spread across.
+        With `autoselect_load_probe` on, each health check goes through the
+        node to its own load probe instead of a public URL. The node delays
+        its answer by a penalty for its current load and for not being the
+        node this user is already active on, so what the client ranks is
 
-        Every candidate is offered; the bot deliberately does not pre-filter by
-        its own load telemetry. It cannot see the one number that decides the
-        outcome — the latency between THIS user and each node — so any list it
-        trimmed would be trimmed blind."""
+            ping + load penalty + switching penalty
+
+        and a saturated node stops answering and drops out. The path carries
+        a hash of the client UUID so the node can recognise its active users.
+        The bot still decides nothing: it has neither the per-user latency nor
+        live load, the node and the client each supply their half."""
         candidates = configs
         if len(candidates) < 2:
             return None
@@ -881,14 +880,28 @@ class SubscriptionService:
             "burstObservatory": {
                 "subjectSelector": ["proxy"],
                 "pingConfig": {
-                    "destination": "http://www.gstatic.com/generate_204",
+                    "destination": SubscriptionService._autoselect_probe_url(outbounds[0]),
                     "connectivity": "",
-                    "interval": "1m",
+                    # A node counts as alive while any of its last `sampling`
+                    # checks succeeded, so the round (interval x sampling) is
+                    # roughly how long a dead node keeps getting picked.
+                    "interval": "20s",
                     "sampling": 3,
                     "timeout": "3s",
                 },
             },
         }
+
+    @staticmethod
+    def _autoselect_probe_url(first_proxy: dict) -> str:
+        if not settings.autoselect_load_probe:
+            return "http://www.gstatic.com/generate_204"
+        client_id = ""
+        for server in first_proxy.get("settings", {}).get("vnext", []):
+            for user in server.get("users", []):
+                client_id = client_id or str(user.get("id") or "")
+        probe_id = hashlib.sha256(client_id.encode()).hexdigest()[:16] if client_id else "anon"
+        return f"http://{settings.lb_probe_host}/p/{probe_id}"
 
     @staticmethod
     def _vless_link_to_xray_config(link: str, server: Server) -> dict | None:
