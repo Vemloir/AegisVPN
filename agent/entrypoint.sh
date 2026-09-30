@@ -365,7 +365,31 @@ def ensure_warp(cfg: dict) -> None:
     rules.insert(api_idx + 2, warp_domains_rule)
 
 
+def ensure_private_blocked(cfg: dict) -> None:
+    """Idempotently keep subscriber traffic off the node's own private network.
+
+    The node's loopback carries the unauthenticated Xray gRPC API (127.0.0.1:10085)
+    and the agent; routing geoip:private to `direct` let any subscriber reach
+    them through the tunnel. Block private IPs and names right after the api
+    rule, ahead of every other rule, and resolve domains on demand so a public
+    name that points at 127.0.0.1 or 169.254.169.254 is caught by the IP rule
+    instead of slipping through as a domain. Runs on every start so existing
+    nodes are migrated, not only freshly templated ones.
+    """
+    routing = cfg.setdefault("routing", {})
+    routing["domainStrategy"] = "IPOnDemand"
+    rules = routing.setdefault("rules", [])
+    rules[:] = [
+        rule for rule in rules
+        if "geoip:private" not in rule.get("ip", []) and "geosite:private" not in rule.get("domain", [])
+    ]
+    api_idx = next((i for i, r in enumerate(rules) if r.get("inboundTag") == ["api"]), -1)
+    rules.insert(api_idx + 1, {"type": "field", "ip": ["geoip:private"], "outboundTag": "block"})
+    rules.insert(api_idx + 2, {"type": "field", "domain": ["geosite:private"], "outboundTag": "block"})
+
+
 ensure_warp(config)
+ensure_private_blocked(config)
 
 config_directory = os.path.dirname(config_path) or "."
 descriptor, temporary_path = tempfile.mkstemp(prefix=".config-", dir=config_directory)
