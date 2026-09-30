@@ -45,7 +45,10 @@ class Settings(BaseSettings):
     # lbprobe.py). Xray redirects lb_probe_host:80 here; 0 disables it.
     lb_probe_port: int = 10086
     lb_load_base_ms: float = 20.0
-    lb_switch_penalty_ms: float = 30.0
+    # Keeps a user on their node: far above any ping/load difference, and it
+    # halves once they have moved lb_stick_bytes through this node lately.
+    lb_switch_penalty_ms: float = 1000.0
+    lb_stick_bytes: float = 64 * 1024
     lb_full_load: float = 0.95
     # Measured link speed; 0 leaves the network out of the load figure.
     lb_link_mbps: float = 0.0
