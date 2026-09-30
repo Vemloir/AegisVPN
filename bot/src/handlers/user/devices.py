@@ -217,7 +217,12 @@ async def cq_devices_remove(call: CallbackQuery):
 
     async with async_session_maker() as session:
         device = (
-            await session.execute(select(Device).where(Device.id == device_id, Device.is_active == True))  # noqa: E712
+            await session.execute(
+                select(Device)
+                .join(Subscription, Subscription.id == Device.subscription_id)
+                .join(User, User.id == Subscription.user_id)
+                .where(Device.id == device_id, Device.is_active == True, User.tg_id == call.from_user.id)  # noqa: E712
+            )
         ).scalar_one_or_none()
 
     if device is None:
