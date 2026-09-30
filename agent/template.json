@@ -76,7 +76,7 @@
   ],
   "routing": {
     "domainMatcher": "hybrid",
-    "domainStrategy": "AsIs",
+    "domainStrategy": "IPOnDemand",
     "rules": [
       {
         "type": "field",
@@ -84,6 +84,20 @@
           "api"
         ],
         "outboundTag": "api"
+      },
+      {
+        "type": "field",
+        "ip": [
+          "geoip:private"
+        ],
+        "outboundTag": "block"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "geosite:private"
+        ],
+        "outboundTag": "block"
       },
       {
         "type": "field",
@@ -103,20 +117,6 @@
           "geosite:category-ads-all"
         ],
         "outboundTag": "block"
-      },
-      {
-        "type": "field",
-        "ip": [
-          "geoip:private"
-        ],
-        "outboundTag": "direct"
-      },
-      {
-        "type": "field",
-        "domain": [
-          "geosite:private"
-        ],
-        "outboundTag": "direct"
       },
       {
         "type": "field",
