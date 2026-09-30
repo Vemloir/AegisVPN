@@ -189,7 +189,9 @@ async def subscription_response(request: web.Request, profile: str) -> web.Respo
 
         device_uuid: str | None = None
         if sub and ua:
-            device = await SubscriptionService.get_or_create_device(session, sub, ua, client_ip)
+            device = await SubscriptionService.get_or_create_device(
+                session, sub, ua, client_ip, headers=request.headers
+            )
             await session.commit()
             if not device.is_suspended:
                 device_uuid = device.uuid

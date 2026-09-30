@@ -23,14 +23,17 @@ from .keyboards import (
     devices_list_keyboard,
 )
 
-# Strips a 3+ digit run (a client build number like Happ's) that an older parser
+# Strips a 7+ digit run (a client build number like Happ's) that an older parser
 # may have stored as if it were an OS version — so stale records render cleanly
-# without waiting for the self-heal on the next subscription fetch.
-_BUILD_NUM_RE = re.compile(r"\s+\d{3,}")
+# without waiting for the self-heal on the next subscription fetch. Shorter runs
+# are left alone: they're real model numbers ("Honor 200", "Nokia 3310").
+_BUILD_NUM_RE = re.compile(r"\s+\d{7,}")
 
 
 def _clean_label(s: str | None) -> str | None:
-    return _BUILD_NUM_RE.sub("", s) if s else s
+    # Labels carry client-reported free text (x-device-model), and every message
+    # here is sent with parse_mode=HTML.
+    return html.quote(_BUILD_NUM_RE.sub("", s)) if s else s
 
 
 router = Router()
@@ -222,7 +225,7 @@ async def cq_devices_remove(call: CallbackQuery):
         return
 
     await call.message.edit_text(  # type: ignore
-        t(language, "devices_remove_confirm", name=device.display_name),
+        t(language, "devices_remove_confirm", name=_clean_label(device.display_name)),
         parse_mode="HTML",
         reply_markup=device_remove_confirm_keyboard(language, device_id),
     )
