@@ -409,9 +409,33 @@ def ensure_lb_probe(cfg: dict) -> None:
     rules.insert(api_idx + 1, {"type": "field", "domain": [f"full:{host}"], "port": "80", "outboundTag": "lb-probe"})
 
 
+def ensure_conn_limit_reachable(cfg: dict) -> None:
+    """Let the conn-limit block rule actually match.
+
+    The agent installs it with `xray api sib`, which can only APPEND a rule, and
+    routing is first-match: behind a trailing catch-all `direct` rule it was
+    never consulted. Drop the catch-all and keep `direct` as the first outbound,
+    which Xray uses for anything no rule matched, so unmatched traffic still
+    leaves directly while an appended block rule is reached first.
+    """
+    rules = cfg.setdefault("routing", {}).setdefault("rules", [])
+    rules[:] = [
+        rule for rule in rules
+        if not (
+            rule.get("outboundTag") == "direct"
+            and set(rule) <= {"type", "network", "outboundTag"}
+            and rule.get("network") in ("tcp,udp", "udp,tcp")
+        )
+    ]
+    outbounds = cfg.setdefault("outbounds", [])
+    direct = [o for o in outbounds if o.get("tag") == "direct"]
+    outbounds[:] = direct + [o for o in outbounds if o.get("tag") != "direct"]
+
+
 ensure_warp(config)
 ensure_private_blocked(config)
 ensure_lb_probe(config)
+ensure_conn_limit_reachable(config)
 
 config_directory = os.path.dirname(config_path) or "."
 descriptor, temporary_path = tempfile.mkstemp(prefix=".config-", dir=config_directory)
