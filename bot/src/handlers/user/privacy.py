@@ -71,7 +71,7 @@ async def cq_privacy_accept(call: CallbackQuery):
     language, can_use_trial = accepted
 
     active_sub, is_lifetime = await UserService.subscription_state(call.from_user.id)
-    first_name = html.bold(call.from_user.first_name)
+    first_name = html.bold(html.quote(call.from_user.first_name))
     await call.message.edit_text(  # type: ignore
         t(language, "start_text", name=first_name),
         parse_mode="HTML",

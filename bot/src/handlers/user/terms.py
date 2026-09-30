@@ -87,7 +87,7 @@ async def doc_links_block(language: str) -> str:
 async def gate_text(language: str, name: str | None = None) -> str:
     # The two documents are now URL BUTTONS (see gate_keyboard), so the body is
     # just the greeting + intro — no inline doc links.
-    greeting = t(language, "terms_gate_greeting", name=html.bold(name or ""))
+    greeting = t(language, "terms_gate_greeting", name=html.bold(html.quote(name or "")))
     return f"{greeting}\n\n{t(language, 'terms_gate_intro')}"
 
 
@@ -152,7 +152,7 @@ async def cq_terms_accept(call: CallbackQuery):
     )
 
     active_sub, is_lifetime = await UserService.subscription_state(call.from_user.id)
-    first_name = html.bold(call.from_user.first_name)
+    first_name = html.bold(html.quote(call.from_user.first_name))
     await call.message.edit_text(  # type: ignore[union-attr]
         t(language, "start_text", name=first_name),
         parse_mode="HTML",

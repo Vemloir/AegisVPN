@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     sqlite_path: str = "/data/aegis.db"
 
     webhook_path: str = "/webhook"
-    webapp_host: str = "0.0.0.0"
+    webapp_host: str = "127.0.0.1"  # Caddy proxies to it; never expose directly
     webapp_port: int = 8080
 
     # Platega (СБП / RUB acquiring). Credentials come from the merchant dashboard

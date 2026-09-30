@@ -48,7 +48,7 @@ async def cmd_start(message: Message):
         return
 
     active_sub, is_lifetime = await UserService.subscription_state(tg_id)
-    first_name = html.bold(message.from_user.first_name)
+    first_name = html.bold(html.quote(message.from_user.first_name))
     await message.answer(
         t(language, "start_text", name=first_name),
         parse_mode="HTML",
