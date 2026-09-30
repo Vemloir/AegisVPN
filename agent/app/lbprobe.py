@@ -7,20 +7,24 @@ node's own state into it. Xray routes the probe hostname to this listener,
 and the answer is held back by
 
     load penalty      base * rho / (1 - rho)   (M/M/1 queueing delay)
-    switch penalty    added unless this user is already active here
+    switch penalty    S / (1 + B / B0), B = this user's bytes here lately
 
 so what the client ranks is ping + load penalty + switch penalty. At or past
 full load the probe does not answer at all and the client counts the node as
 dead. rho is the busier of CPU and link utilisation.
 
-The switch penalty keeps a user on the node they are on while it stays
-competitive: xray never moves an open connection, but it picks a node for
-every new one, and flapping between two near-equal nodes changes the user's
-exit IP mid-session. A user with no traffic anywhere pays it on every node,
-which ranks nodes exactly as before.
+A user must not be moved to another location while their node is alive. Xray
+never moves an open connection, but it picks a node for every new one, so the
+switch penalty is what keeps them: S is far larger than any ping or load
+difference, and it melts away on the node that carries the user's traffic.
+Proportional rather than on/off, so if a session's first seconds land on two
+near-equal nodes, the one with more traffic wins and the choice converges on
+it. A user with no recent traffic anywhere pays S on every node, which ranks
+nodes by ping and load alone; load therefore steers only fresh sessions. The
+only move left is failover, once a node stops answering.
 
 The path is /p/<id>, id = first 16 hex of sha256(client UUID). The probe's
-own few bytes never make a user "active": activity means real traffic moved.
+own few hundred bytes are negligible against B0.
 """
 
 import asyncio
@@ -32,9 +36,9 @@ from .xray import get_xray_config, query_traffic_stats
 
 _SAMPLE_SECONDS = 2.0
 _SMOOTHING_SECONDS = 30.0
-_ACTIVITY_SECONDS = 15.0
-_ACTIVE_WINDOW_SECONDS = 60.0
-_ACTIVE_MIN_BYTES = 64 * 1024
+_ACTIVITY_SECONDS = 10.0
+_ACTIVE_WINDOW_SECONDS = 600.0
+_MAX_DELAY_MS = 2000.0  # stay well inside the client's 3 s check timeout
 _REQUEST_TIMEOUT = 2.0
 _MAX_CONCURRENT = 256
 _SKIP_INTERFACES = ("lo", "docker", "veth", "br-", "wg", "warp", "tun")
@@ -76,7 +80,7 @@ class LoadProbe:
         self.rho = 0.0
         self.cpu = 0.0
         self.net = 0.0
-        self._active: set[str] = set()
+        self._recent_bytes: dict[str, int] = {}
         self._probe_ids: dict[str, str] = {}
         self._history: dict[str, list[tuple[float, int]]] = {}
         self._slots = asyncio.Semaphore(_MAX_CONCURRENT)
@@ -123,16 +127,18 @@ class LoadProbe:
         self._probe_ids = ids
 
         now = time.monotonic()
-        active: set[str] = set()
+        recent: dict[str, int] = {}
         for email, counters in (await query_traffic_stats()).items():
             total = counters.get("uplink", 0) + counters.get("downlink", 0)
             history = self._history.setdefault(email, [])
+            if history and total < history[-1][1]:
+                history.clear()  # counters reset with an Xray restart
             history.append((now, total))
-            while history and now - history[0][0] > _ACTIVE_WINDOW_SECONDS:
+            while now - history[0][0] > _ACTIVE_WINDOW_SECONDS:
                 history.pop(0)
-            if total - history[0][1] >= _ACTIVE_MIN_BYTES and email in ids:
-                active.add(ids[email])
-        self._active = active
+            if email in ids:
+                recent[ids[email]] = total - history[0][1]
+        self._recent_bytes = recent
 
     # --- the probe itself ---------------------------------------------------
 
@@ -140,8 +146,9 @@ class LoadProbe:
         load = penalty_ms(self.rho)
         if load is None:
             return None
-        switch = 0.0 if probe_id in self._active else settings.lb_switch_penalty_ms
-        return load + switch
+        recent = self._recent_bytes.get(probe_id, 0)
+        switch = settings.lb_switch_penalty_ms / (1.0 + recent / settings.lb_stick_bytes)
+        return min(load + switch, _MAX_DELAY_MS)
 
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         async with self._slots:
