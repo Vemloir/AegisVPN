@@ -139,7 +139,7 @@ async def cq_admin_plan_create(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
-@router.message(AdminStates.waiting_plan_new_days)
+@router.message(AdminStates.waiting_plan_new_days, ~F.text.startswith("/"))
 async def msg_admin_plan_new_days(message: Message, state: FSMContext):
     if not message.from_user or not is_admin(message.from_user.id):
         return
@@ -157,7 +157,7 @@ async def msg_admin_plan_new_days(message: Message, state: FSMContext):
     await message.answer("Цена в звёздах числом. 0 без оплаты звёздами.", reply_markup=_back_to_plans_keyboard())
 
 
-@router.message(AdminStates.waiting_plan_new_stars)
+@router.message(AdminStates.waiting_plan_new_stars, ~F.text.startswith("/"))
 async def msg_admin_plan_new_stars(message: Message, state: FSMContext):
     if not message.from_user or not is_admin(message.from_user.id):
         return
@@ -175,7 +175,7 @@ async def msg_admin_plan_new_stars(message: Message, state: FSMContext):
     await message.answer("Цена в рублях для СБП числом. 0 без СБП.", reply_markup=_back_to_plans_keyboard())
 
 
-@router.message(AdminStates.waiting_plan_new_rub)
+@router.message(AdminStates.waiting_plan_new_rub, ~F.text.startswith("/"))
 async def msg_admin_plan_new_rub(message: Message, state: FSMContext):
     if not message.from_user or not is_admin(message.from_user.id):
         return
@@ -239,7 +239,7 @@ async def cq_admin_plan_edit(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
-@router.message(AdminStates.waiting_plan_price)
+@router.message(AdminStates.waiting_plan_price, ~F.text.startswith("/"))
 async def msg_admin_plan_price(message: Message, state: FSMContext):
     if not message.from_user or not is_admin(message.from_user.id):
         return
@@ -266,7 +266,7 @@ async def msg_admin_plan_price(message: Message, state: FSMContext):
     await message.answer("Цена в рублях для СБП числом. 0 без СБП.", reply_markup=_back_to_plans_keyboard())
 
 
-@router.message(AdminStates.waiting_plan_rub)
+@router.message(AdminStates.waiting_plan_rub, ~F.text.startswith("/"))
 async def msg_admin_plan_rub(message: Message, state: FSMContext):
     if not message.from_user or not is_admin(message.from_user.id):
         return

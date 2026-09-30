@@ -49,7 +49,7 @@ async def _user_from_forward(message: Message) -> tuple[int, str | None] | None:
     return sender.id, sender.username
 
 
-@router.message(AdminStates.waiting_user_lookup)
+@router.message(AdminStates.waiting_user_lookup, ~F.text.startswith("/"))
 async def msg_admin_user_lookup(message: Message, state: FSMContext):
     if not message.from_user or not is_admin(message.from_user.id):
         return
@@ -119,7 +119,7 @@ async def cq_admin_user_issue_start(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
-@router.message(AdminStates.waiting_user_issue_days)
+@router.message(AdminStates.waiting_user_issue_days, ~F.text.startswith("/"))
 async def msg_admin_user_issue_days(message: Message, state: FSMContext):
     if not message.from_user or not is_admin(message.from_user.id):
         return
@@ -423,7 +423,7 @@ async def cq_admin_user_connlimit_custom(call: CallbackQuery, state: FSMContext)
     await call.answer()
 
 
-@router.message(AdminStates.waiting_user_conn_limit)
+@router.message(AdminStates.waiting_user_conn_limit, ~F.text.startswith("/"))
 async def msg_admin_user_conn_limit(message: Message, state: FSMContext):
     if not message.from_user or not is_admin(message.from_user.id):
         return

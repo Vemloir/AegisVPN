@@ -125,7 +125,7 @@ async def cq_admin_bulk_extend_active_start(call: CallbackQuery, state: FSMConte
     await call.answer()
 
 
-@router.message(AdminStates.waiting_bulk_extend_days)
+@router.message(AdminStates.waiting_bulk_extend_days, ~F.text.startswith("/"))
 async def msg_admin_bulk_extend_days(message: Message, state: FSMContext):
     if not message.from_user or not is_admin(message.from_user.id):
         return
