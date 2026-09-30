@@ -271,3 +271,26 @@ def test_non_vless_and_stale_prefs_use_capability_aware_default():
     assert SubscriptionService.resolve_transport(_xhttp_only_server(), "vless", "tcp") == "xhttp"
     # A valid tcp pref resolves to tcp.
     assert SubscriptionService.resolve_transport(server, "vless", "tcp") == "tcp"
+
+
+def test_reported_device_model_names_the_device():
+    # Happ/v2RayTun send the real model and OS in x-device-* headers.
+    headers = {"x-device-model": "iPhone 14 Pro Max", "x-device-os": "iOS", "x-ver-os": "18.3"}
+    ua = "Happ/2.9.1/iPhone/99887766554433"
+    assert SubscriptionService.make_device_display_name(ua, headers) == "iPhone 14 Pro Max · Happ"
+    assert SubscriptionService.device_os_label(ua, headers) == "iOS 18.3"
+
+
+def test_missing_device_headers_fall_back_to_user_agent():
+    ua = "Happ/2.9.1/Android/17800541067281831514"
+    assert SubscriptionService.make_device_display_name(ua, {}) == "Android · Happ"
+    assert SubscriptionService.device_os_label(ua, None) == "Android"
+
+
+def test_reported_device_model_is_sanitized_and_capped():
+    headers = {"x-device-model": "Pixel%208\n\x00" + "x" * 200}
+    model, os_label = SubscriptionService.reported_device(headers)
+    assert model.startswith("Pixel 8 ")
+    assert "\n" not in model and "\x00" not in model
+    assert len(model) <= 48
+    assert os_label == ""

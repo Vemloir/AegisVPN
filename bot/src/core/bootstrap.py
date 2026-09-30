@@ -158,7 +158,7 @@ async def heal_device_labels() -> None:
 
     from src.models import Device
 
-    pat = re.compile(r"\s+\d{3,}")
+    pat = re.compile(r"\s+\d{7,}")
     async with async_session_maker() as session:
         devices = (await session.execute(select(Device))).scalars().all()
         changed = False

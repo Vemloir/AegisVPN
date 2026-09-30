@@ -7,6 +7,7 @@ import re
 import secrets
 import uuid as _uuid_mod
 from collections import Counter
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
 
@@ -30,6 +31,7 @@ _UA_AND_VER_RE = re.compile(r"Android[/ ]([\d.]+)", re.IGNORECASE)
 _UA_WIN_VER_RE = re.compile(r"Windows NT\s+([\d.]+)", re.IGNORECASE)
 _WIN_NT = {"10.0": "10/11", "6.3": "8.1", "6.2": "8", "6.1": "7"}
 _UA_MAC_VER_RE = re.compile(r"Mac OS X[/ ]([\d_]+)", re.IGNORECASE)
+_HEADER_CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 # --- xray-JSON subscription building blocks ---------------------------------
 # Clean "default-proxy" policy: everything is tunneled EXCEPT RU/CN/private,
@@ -1137,10 +1139,30 @@ class SubscriptionService:
         return ""
 
     @staticmethod
-    def make_device_display_name(ua: str) -> str:
+    def _header_value(headers: Mapping[str, str] | None, name: str, limit: int) -> str:
+        raw = (headers or {}).get(name) or ""
+        return " ".join(_HEADER_CTRL_RE.sub(" ", unquote(raw)).split())[:limit]
+
+    @staticmethod
+    def reported_device(headers: Mapping[str, str] | None) -> tuple[str, str]:
+        """(model, OS) the client self-reports, or empty strings.
+
+        Happ, v2RayTun and other HWID-aware clients send ``x-device-model``
+        ("iPhone 14 Pro Max"), ``x-device-os`` ("iOS") and ``x-ver-os`` ("18.3")
+        alongside the User-Agent. It is free text from the client, so it is
+        only ever a label: never an identity, and escaped wherever it's shown.
+        """
+        model = SubscriptionService._header_value(headers, "x-device-model", 48)
+        os_name = SubscriptionService._header_value(headers, "x-device-os", 24)
+        os_ver = SubscriptionService._header_value(headers, "x-ver-os", 16)
+        return model, f"{os_name} {os_ver}".strip() if os_name else ""
+
+    @staticmethod
+    def make_device_display_name(ua: str, headers: Mapping[str, str] | None = None) -> str:
         m = _UA_PRODUCT_RE.match(ua.strip())
-        client = m.group(1) if m else ""
-        platform = SubscriptionService._detect_platform(ua)
+        client = m.group(1)[:40] if m else ""
+        model, _ = SubscriptionService.reported_device(headers)
+        platform = model or SubscriptionService._detect_platform(ua)
         if client and platform:
             return f"{platform} · {client}"
         if client:
@@ -1148,6 +1170,11 @@ class SubscriptionService:
         if platform:
             return platform
         return "Device"
+
+    @staticmethod
+    def device_os_label(ua: str, headers: Mapping[str, str] | None = None) -> str | None:
+        _, reported_os = SubscriptionService.reported_device(headers)
+        return reported_os or SubscriptionService._detect_platform(ua) or None
 
     @staticmethod
     def extract_build(ua: str) -> str | None:
@@ -1176,6 +1203,7 @@ class SubscriptionService:
         sub: "Subscription",
         ua: str,
         client_ip: str | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> "Device":
         fingerprint = SubscriptionService.fingerprint_ua(ua)
         now = datetime.now(UTC).replace(tzinfo=None)
@@ -1192,8 +1220,8 @@ class SubscriptionService:
         if device is not None:
             # Re-derive name/OS/build from the current UA so records created by an
             # older, buggier parser self-heal on the next subscription fetch.
-            new_name = SubscriptionService.make_device_display_name(ua)
-            new_os = SubscriptionService._detect_platform(ua) or None
+            new_name = SubscriptionService.make_device_display_name(ua, headers)
+            new_os = SubscriptionService.device_os_label(ua, headers)
             new_build = SubscriptionService.extract_build(ua)
             if device.display_name != new_name:
                 device.display_name = new_name
@@ -1207,7 +1235,7 @@ class SubscriptionService:
 
         # New device: capture OS + build (from UA) and the approximate "added from"
         # location (GeoIP of the requesting IP, resolved once; the IP isn't stored).
-        os_label = SubscriptionService._detect_platform(ua) or None
+        os_label = SubscriptionService.device_os_label(ua, headers)
         build_number = SubscriptionService.extract_build(ua)
         added_location, added_country_code = geoip.lookup(client_ip)
 
@@ -1215,7 +1243,7 @@ class SubscriptionService:
             subscription_id=sub.id,
             uuid=str(_uuid_mod.uuid4()),
             ua_fingerprint=fingerprint,
-            display_name=SubscriptionService.make_device_display_name(ua),
+            display_name=SubscriptionService.make_device_display_name(ua, headers),
             os_label=os_label,
             build_number=build_number,
             added_location=added_location,
