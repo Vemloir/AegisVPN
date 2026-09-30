@@ -17,6 +17,7 @@ from .certificate_sync import certificate_sync_loop
 from .config import settings
 from .connlimit import conn_limit_loop, set_override
 from .control_loop import control_readiness, start_control_task
+from .lbprobe import start_lb_probe
 from .models import ClientAddRequest, ClientRemoveRequest, ConnLimitRequest, Hy2AuthRequest
 from .reconcile import retry_pending_revocations
 from .security import verify_token
@@ -47,6 +48,7 @@ async def _start_background_tasks() -> None:
     # Always run the loop: even with the node default disabled (conn_limit=0),
     # per-user overrides pushed by the bot must still be enforced.
     asyncio.create_task(conn_limit_loop())
+    await start_lb_probe()
     print(f"conn-limit enforcement on: default {settings.conn_limit} IPs/user, every {settings.conn_limit_interval}s")
     # Populate the Hysteria2 user set from the on-disk xray config so auth works
     # immediately. No-op (empty set) on nodes without any vless clients.

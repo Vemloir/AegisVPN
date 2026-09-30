@@ -388,8 +388,30 @@ def ensure_private_blocked(cfg: dict) -> None:
     rules.insert(api_idx + 2, {"type": "field", "domain": ["geosite:private"], "outboundTag": "block"})
 
 
+def ensure_lb_probe(cfg: dict) -> None:
+    """Route the auto-select health check to the agent's load probe.
+
+    Clients health-check every node with GET http://<LB_PROBE_HOST>/p/<id>
+    through the tunnel. That host is never resolved: this rule, placed ahead
+    of the private-network block, hands it to a freedom outbound redirected to
+    the probe on loopback, and to nothing else on loopback.
+    """
+    port = int(os.environ.get("LB_PROBE_PORT", "10086") or "0")
+    host = os.environ.get("LB_PROBE_HOST", "lb.aegisvpn.org").strip()
+    outbounds = cfg.setdefault("outbounds", [])
+    outbounds[:] = [o for o in outbounds if o.get("tag") != "lb-probe"]
+    rules = cfg.setdefault("routing", {}).setdefault("rules", [])
+    rules[:] = [r for r in rules if r.get("outboundTag") != "lb-probe"]
+    if port <= 0 or not host:
+        return
+    outbounds.append({"tag": "lb-probe", "protocol": "freedom", "settings": {"redirect": f"127.0.0.1:{port}"}})
+    api_idx = next((i for i, r in enumerate(rules) if r.get("inboundTag") == ["api"]), -1)
+    rules.insert(api_idx + 1, {"type": "field", "domain": [f"full:{host}"], "port": "80", "outboundTag": "lb-probe"})
+
+
 ensure_warp(config)
 ensure_private_blocked(config)
+ensure_lb_probe(config)
 
 config_directory = os.path.dirname(config_path) or "."
 descriptor, temporary_path = tempfile.mkstemp(prefix=".config-", dir=config_directory)
