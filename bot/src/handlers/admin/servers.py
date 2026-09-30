@@ -173,7 +173,7 @@ async def cq_admin_server_allow_start(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
-@router.message(AdminStates.waiting_server_allow_user)
+@router.message(AdminStates.waiting_server_allow_user, ~F.text.startswith("/"))
 async def msg_admin_server_allow_user(message: Message, state: FSMContext):
     if not message.from_user or not is_admin(message.from_user.id):
         return
@@ -231,7 +231,7 @@ async def cq_admin_server_revoke_start(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
-@router.message(AdminStates.waiting_server_revoke_user)
+@router.message(AdminStates.waiting_server_revoke_user, ~F.text.startswith("/"))
 async def msg_admin_server_revoke_user(message: Message, state: FSMContext):
     if not message.from_user or not is_admin(message.from_user.id):
         return
