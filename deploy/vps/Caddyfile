@@ -52,6 +52,11 @@ site.example.com {
     @page not path /assets/* /api/*
     header @page Cache-Control "no-cache"
 
+    # Node control lives in the same app but is served only on the mTLS
+    # control host; here the client certificate is never checked.
+    handle /api/node/* {
+        respond 404
+    }
     handle /api/* {
         reverse_proxy 127.0.0.1:8000
     }
