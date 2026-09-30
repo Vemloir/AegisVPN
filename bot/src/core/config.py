@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     site_description: str = "Simple VPN landing page and subscription endpoint"
     subscription_title: str = "AegisVPN"
     subscription_update_interval_hours: int = 1
+    # "Автовыбор" health checks go to a per-node load probe (lb_probe_host is
+    # answered by each node's own Xray, never resolved in DNS) instead of a
+    # public URL. Enable only once every node in the fleet serves the probe:
+    # a node without it fails the check and drops out of auto-select.
+    autoselect_load_probe: bool = False
+    lb_probe_host: str = "lb.aegisvpn.org"
 
     bootstrap_plans_json: str = ""
     # Server bootstrapping reads a co-located Agent's persistent env and writes a
