@@ -156,8 +156,26 @@ def test_hy2_auth_endpoint_returns_authenticate_shape():
 
     hysteria.refresh_from_config(SAMPLE_CONFIG)
     import asyncio
+    from types import SimpleNamespace
 
-    ok = asyncio.run(main.hy2_auth(Hy2AuthRequest(auth="uuid-aaa", addr="1.2.3.4:5", tx=99)))
+    loopback = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    ok = asyncio.run(main.hy2_auth(Hy2AuthRequest(auth="uuid-aaa", addr="1.2.3.4:5", tx=99), loopback))
     assert ok == {"ok": True, "id": "user_1_sub_1"}
-    bad = asyncio.run(main.hy2_auth(Hy2AuthRequest(auth="unknown")))
+    bad = asyncio.run(main.hy2_auth(Hy2AuthRequest(auth="unknown"), loopback))
     assert bad == {"ok": False}
+
+
+def test_hy2_auth_refuses_non_loopback_callers():
+    import asyncio
+    from types import SimpleNamespace
+
+    import pytest
+    from fastapi import HTTPException
+
+    from app.models import Hy2AuthRequest
+
+    hysteria.refresh_from_config(SAMPLE_CONFIG)
+    remote = SimpleNamespace(client=SimpleNamespace(host="193.111.117.197"))
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(main.hy2_auth(Hy2AuthRequest(auth="uuid-aaa"), remote))
+    assert exc.value.status_code == 403

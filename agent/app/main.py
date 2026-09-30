@@ -9,7 +9,7 @@ import time
 from contextlib import suppress
 from urllib.parse import quote, urlencode
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
 from . import hysteria
@@ -137,13 +137,16 @@ async def online_emails():
 
 
 @app.post("/hy2/auth")
-async def hy2_auth(req: Hy2AuthRequest):
+async def hy2_auth(req: Hy2AuthRequest, request: Request):
     """Hysteria2 connect-time auth callback (loopback only, no verify_token).
 
     Hy2 POSTs {addr, auth, tx} on every new connection; `auth` is the client's
     xray UUID. We answer {"ok": bool, "id": <email>} so Hy2 keys traffic on the
-    same email as xray.
+    same email as xray. On an observe-mode node the API also listens publicly,
+    so enforce the loopback-only contract here rather than trust the firewall.
     """
+    if request.client is None or request.client.host not in ("127.0.0.1", "::1"):
+        raise HTTPException(status_code=403, detail="loopback only")
     return hysteria.authenticate(req.auth)
 
 
