@@ -32,8 +32,13 @@ def get_transport_type(inbound: dict) -> str:
     return "xhttp" if network == "xhttp" else "tcp"
 
 
+CDN_INBOUND_TAG = "vless-in-cdn"
+
+
 def find_vless_inbound(config: dict, preferred_network: str | None = None) -> dict:
-    inbounds = list_vless_inbounds(config)
+    # The CDN origin inbound is plain TLS reached only through a CDN; a direct
+    # REALITY link must never be built from it, even though it is xhttp too.
+    inbounds = [inbound for inbound in list_vless_inbounds(config) if inbound.get("tag") != CDN_INBOUND_TAG]
     if preferred_network:
         preferred_network = preferred_network.lower()
         for inbound in inbounds:

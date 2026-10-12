@@ -263,6 +263,63 @@ if grpc_port:
     if grpc_port_int > 0:
         new_inbounds.append(build_inbound(grpc_port_int, "grpc", "vless-in-grpc"))
 
+
+def build_cdn_inbound(port: int) -> dict | None:
+    """VLESS + XHTTP behind plain TLS: the origin a CDN resource proxies to.
+
+    A CDN terminates the client's TLS at its edge and opens its own HTTPS
+    connection to us, so REALITY cannot work here: this inbound needs an
+    ordinary certificate for the origin hostname. Until the control plane has
+    delivered the real one, a self-signed placeholder keeps Xray bootable.
+    Returns None (no inbound) if even the placeholder cannot be installed.
+    """
+    cert_path = os.environ.get("CDN_CERTIFICATE_PATH", "/data/cdn-cert/current/cert.pem")
+    key_path = os.environ.get("CDN_PRIVATE_KEY_PATH", "/data/cdn-cert/current/key.pem")
+    try:
+        from app.certificate_sync import install_placeholder_certificate
+
+        if install_placeholder_certificate(cert_path, key_path):
+            print("CDN inbound: placeholder certificate installed until the real one syncs")
+    except Exception as exc:  # noqa: BLE001 - boot must not die over an optional inbound
+        print(f"CDN inbound disabled: no certificate ({type(exc).__name__}: {exc})")
+        return None
+
+    path = (os.environ.get("XRAY_CDN_PATH") or "/").strip() or "/"
+    stream = {
+        "network": "xhttp",
+        "security": "tls",
+        "tlsSettings": {
+            "alpn": ["h2", "http/1.1"],
+            "certificates": [{"certificateFile": cert_path, "keyFile": key_path}],
+        },
+        # "auto" accepts every client mode; through a CDN clients use packet-up.
+        "xhttpSettings": {"path": path, "mode": "auto"},
+    }
+    if keepalive_idle > 0:
+        stream["sockopt"] = {
+            "tcpKeepAliveIdle": keepalive_idle,
+            "tcpKeepAliveInterval": keepalive_interval,
+        }
+    return {
+        "tag": "vless-in-cdn",
+        "port": int(port),
+        "protocol": "vless",
+        "settings": {
+            # Same clients as every other inbound, flow-less like any xhttp one.
+            "clients": [{k: v for k, v in client.items() if k != "flow"} for client in client_map.values()],
+            "decryption": "none",
+        },
+        "sniffing": {"enabled": True, "destOverride": ["http", "tls"]},
+        "streamSettings": stream,
+    }
+
+
+cdn_port = (os.environ.get("XRAY_CDN_PORT") or "").strip()
+if cdn_port and int(cdn_port) > 0:
+    cdn_inbound = build_cdn_inbound(int(cdn_port))
+    if cdn_inbound is not None:
+        new_inbounds.append(cdn_inbound)
+
 config["inbounds"] = new_inbounds + other_inbounds
 
 # Enforce connIdle on every boot: the policy block is otherwise preserved as-is

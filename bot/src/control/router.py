@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select, update
 
 from src.control.auth import authenticate_node
-from src.control.certificates import load_hy2_certificate_bundle
+from src.control.certificates import load_cdn_certificate_bundle, load_hy2_certificate_bundle
 from src.control.schemas import (
     NodeAckRequest,
     NodeControlResult,
@@ -187,6 +187,38 @@ async def get_snapshot_page(
         page_digest=page.page_digest,
         items=page.items,
     )
+
+
+@router.get("/cdn-certificate")
+async def get_cdn_certificate(
+    response: Response,
+    node: Server = Depends(authenticate_node),
+) -> dict:
+    """The certificate for this node's CDN origin hostname.
+
+    Looked up in ``node-<id>/`` first, then in the shared root, so one wildcard
+    for the origin domain can serve every node while a node can still be given
+    its own pair.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    no_store = {"Cache-Control": "no-store"}
+    hostname = (node.cdn_origin_host or "").strip().lower()
+    if not node.cdn_port or not hostname:
+        raise HTTPException(status_code=404, detail="CDN origin is disabled", headers=no_store)
+    certificate_root = Path(settings.node_cdn_certificate_dir)
+    node_root = certificate_root / f"node-{node.id}"
+    bundle_root = node_root if node_root.is_dir() else certificate_root
+    try:
+        bundle = load_cdn_certificate_bundle(bundle_root, hostname)
+    except (OSError, ValueError, UnicodeDecodeError):
+        raise HTTPException(status_code=503, detail="CDN certificate is unavailable", headers=no_store) from None
+    return {
+        "certificate": bundle.certificate,
+        "private_key": bundle.private_key,
+        "hostname": bundle.hostname,
+        "fingerprint": bundle.fingerprint,
+        "not_after": bundle.not_after.isoformat(),
+    }
 
 
 @router.post("/ack", response_model=NodeControlResult)

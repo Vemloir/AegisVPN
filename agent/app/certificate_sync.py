@@ -6,7 +6,7 @@ import os
 import random
 import secrets
 import tempfile
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -141,6 +141,52 @@ def _certificate_poll_delay(seconds: int, *, random_value: float | None = None) 
     return max(1.0, seconds * (9.0 + 2.0 * value) / 10.0)
 
 
+def install_placeholder_certificate(
+    certificate_path: str | Path,
+    private_key_path: str | Path,
+    hostname: str = "localhost",
+) -> bool:
+    """Install a self-signed pair when no certificate is live yet.
+
+    Xray refuses to start a TLS inbound whose certificate file is missing, and
+    the real certificate only arrives once the control loop is up. A short-lived
+    placeholder keeps the inbound (and the whole process) bootable until the
+    synchronizer swaps the real pair in. Returns True if one was installed.
+    """
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    certificate_path = Path(certificate_path)
+    private_key_path = Path(private_key_path)
+    if certificate_path.exists() and private_key_path.exists():
+        return False
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, hostname)])
+    now = datetime.now(UTC)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5))
+        .not_valid_after(now + timedelta(days=30))
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName(hostname)]), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+    _install_pair(
+        certificate_path,
+        private_key_path,
+        certificate.public_bytes(serialization.Encoding.PEM),
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        ),
+    )
+    return True
+
+
 class CertificateSynchronizer:
     def __init__(
         self,
@@ -150,15 +196,19 @@ class CertificateSynchronizer:
         private_key_path: str | Path,
         restart_notifier: Callable[[], object] = _default_restart_notifier,
         minimum_validity: timedelta = timedelta(days=7),
+        fetch: Callable[[], Awaitable[dict[str, str] | None]] | None = None,
     ):
         self.client = client
         self.certificate_path = Path(certificate_path)
         self.private_key_path = Path(private_key_path)
         self.restart_notifier = restart_notifier
         self.minimum_validity = minimum_validity
+        # Which bundle this synchronizer tracks: the Hy2 one by default, the
+        # CDN origin one when the caller passes the client's CDN fetcher.
+        self.fetch = fetch or client.get_hy2_certificate
 
     async def check_once(self) -> CertificateSyncResult:
-        bundle = await self.client.get_hy2_certificate()
+        bundle = await self.fetch()
         if bundle is None:
             return CertificateSyncResult("disabled")
         certificate_pem = bundle["certificate"].encode()
@@ -220,5 +270,45 @@ async def certificate_sync_loop(
             except Exception as exc:
                 print(f"Hy2 certificate sync error: {type(exc).__name__}")
             await sleep(_certificate_poll_delay(settings.hy2_certificate_check_seconds))
+    finally:
+        await client.close()
+
+
+def _reload_xray_for_certificate() -> None:
+    # Xray reads certificate files when the TLS inbound starts; a respawn is
+    # what makes the new pair live. Rare (a renewal every couple of months),
+    # so the dropped sessions are an acceptable price.
+    from .xray import reload_xray
+
+    reload_xray()
+
+
+async def cdn_certificate_sync_loop(
+    stop_event: asyncio.Event | None = None,
+    *,
+    sleep=asyncio.sleep,
+) -> None:
+    if not settings.xray_cdn_port or settings.control_mode == "off":
+        return
+    stop = stop_event or asyncio.Event()
+    client = ControlClient.from_settings()
+    synchronizer = CertificateSynchronizer(
+        client,
+        certificate_path=settings.cdn_certificate_path,
+        private_key_path=settings.cdn_private_key_path,
+        restart_notifier=_reload_xray_for_certificate,
+        fetch=client.get_cdn_certificate,
+    )
+    try:
+        while not stop.is_set():
+            try:
+                result = await synchronizer.check_once()
+                if result.status == "updated":
+                    print("CDN origin certificate updated; xray reload requested")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(f"CDN certificate sync error: {type(exc).__name__}")
+            await sleep(_certificate_poll_delay(settings.cdn_certificate_check_seconds))
     finally:
         await client.close()

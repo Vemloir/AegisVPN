@@ -18,8 +18,8 @@ from sqlalchemy.orm import joinedload
 from src.core.config import settings
 from src.core.database import async_session_maker
 from src.core.logger import logger
-from src.models import Device, NodeTelemetry, Payment, Server, Subscription, SubscriptionServer, User
-from src.services import AgentClient, NodeControlService, confirm_platega_payment, t
+from src.models import CdnEndpoint, Device, NodeTelemetry, Payment, Server, Subscription, SubscriptionServer, User
+from src.services import AgentClient, NodeControlService, cdn_service, confirm_platega_payment, t
 from src.services.backup_archive import BackupConfigurationError, encrypt_backup
 from src.services.platega_client import PlategaError, get_transaction_status
 
@@ -803,4 +803,58 @@ async def check_servers_health(bot: Bot):
                 f"{server.host}:{server.port}\n"
                 f"Причина: {reason}\n"
                 f"Неудачных проверок подряд: {fails}{clients_line}",
+            )
+
+
+async def check_cdn_endpoints(bot: Bot):
+    """Probe every enabled CDN resource end to end and record the result.
+
+    A broken resource stops being advertised as a fallback (see
+    cdn_service.endpoints_by_server) and the admins hear about it once, on the
+    transition, and again when it recovers.
+    """
+    logger.info("Running task: check_cdn_endpoints")
+    async with async_session_maker() as session:
+        rows = (
+            await session.execute(
+                select(CdnEndpoint, Server)
+                .join(Server, Server.id == CdnEndpoint.server_id)
+                .where(CdnEndpoint.enabled == True, Server.is_active == True)  # noqa: E712
+            )
+        ).all()
+    targets = [(endpoint, server) for endpoint, server in rows if cdn_service.serves_cdn(server)]
+    if not targets:
+        return
+
+    semaphore = asyncio.Semaphore(8)
+
+    async def probe(endpoint: CdnEndpoint, server: Server) -> tuple[CdnEndpoint, Server, bool, str]:
+        async with semaphore:
+            ok, detail = await cdn_service.probe_endpoint(server, endpoint)
+            if not ok:
+                await asyncio.sleep(3)
+                ok, detail = await cdn_service.probe_endpoint(server, endpoint)
+            return endpoint, server, ok, detail
+
+    results = await asyncio.gather(*(probe(endpoint, server) for endpoint, server in targets))
+    now = datetime.now(UTC).replace(tzinfo=None)
+    async with async_session_maker() as session:
+        for endpoint, _server, ok, detail in results:
+            await session.execute(
+                update(CdnEndpoint)
+                .where(CdnEndpoint.id == endpoint.id)
+                .values(last_check_ok=ok, last_check_at=now, last_check_detail=detail[:255])
+            )
+        await session.commit()
+
+    for endpoint, server, ok, detail in results:
+        if ok == endpoint.last_check_ok or (ok and endpoint.last_check_ok is None):
+            continue
+        name = f"{server.name} via {endpoint.provider} ({endpoint.host})"
+        if ok:
+            await _alert_admins(bot, f"CDN-путь снова работает: {name}")
+        else:
+            await _alert_admins(
+                bot,
+                f"CDN-путь НЕ работает: {name}\nПричина: {detail}\nОн убран из подписок, пока не восстановится.",
             )

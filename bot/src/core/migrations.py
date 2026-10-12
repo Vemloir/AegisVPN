@@ -127,6 +127,10 @@ MIGRATIONS: dict[str, list[Column]] = {
         Column("control_last_error", "VARCHAR(512)", "VARCHAR(512)"),
         Column("control_agent_version", "VARCHAR(64)", "VARCHAR(64)"),
         Column("control_capabilities", "JSON", "JSONB"),
+        # CDN origin inbound (see Server.cdn_port); NULL = no CDN path.
+        Column("cdn_port", "INTEGER", "INTEGER"),
+        Column("cdn_path", "VARCHAR(255)", "VARCHAR(255)"),
+        Column("cdn_origin_host", "VARCHAR(255)", "VARCHAR(255)"),
         Column(
             "subscription_group",
             "VARCHAR(16) DEFAULT 'safe'",

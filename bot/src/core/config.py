@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     # Root-owned Caddy certificate export. The API can only read it and only
     # returns it to a fully authenticated, Hy2-enabled node.
     node_hy2_certificate_dir: str = "/control/hy2-cert"
+    # Same export, for each node's CDN origin hostname: node-<id>/{cert.pem,
+    # key.pem,hostname}. A wildcard for the origin domain may be shared.
+    node_cdn_certificate_dir: str = "/control/cdn-cert"
+    # Reachability check of every CDN resource (origin answering through it).
+    cdn_check_interval_minutes: int = 10
 
     # Default simultaneous source/session limit per user, mirroring the node default
     # (agent CONN_LIMIT). Shown in the admin card when a user has no override.
