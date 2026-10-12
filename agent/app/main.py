@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
 from . import hysteria
-from .certificate_sync import certificate_sync_loop
+from .certificate_sync import cdn_certificate_sync_loop, certificate_sync_loop
 from .config import settings
 from .connlimit import conn_limit_loop, set_override
 from .control_loop import control_readiness, start_control_task
@@ -40,11 +40,12 @@ from .xray import (
 app = FastAPI(title="Aegis VPN Agent")
 _control_task: asyncio.Task | None = None
 _certificate_task: asyncio.Task | None = None
+_cdn_certificate_task: asyncio.Task | None = None
 
 
 @app.on_event("startup")
 async def _start_background_tasks() -> None:
-    global _certificate_task, _control_task
+    global _certificate_task, _cdn_certificate_task, _control_task
     # Always run the loop: even with the node default disabled (conn_limit=0),
     # per-user overrides pushed by the bot must still be enforced.
     asyncio.create_task(conn_limit_loop())
@@ -60,12 +61,17 @@ async def _start_background_tasks() -> None:
             certificate_sync_loop(),
             name="hy2-certificate-sync",
         )
+    if settings.xray_cdn_port and settings.control_mode != "off":
+        _cdn_certificate_task = asyncio.create_task(
+            cdn_certificate_sync_loop(),
+            name="cdn-certificate-sync",
+        )
 
 
 @app.on_event("shutdown")
 async def _stop_background_tasks() -> None:
-    global _certificate_task, _control_task
-    for task in (_control_task, _certificate_task):
+    global _certificate_task, _cdn_certificate_task, _control_task
+    for task in (_control_task, _certificate_task, _cdn_certificate_task):
         if task is None:
             continue
         task.cancel()
@@ -73,6 +79,7 @@ async def _stop_background_tasks() -> None:
             await task
     _control_task = None
     _certificate_task = None
+    _cdn_certificate_task = None
 
 
 @app.get("/health")

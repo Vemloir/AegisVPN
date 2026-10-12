@@ -72,6 +72,14 @@ class Server(Base):
     # offers no transport choice.
     tcp_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # CDN origin inbound (agent XRAY_CDN_PORT / XRAY_CDN_PATH): VLESS + XHTTP
+    # behind a real certificate for ``cdn_origin_host``, which the CDN
+    # resources in ``cdn_endpoints`` proxy to. All three are operator-set and
+    # must match the node's agent.env; NULL port = the node has no CDN path.
+    cdn_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cdn_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    cdn_origin_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     # Lifetime traffic through this location, accumulated by the poll_traffic task
     # alongside the per-subscription counters. It lives on the Server row (not only
     # on SubscriptionServer links) precisely so a location's history survives the

@@ -6,6 +6,7 @@ block rule, rebuilt every cycle so IPs that drop below the limit are released.
 """
 
 import asyncio
+import ipaddress
 import json
 import os
 import tempfile
@@ -154,6 +155,70 @@ async def online_ips(email: str) -> dict[str, int]:
         raise StatsQueryError("online IP query returned invalid timestamps") from None
 
 
+def _decode_proc_address(value: str) -> str | None:
+    """Decode the hex `ADDR:PORT` address column of /proc/net/tcp{,6}."""
+    address_hex = value.split(":", 1)[0]
+    try:
+        raw = bytes.fromhex(address_hex)
+    except ValueError:
+        return None
+    # The kernel prints each 32-bit word in host (little-endian) byte order.
+    words = b"".join(raw[i : i + 4][::-1] for i in range(0, len(raw), 4))
+    try:
+        address = ipaddress.ip_address(words)
+    except ValueError:
+        return None
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return str(address)
+
+
+def cdn_peer_ips(port: int | None = None, proc_root: str = "/proc/net") -> set[str]:
+    """Source addresses of live connections to the CDN origin inbound.
+
+    Everything that reaches that port is a CDN edge proxying many users at
+    once. Xray reports the edge as the user's source IP, so left alone the
+    limiter would count one edge against every user behind it and, worse, its
+    source-IP block rule would cut the edge off for all of them. Reading the
+    socket table keeps this a local, dependency-free fact.
+    """
+    port = settings.xray_cdn_port if port is None else port
+    if not port:
+        return set()
+    peers: set[str] = set()
+    for name in ("tcp", "tcp6"):
+        try:
+            with open(os.path.join(proc_root, name)) as fh:
+                lines = fh.readlines()[1:]
+        except OSError:
+            continue
+        for line in lines:
+            fields = line.split()
+            # sl local_address rem_address st ...; st 01 = ESTABLISHED
+            if len(fields) < 4 or fields[3] != "01":
+                continue
+            try:
+                local_port = int(fields[1].rsplit(":", 1)[1], 16)
+            except (IndexError, ValueError):
+                continue
+            if local_port != port:
+                continue
+            peer = _decode_proc_address(fields[2])
+            if peer:
+                peers.add(peer)
+    return peers
+
+
+def _normalize_ip(value: str) -> str:
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return value
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return str(address)
+
+
 async def enforce_conn_limit_once() -> int:
     """Block source IPs that exceed the per-subscription limit, across BOTH
     xray (VLESS) and Hysteria2.
@@ -192,7 +257,11 @@ async def enforce_conn_limit_once() -> int:
             ip_results = await asyncio.gather(*(query_ips(email) for email in limited_emails))
     except TimeoutError:
         raise StatsQueryError("online IP queries exceeded the cycle deadline") from None
-    ips_by_email = dict(ip_results)
+    # CDN edges are shared by everyone behind them: never count or block them.
+    edges = cdn_peer_ips()
+    ips_by_email = {
+        email: {ip: seen for ip, seen in ips.items() if _normalize_ip(ip) not in edges} for email, ips in ip_results
+    }
 
     excess: list[str] = []
     hy2_kick: list[str] = []

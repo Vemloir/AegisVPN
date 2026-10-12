@@ -63,6 +63,17 @@ class Settings(BaseSettings):
     hy2_certificate_reload_marker: str = "/data/hysteria/.reload"
     hy2_certificate_check_seconds: int = 21_600
 
+    # CDN origin inbound: VLESS + XHTTP behind ordinary TLS, reached through a
+    # CDN whose edge addresses survive mobile allowlists. A CDN cannot complete
+    # a REALITY handshake, so this inbound carries a real certificate for the
+    # node's origin hostname, pulled from the control plane like the Hy2 one.
+    # Unset port = no CDN inbound and every CDN path below is a no-op.
+    xray_cdn_port: int | None = None
+    xray_cdn_path: str = "/"
+    cdn_certificate_path: str = "/data/cdn-cert/current/cert.pem"
+    cdn_private_key_path: str = "/data/cdn-cert/current/key.pem"
+    cdn_certificate_check_seconds: int = 21_600
+
     # Outbound desired-state control plane. "off" preserves the legacy public
     # push API; "observe" verifies snapshots without mutation; "apply" makes
     # the downloaded complete state authoritative.
@@ -82,6 +93,7 @@ class Settings(BaseSettings):
     @field_validator(
         "xray_tcp_port",
         "xray_grpc_port",
+        "xray_cdn_port",
         "fast_host_ip",
         "short_id_tcp",
         "public_key_tcp",

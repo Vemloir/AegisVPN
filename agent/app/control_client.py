@@ -124,7 +124,9 @@ class ControlClient:
             max_snapshot_bytes=settings.control_max_snapshot_bytes,
             max_pages=settings.control_max_pages,
             max_items=settings.control_max_items,
-            capabilities=["cascade-v2"],
+            # "cdn-v1" tells the bot this node really serves the CDN origin
+            # inbound, so it never advertises a CDN path to a node without one.
+            capabilities=["cascade-v2", *(["cdn-v1"] if settings.xray_cdn_port else [])],
         )
 
     async def close(self) -> None:
@@ -342,9 +344,15 @@ class ControlClient:
             raise ControlRequestError(f"control telemetry rejected with status {response.status}")
 
     async def get_hy2_certificate(self) -> dict[str, str] | None:
+        return await self._get_certificate("/api/node/v1/hy2-certificate")
+
+    async def get_cdn_certificate(self) -> dict[str, str] | None:
+        return await self._get_certificate("/api/node/v1/cdn-certificate")
+
+    async def _get_certificate(self, path: str) -> dict[str, str] | None:
         response = await self._request_with_failover(
             "GET",
-            "/api/node/v1/hy2-certificate",
+            path,
             json_body=None,
             max_bytes=512 * 1024,
         )

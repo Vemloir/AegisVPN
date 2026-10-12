@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import settings
 from src.core.logger import logger
 from src.models import Device, Server, ServerTransportPref, Subscription, SubscriptionServer
-from src.services import geoip
+from src.services import cdn_service, geoip
 from src.services.agent_client import AgentClient
 from src.services.cascade_service import advertisable_routes
 from src.services.node_control_service import NodeControlService
@@ -764,7 +764,23 @@ class SubscriptionService:
         device_uuid: str | None = None,
     ) -> str:
         pairs = await SubscriptionService._collect_links(session, sub_token, profile, device_uuid)
-        body = "\n".join(link for _, link in pairs)
+        links = [link for _, link in pairs]
+        # A link list cannot express a fallback, so each CDN path becomes its
+        # own entry right after its location, for the user to pick by hand.
+        endpoints = await cdn_service.endpoints_by_server(session, [server for server, _ in pairs])
+        if endpoints:
+            links = []
+            for server, link in pairs:
+                links.append(link)
+                parts = urlsplit(link)
+                client_id = parts.username or ""
+                label = unquote(parts.fragment) if parts.fragment else SubscriptionService.server_display_name(server)
+                links.extend(
+                    cdn_service.build_link(server, endpoint, client_id, f"{label} · CDN")
+                    for endpoint in endpoints.get(server.id, [])
+                    if client_id
+                )
+        body = "\n".join(links)
         return base64.b64encode(body.encode("utf-8")).decode("utf-8") if body else ""
 
     @staticmethod
@@ -809,6 +825,26 @@ class SubscriptionService:
             configs.append((server, cfg))
         autoselect = SubscriptionService._build_autoselect_config(configs)
         plain_configs = [cfg for _server, cfg in configs]
+        # Every location keeps its direct outbound as the primary and gains its
+        # CDN resources as a fallback tier; auto-select falls back to all of them.
+        endpoints = await cdn_service.endpoints_by_server(session, [server for server, _cfg in configs])
+        if endpoints:
+            every_cdn_outbound: list[dict] = []
+            for index, (server, cfg) in enumerate(configs):
+                client_id = cdn_service.client_id_of(cfg)
+                outbounds = [
+                    cdn_service.build_outbound(
+                        server,
+                        endpoint,
+                        client_id,
+                        f"{cdn_service.CDN_TAG_PREFIX}{len(every_cdn_outbound) + position}",
+                    )
+                    for position, endpoint in enumerate(endpoints.get(server.id, []), start=1)
+                ]
+                every_cdn_outbound.extend(outbounds)
+                plain_configs[index] = cdn_service.attach_fallback(cfg, outbounds)
+            if autoselect is not None:
+                autoselect = cdn_service.attach_fallback(autoselect, every_cdn_outbound)
         if autoselect is not None:
             # First, not last: it is the entry most users should take, and the
             # one that stops mattering the moment it is scrolled past.
