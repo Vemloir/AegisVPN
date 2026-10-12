@@ -227,6 +227,10 @@ def build_inbound(port: int, transport: str, tag: str) -> dict:
     reality["serverNames"] = server_names
     reality["privateKey"] = reality_private_key
     reality["shortIds"] = [reality_short_id]
+    # Xray >= 26.7 refuses REALITY clients older than v26.3.27 unless told
+    # otherwise. Subscribers run many cores (sing-box, mihomo, older Xray), so
+    # accept every client version as before; REALITY_MIN_CLIENT_VER opts in.
+    reality["minClientVer"] = (os.environ.get("REALITY_MIN_CLIENT_VER") or "").strip() or "0.0.0"
 
     if transport == "xhttp":
         stream["xhttpSettings"] = {
