@@ -67,8 +67,11 @@ async def _origin(server_id: int, host: str, port: int, path: str | None) -> Non
         print("Put these into the node's agent.env and restart agent + xray:")
         print(f"  XRAY_CDN_PORT={server.cdn_port}")
         print(f"  XRAY_CDN_PATH={server.cdn_path}")
-        print(f"DNS: {server.cdn_origin_host} A {server.host}")
-        print(f"CDN resource origin: https://{server.cdn_origin_host}:{server.cdn_port}")
+        print(f"  XRAY_CDN_HOST={server.cdn_origin_host}")
+        print(f"DNS: {server.cdn_origin_host} A {server.host} (DNS only, not proxied)")
+        # XRAY_CDN_HOST makes REALITY pass this SNI on to the (loopback-only) CDN
+        # inbound, so the CDN reaches the origin on 443 like any HTTPS site.
+        print(f"CDN resource origin: https://{server.cdn_origin_host} (port 443)")
 
 
 async def _add(args: argparse.Namespace) -> None:

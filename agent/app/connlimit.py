@@ -219,6 +219,16 @@ def _normalize_ip(value: str) -> str:
     return str(address)
 
 
+def _is_shared_source(ip: str, edges: set[str]) -> bool:
+    normalized = _normalize_ip(ip)
+    if normalized in edges:
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
 async def enforce_conn_limit_once() -> int:
     """Block source IPs that exceed the per-subscription limit, across BOTH
     xray (VLESS) and Hysteria2.
@@ -258,9 +268,11 @@ async def enforce_conn_limit_once() -> int:
     except TimeoutError:
         raise StatsQueryError("online IP queries exceeded the cycle deadline") from None
     # CDN edges are shared by everyone behind them: never count or block them.
+    # Behind the REALITY SNI split every CDN user arrives from loopback, and a
+    # block on loopback would cut the whole CDN path, so loopback never counts.
     edges = cdn_peer_ips()
     ips_by_email = {
-        email: {ip: seen for ip, seen in ips.items() if _normalize_ip(ip) not in edges} for email, ips in ip_results
+        email: {ip: seen for ip, seen in ips.items() if not _is_shared_source(ip, edges)} for email, ips in ip_results
     }
 
     excess: list[str] = []
