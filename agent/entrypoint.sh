@@ -489,10 +489,56 @@ def ensure_conn_limit_reachable(cfg: dict) -> None:
     outbounds[:] = direct + [o for o in outbounds if o.get("tag") != "direct"]
 
 
+def ensure_cdn_sni_split(cfg: dict) -> None:
+    """Share port 443 between REALITY and the CDN origin, split by SNI.
+
+    A CDN reaches its origin only on 80/443, and 443 belongs to REALITY. REALITY
+    already hands every handshake that is not its own to `dest`; point `dest` at
+    a loopback dokodemo-door instead, sniff the SNI there, and send the origin
+    hostname to the CDN inbound (now loopback-only) while everything else goes
+    on to the real REALITY_DEST site exactly as before, so active probes still
+    see that site. Without XRAY_CDN_HOST, or without a CDN inbound, any split
+    left by an earlier boot is removed and REALITY keeps its direct `dest`.
+    """
+    inbounds = cfg.setdefault("inbounds", [])
+    outbounds = cfg.setdefault("outbounds", [])
+    rules = cfg.setdefault("routing", {}).setdefault("rules", [])
+    inbounds[:] = [i for i in inbounds if i.get("tag") != "reality-split"]
+    outbounds[:] = [o for o in outbounds if o.get("tag") != "cdn-origin"]
+    rules[:] = [r for r in rules if r.get("inboundTag") != ["reality-split"]]
+
+    host = (os.environ.get("XRAY_CDN_HOST") or "").strip().lower()
+    cdn = next((i for i in inbounds if i.get("tag") == "vless-in-cdn"), None)
+    if not host or cdn is None:
+        return
+    split_port = _int_env("XRAY_CDN_SPLIT_PORT", 10443)
+    dest_host, _, dest_port = os.environ["REALITY_DEST"].rpartition(":")
+
+    cdn["listen"] = "127.0.0.1"
+    for inbound in inbounds:
+        reality = inbound.get("streamSettings", {}).get("realitySettings")
+        if reality is not None:
+            reality["dest"] = f"127.0.0.1:{split_port}"
+    inbounds.append({
+        "tag": "reality-split",
+        "listen": "127.0.0.1",
+        "port": split_port,
+        "protocol": "dokodemo-door",
+        "settings": {"address": dest_host, "port": int(dest_port or 443), "network": "tcp"},
+        # routeOnly: the SNI picks the route, the destination stays REALITY_DEST.
+        "sniffing": {"enabled": True, "destOverride": ["tls"], "routeOnly": True},
+    })
+    outbounds.append({"tag": "cdn-origin", "protocol": "freedom", "settings": {"redirect": f"127.0.0.1:{cdn['port']}"}})
+    api_idx = next((i for i, r in enumerate(rules) if r.get("inboundTag") == ["api"]), -1)
+    rules.insert(api_idx + 1, {"type": "field", "inboundTag": ["reality-split"], "domain": [f"full:{host}"], "outboundTag": "cdn-origin"})
+    rules.insert(api_idx + 2, {"type": "field", "inboundTag": ["reality-split"], "outboundTag": "direct"})
+
+
 ensure_warp(config)
 ensure_private_blocked(config)
 ensure_lb_probe(config)
 ensure_conn_limit_reachable(config)
+ensure_cdn_sni_split(config)
 
 config_directory = os.path.dirname(config_path) or "."
 descriptor, temporary_path = tempfile.mkstemp(prefix=".config-", dir=config_directory)

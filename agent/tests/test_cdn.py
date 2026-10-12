@@ -179,3 +179,129 @@ async def test_cdn_edges_are_neither_counted_nor_blocked(monkeypatch):
     monkeypatch.setattr(connlimit, "cdn_peer_ips", lambda: {"91.240.169.224", "91.238.111.224"})
     assert await connlimit.enforce_conn_limit_once() == 0
     assert not any(blocked)
+
+
+async def test_loopback_sources_are_neither_counted_nor_blocked(monkeypatch):
+    from tests.test_connlimit import _patch_enforce
+
+    blocked, _ = _patch_enforce(
+        monkeypatch,
+        xray_users=["user_1_sub_1"],
+        # Behind the REALITY SNI split every CDN user shows up from loopback.
+        xray_ips={"user_1_sub_1": {"10.0.0.1": 100, "10.0.0.2": 200, "127.0.0.1": 300, "::1": 400}},
+        hy2_counts={},
+        limit=2,
+    )
+    monkeypatch.setattr(connlimit, "cdn_peer_ips", lambda: set())
+    assert await connlimit.enforce_conn_limit_once() == 0
+    assert not any(blocked)
+
+
+# --- entrypoint: REALITY and the CDN origin sharing 443 by SNI -----------------
+
+
+def _ensure_cdn_sni_split(monkeypatch, host="n22.example.dev"):
+    src = (AGENT / "entrypoint.sh").read_text()
+    fn = re.search(r"(def ensure_cdn_sni_split\(cfg: dict\) -> None:.*?)\n\n\n", src, re.S)
+    assert fn, "ensure_cdn_sni_split not found in entrypoint.sh"
+    if host is None:
+        monkeypatch.delenv("XRAY_CDN_HOST", raising=False)
+    else:
+        monkeypatch.setenv("XRAY_CDN_HOST", host)
+    monkeypatch.setenv("REALITY_DEST", "www.example.org:443")
+    monkeypatch.delenv("XRAY_CDN_SPLIT_PORT", raising=False)
+
+    def _int_env(name, default):
+        try:
+            return int((os.environ.get(name) or "").strip())
+        except ValueError:
+            return default
+
+    scope: dict = {"os": os, "_int_env": _int_env}
+    exec(fn.group(1), scope)
+    return scope["ensure_cdn_sni_split"]
+
+
+def _split_config() -> dict:
+    reality = {"dest": "www.example.org:443", "serverNames": ["www.example.org"]}
+    return {
+        "inbounds": [
+            {"tag": "vless-in", "port": 443, "streamSettings": {"security": "reality", "realitySettings": dict(reality)}},
+            {"tag": "vless-in-tcp", "port": 9445, "streamSettings": {"security": "reality", "realitySettings": dict(reality)}},
+            {"tag": "vless-in-cdn", "port": 8443, "streamSettings": {"security": "tls"}},
+            {"tag": "api", "listen": "127.0.0.1", "port": 10085, "protocol": "dokodemo-door"},
+        ],
+        "outbounds": [{"tag": "direct", "protocol": "freedom"}, {"tag": "block", "protocol": "blackhole"}],
+        "routing": {
+            "rules": [
+                {"type": "field", "inboundTag": ["api"], "outboundTag": "api"},
+                {"type": "field", "ip": ["geoip:private"], "outboundTag": "block"},
+            ]
+        },
+    }
+
+
+def test_sni_split_hands_the_origin_host_to_the_loopback_cdn_inbound(monkeypatch):
+    cfg = _split_config()
+    _ensure_cdn_sni_split(monkeypatch)(cfg)
+    inbounds = {i["tag"]: i for i in cfg["inbounds"]}
+
+    # Every REALITY inbound now falls back to the local splitter, not the site.
+    assert inbounds["vless-in"]["streamSettings"]["realitySettings"]["dest"] == "127.0.0.1:10443"
+    assert inbounds["vless-in-tcp"]["streamSettings"]["realitySettings"]["dest"] == "127.0.0.1:10443"
+    # The CDN inbound is no longer reachable from outside.
+    assert inbounds["vless-in-cdn"]["listen"] == "127.0.0.1"
+
+    split = inbounds["reality-split"]
+    assert split["listen"] == "127.0.0.1" and split["port"] == 10443
+    assert split["settings"] == {"address": "www.example.org", "port": 443, "network": "tcp"}
+    assert split["sniffing"] == {"enabled": True, "destOverride": ["tls"], "routeOnly": True}
+
+    origin = next(o for o in cfg["outbounds"] if o["tag"] == "cdn-origin")
+    assert origin["settings"] == {"redirect": "127.0.0.1:8443"}
+
+    rules = cfg["routing"]["rules"]
+    assert rules[0]["inboundTag"] == ["api"]
+    # Split rules come before the private-network block: REALITY_DEST is public
+    # but the redirect target is loopback.
+    assert rules[1] == {
+        "type": "field",
+        "inboundTag": ["reality-split"],
+        "domain": ["full:n22.example.dev"],
+        "outboundTag": "cdn-origin",
+    }
+    assert rules[2] == {"type": "field", "inboundTag": ["reality-split"], "outboundTag": "direct"}
+    assert rules[3]["ip"] == ["geoip:private"]
+
+
+def test_sni_split_is_idempotent(monkeypatch):
+    cfg = _split_config()
+    ensure = _ensure_cdn_sni_split(monkeypatch)
+    ensure(cfg)
+    ensure(cfg)
+    assert [i["tag"] for i in cfg["inbounds"]].count("reality-split") == 1
+    assert [o["tag"] for o in cfg["outbounds"]].count("cdn-origin") == 1
+    assert sum(r.get("inboundTag") == ["reality-split"] for r in cfg["routing"]["rules"]) == 2
+
+
+def test_sni_split_is_removed_without_an_origin_host(monkeypatch):
+    cfg = _split_config()
+    _ensure_cdn_sni_split(monkeypatch)(cfg)
+    # Next boot: inbounds are rebuilt fresh, the host is gone.
+    cfg["inbounds"] = _split_config()["inbounds"] + [i for i in cfg["inbounds"] if i["tag"] == "reality-split"]
+    _ensure_cdn_sni_split(monkeypatch, host=None)(cfg)
+
+    assert "reality-split" not in [i["tag"] for i in cfg["inbounds"]]
+    assert "cdn-origin" not in [o["tag"] for o in cfg["outbounds"]]
+    assert not any(r.get("inboundTag") == ["reality-split"] for r in cfg["routing"]["rules"])
+    inbounds = {i["tag"]: i for i in cfg["inbounds"]}
+    assert inbounds["vless-in"]["streamSettings"]["realitySettings"]["dest"] == "www.example.org:443"
+    assert "listen" not in inbounds["vless-in-cdn"]
+
+
+def test_sni_split_needs_a_cdn_inbound(monkeypatch):
+    cfg = _split_config()
+    cfg["inbounds"] = [i for i in cfg["inbounds"] if i["tag"] != "vless-in-cdn"]
+    _ensure_cdn_sni_split(monkeypatch)(cfg)
+    assert "reality-split" not in [i["tag"] for i in cfg["inbounds"]]
+    assert cfg["inbounds"][0]["streamSettings"]["realitySettings"]["dest"] == "www.example.org:443"
