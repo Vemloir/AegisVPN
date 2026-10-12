@@ -38,10 +38,10 @@ def test_all_runtime_inputs_are_immutable_and_locked():
 def test_runtime_manifest_matches_the_pinned_sources():
     values = verify_runtime_pins(ROOT / "deploy/vps/runtime-versions.env")
 
-    assert values["XRAY_VERSION"] == "v26.3.27"
-    assert values["XRAY_SHA256"] == "23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae"
+    assert values["XRAY_VERSION"] == "v26.7.28"
+    assert values["XRAY_SHA256"] == "8195d909f1109b8f3d99eefe401a3c451d7bf4af71f24d3815420f77e5dd2a40"
     assert values["XRAY_ARM64_SHA256"] == (
-        "4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c"
+        "f5698bb218ada3b4022db26fafc39601c5f53b46b19eb76c9616325985807501"
     )
     assert values["HYSTERIA_VERSION"] == "v2.10.0"
 
