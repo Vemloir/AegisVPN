@@ -34,7 +34,7 @@ async def _get_device_count(tg_id: int) -> int:
                 select(Subscription).where(
                     Subscription.user_id == user.id,
                     Subscription.is_active == True,  # noqa: E712
-                    Subscription.expires_at > now,
+                    Subscription.unexpired_at(now),
                 )
             )
         ).scalar_one_or_none()

@@ -16,8 +16,9 @@ async def test_run_migrations_adds_missing_columns_idempotently():
     # Start from a minimal, pre-migration schema: each table with only an id.
     # A few base columns that create_all always provides in production are kept so
     # backfills can reference them: `servers.host`, `subscription_servers.server_id`
-    # (the FK the servers traffic backfill correlates on), and `plans.days` /
-    # `plans.is_active` (the base-plan backfill picks the 30-day active plan).
+    # (the FK the servers traffic backfill correlates on), `plans.days` /
+    # `plans.is_active` (the base-plan backfill picks the 30-day active plan) and
+    # `subscriptions.expires_at` (the lifetime backfill clears the old sentinel).
     async with async_session_maker() as session:
         for table in MIGRATIONS:
             await session.execute(text(f"DROP TABLE IF EXISTS {table}"))
@@ -31,6 +32,8 @@ async def test_run_migrations_adds_missing_columns_idempotently():
                 await session.execute(
                     text("CREATE TABLE plans (id INTEGER PRIMARY KEY, days INTEGER, is_active BOOLEAN)")
                 )
+            elif table == "subscriptions":
+                await session.execute(text("CREATE TABLE subscriptions (id INTEGER PRIMARY KEY, expires_at DATETIME)"))
             else:
                 await session.execute(text(f"CREATE TABLE {table} (id INTEGER PRIMARY KEY)"))
         await session.commit()

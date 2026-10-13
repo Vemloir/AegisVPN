@@ -9,7 +9,7 @@ every boot and against a database at any prior version.
 from dataclasses import dataclass
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from src.core.config import settings
 from src.core.database import async_session_maker
@@ -242,6 +242,12 @@ ONE_SHOT_DATA_MIGRATIONS: list[tuple[str, str]] = [
         "force_terms_reacceptance_2026_06_22",
         "UPDATE users SET accepted_terms_version = NULL, accepted_terms_at = NULL, privacy_accepted = 0",
     ),
+    # Lifetime subscriptions used to carry a far-future date; they are NULL now.
+    # Revoked lifetime ones (expiry moved to the revoke time) stay as they are.
+    (
+        "lifetime_subscriptions_without_expiry_2026_10_13",
+        "UPDATE subscriptions SET expires_at = NULL WHERE expires_at >= '2099-12-31'",
+    ),
 ]
 
 
@@ -268,6 +274,59 @@ async def _existing_columns(session: AsyncSession, table: str, is_sqlite: bool) 
     return {row[0] for row in result.fetchall()}
 
 
+async def make_subscription_expiry_nullable(engine: AsyncEngine, is_sqlite: bool) -> None:
+    """Let ``subscriptions.expires_at`` be NULL (a lifetime subscription).
+
+    PostgreSQL drops the constraint in place. SQLite cannot, so the table is
+    rebuilt the way SQLite documents for any ALTER it lacks: with foreign keys
+    off (or dropping the old table would cascade-delete every device and
+    server link), copy into an identical table minus the NOT NULL, swap it in,
+    restore the indexes, and commit only if the foreign keys still check out.
+    """
+    if not is_sqlite:
+        async with engine.begin() as conn:
+            await conn.exec_driver_sql("ALTER TABLE subscriptions ALTER COLUMN expires_at DROP NOT NULL")
+        return
+
+    async with engine.connect() as conn:
+        conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
+        table_sql = (
+            await conn.exec_driver_sql("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'subscriptions'")
+        ).scalar_one()
+        if "expires_at DATETIME NOT NULL" not in table_sql:
+            return
+        index_sql = [
+            row[0]
+            for row in (
+                await conn.exec_driver_sql(
+                    "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'subscriptions' AND sql IS NOT NULL"
+                )
+            ).all()
+        ]
+        new_table_sql = table_sql.replace("CREATE TABLE subscriptions", "CREATE TABLE subscriptions_new", 1).replace(
+            "expires_at DATETIME NOT NULL", "expires_at DATETIME", 1
+        )
+        await conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        try:
+            await conn.exec_driver_sql("BEGIN IMMEDIATE")
+            try:
+                await conn.exec_driver_sql(new_table_sql)
+                await conn.exec_driver_sql("INSERT INTO subscriptions_new SELECT * FROM subscriptions")
+                await conn.exec_driver_sql("DROP TABLE subscriptions")
+                await conn.exec_driver_sql("ALTER TABLE subscriptions_new RENAME TO subscriptions")
+                for sql in index_sql:
+                    await conn.exec_driver_sql(sql)
+                violations = (await conn.exec_driver_sql("PRAGMA foreign_key_check")).all()
+                if violations:
+                    raise RuntimeError(f"subscriptions rebuild broke foreign keys: {violations[:5]}")
+                await conn.exec_driver_sql("COMMIT")
+            except BaseException:
+                await conn.exec_driver_sql("ROLLBACK")
+                raise
+        finally:
+            await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+
+
 async def run_migrations() -> None:
     """Add any columns missing from the live schema. Idempotent."""
     # Ensure all model-defined tables exist (create_all is safe; it never drops or modifies).
@@ -276,6 +335,8 @@ async def run_migrations() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    # Before any session opens: the SQLite rebuild needs the database to itself.
+    await make_subscription_expiry_nullable(engine, _is_sqlite())
 
     is_sqlite = _is_sqlite()
     async with async_session_maker() as session:

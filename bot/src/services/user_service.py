@@ -88,7 +88,7 @@ class UserService:
                     select(Subscription).where(
                         Subscription.user_id == user.id,
                         Subscription.is_active == True,  # noqa: E712
-                        Subscription.expires_at > _now(),
+                        Subscription.unexpired_at(_now()),
                     )
                 )
             ).scalar_one_or_none()
@@ -198,7 +198,7 @@ class UserService:
                     select(Subscription).where(
                         Subscription.user_id == user.id,
                         Subscription.is_active == True,  # noqa: E712
-                        Subscription.expires_at > now,
+                        Subscription.unexpired_at(now),
                     )
                 )
             ).scalar_one_or_none()
@@ -248,7 +248,7 @@ class UserService:
                     select(Subscription).where(
                         Subscription.user_id == user.id,
                         Subscription.is_active == True,  # noqa: E712
-                        Subscription.expires_at > now,
+                        Subscription.unexpired_at(now),
                     )
                 )
             ).scalar_one_or_none()

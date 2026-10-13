@@ -392,6 +392,24 @@ async def test_cached_snapshot_expires_clients_without_new_generation(
     assert clients == []
 
 
+async def test_lifetime_client_without_expiry_is_never_expired(monkeypatch, tmp_path):
+    config_path, _, _, _ = await _patch_runtime(monkeypatch, tmp_path)
+    snapshot = DesiredSnapshot(
+        generation=10,
+        digest="a" * 64,
+        items=[{"kind": "client", "uuid": "forever", "email": "user_1_sub_1", "expire_ms": None}],
+    )
+    monkeypatch.setattr(reconcile, "wait_for_xray_ready", _true)
+
+    await reconcile.reconcile_snapshot(snapshot, observe=False, now_ms=1_000)
+    # Arbitrarily far in the future: still authorized.
+    await reconcile.reconcile_snapshot(snapshot, observe=False, now_ms=10**18)
+
+    config = json.loads(config_path.read_text())
+    clients = config["inbounds"][0]["settings"]["clients"]
+    assert [client["id"] for client in clients] == ["forever"]
+
+
 def test_replace_overrides_replaces_and_persists_complete_map(monkeypatch, tmp_path):
     path = tmp_path / "conn-limits.json"
     monkeypatch.setattr(connlimit, "_OVERRIDES_PATH", str(path))

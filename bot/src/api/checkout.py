@@ -91,7 +91,7 @@ async def _has_active_subscription(session: AsyncSession, user: User) -> bool:
             .where(
                 Subscription.user_id == user.id,
                 Subscription.is_active == True,  # noqa: E712
-                Subscription.expires_at > now,
+                Subscription.unexpired_at(now),
             )
             .limit(1)
         )

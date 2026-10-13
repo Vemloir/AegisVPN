@@ -87,14 +87,26 @@ def test_duplicate_suffix_keys_on_full_name():
     assert SubscriptionService.format_server_label(de_muc, dup) == "\U0001f1e9\U0001f1ea Germany | Munich"
 
 
-def test_is_lifetime_by_plan_days():
-    sub = _sub(plan_days=SubscriptionService.LIFETIME_PLAN_DAYS, expires_at=datetime(2030, 1, 1))
+def test_lifetime_means_no_expiry():
+    sub = _sub(plan_days=SubscriptionService.LIFETIME_PLAN_DAYS, expires_at=None)
     assert SubscriptionService.is_lifetime_subscription(sub)
+    assert not sub.is_expired(datetime(9999, 12, 31))
 
 
-def test_is_lifetime_by_expires_at():
-    sub = _sub(plan_days=30, expires_at=SubscriptionService.LIFETIME_EXPIRES_AT)
-    assert SubscriptionService.is_lifetime_subscription(sub)
+def test_revoked_lifetime_plan_with_a_date_is_not_lifetime():
+    # Revoking moves the expiry to the revoke time; plan_days stays 0.
+    revoked_at = datetime(2026, 10, 1)
+    sub = _sub(plan_days=SubscriptionService.LIFETIME_PLAN_DAYS, expires_at=revoked_at)
+    assert not SubscriptionService.is_lifetime_subscription(sub)
+    assert sub.is_expired(datetime(2026, 10, 2))
+
+
+def test_expiry_after_keeps_lifetime_and_grants_it_for_the_lifetime_plan():
+    now = datetime(2026, 10, 13)
+    assert SubscriptionService.expiry_after(None, now, 30) is None
+    assert SubscriptionService.expiry_after(now, now, SubscriptionService.LIFETIME_PLAN_DAYS) is None
+    assert SubscriptionService.expiry_after(now + timedelta(days=5), now, 30) == now + timedelta(days=35)
+    assert SubscriptionService.expiry_after(now - timedelta(days=5), now, 30) == now + timedelta(days=30)
 
 
 def test_regular_subscription_is_not_lifetime():

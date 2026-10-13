@@ -7,7 +7,8 @@ class DesiredClient(BaseModel):
     kind: Literal["client"]
     uuid: str
     email: str
-    expire_ms: int = Field(ge=0)
+    # None: a lifetime subscription, which never expires.
+    expire_ms: int | None = Field(ge=0)
 
 
 class DesiredConnLimit(BaseModel):
