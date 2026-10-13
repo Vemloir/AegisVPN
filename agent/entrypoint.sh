@@ -506,9 +506,14 @@ def ensure_gemini_resolver(cfg: dict) -> None:
     rules = cfg.setdefault("routing", {}).setdefault("rules", [])
     dns = cfg.setdefault("dns", {})
     servers = dns.setdefault("servers", [])
+    # Recognised by a name every version of the list carried, so a boot after
+    # the list changed still clears what an older one added.
+    def ours(entry: dict, key: str) -> bool:
+        return "domain:gemini.google.com" in entry.get(key, [])
+
     outbounds[:] = [o for o in outbounds if o.get("tag") != "gemini"]
-    rules[:] = [r for r in rules if r.get("domain") != GEMINI_DOMAINS]
-    servers[:] = [s for s in servers if not (isinstance(s, dict) and s.get("domains") == GEMINI_DOMAINS)]
+    rules[:] = [r for r in rules if not ours(r, "domain")]
+    servers[:] = [s for s in servers if not (isinstance(s, dict) and ours(s, "domains"))]
     warp = next((o for o in outbounds if o.get("tag") == "warp"), None)
     if warp is not None:
         warp.setdefault("settings", {}).pop("domainStrategy", None)

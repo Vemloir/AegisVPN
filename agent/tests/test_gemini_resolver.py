@@ -99,6 +99,24 @@ def test_warp_egress_without_a_warp_outbound_changes_nothing(monkeypatch):
     assert config == _config()
 
 
+def test_a_boot_clears_what_an_older_domain_list_added(monkeypatch):
+    ensure, domains = _ensure_gemini_resolver()
+    monkeypatch.delenv("GEMINI_EGRESS", raising=False)
+    monkeypatch.setenv("GEMINI_RESOLVER", RESOLVER)
+    old_list = ["geosite:google-gemini", "domain:gemini.google.com"]
+    config = _config()
+    config["dns"]["servers"].insert(0, {"address": RESOLVER, "domains": old_list, "skipFallback": True})
+    config["routing"]["rules"][1:1] = [
+        {"type": "field", "network": "udp", "domain": old_list, "outboundTag": "block"},
+        {"type": "field", "domain": old_list, "outboundTag": "gemini"},
+    ]
+    ensure(config)
+    assert [s for s in config["dns"]["servers"] if isinstance(s, dict)] == [
+        {"address": RESOLVER, "domains": domains, "skipFallback": True}
+    ]
+    assert [r["domain"] for r in config["routing"]["rules"] if "domain" in r] == [domains, domains]
+
+
 def test_without_a_resolver_everything_is_removed(monkeypatch):
     ensure, _domains = _ensure_gemini_resolver()
     monkeypatch.delenv("GEMINI_EGRESS", raising=False)
