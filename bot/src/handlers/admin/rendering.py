@@ -16,6 +16,15 @@ from .common import fmt_bytes
 from .keyboards import server_manage_keyboard, user_manage_keyboard
 
 
+def _cdn_share(row) -> str:
+    """The CDN part of a traffic line, shown only once there is some."""
+    up = int(getattr(row, "cdn_traffic_up_bytes", 0) or 0)
+    down = int(getattr(row, "cdn_traffic_down_bytes", 0) or 0)
+    if not up and not down:
+        return ""
+    return f" (CDN: ↑ {fmt_bytes(up)} / ↓ {fmt_bytes(down)})"
+
+
 async def render_server_details(server_id: int) -> tuple[str, InlineKeyboardMarkup] | None:
     async with async_session_maker() as session:
         server = await session.get(
@@ -127,9 +136,9 @@ async def render_user_details(tg_id: int) -> tuple[str, InlineKeyboardMarkup] | 
                     flag = (link.server.flag + " ") if (link.server and link.server.flag) else ""
                     up = fmt_bytes(link.traffic_up_bytes)
                     down = fmt_bytes(link.traffic_down_bytes)
-                    lines.append(f"{flag}{name}: ↑ {up} / ↓ {down}")
+                    lines.append(f"{flag}{name}: ↑ {up} / ↓ {down}{_cdn_share(link)}")
             total_up = fmt_bytes(sub.traffic_up_bytes)
             total_down = fmt_bytes(sub.traffic_down_bytes)
-            lines.append(f"Всего: ↑ {total_up} / ↓ {total_down}")
+            lines.append(f"Всего: ↑ {total_up} / ↓ {total_down}{_cdn_share(sub)}")
 
         return "\n".join(lines), user_manage_keyboard(user, has_active_subscription)

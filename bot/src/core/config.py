@@ -91,6 +91,9 @@ class Settings(BaseSettings):
     # own "<location> | WL" entry, reachable only through the CDN, so the path
     # can be tested while the direct one still works.
     cdn_wl_preview_tg_ids: list[int] = []
+    # What a CDN charges per GB it delivers (Beget: 0.6 RUB of outgoing
+    # traffic, i.e. what subscribers download), for the admin cost estimate.
+    cdn_price_rub_per_gb: float = 0.6
 
     # Default simultaneous source/session limit per user, mirroring the node default
     # (agent CONN_LIMIT). Shown in the admin card when a user has no override.

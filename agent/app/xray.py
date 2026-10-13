@@ -33,6 +33,15 @@ def get_transport_type(inbound: dict) -> str:
 
 
 CDN_INBOUND_TAG = "vless-in-cdn"
+# A client on the CDN inbound carries its own email (the subscriber's plus this
+# suffix): Xray counts traffic per email, so this is what tells the traffic that
+# came through a CDN, billed per gigabyte, apart from the direct path.
+CDN_EMAIL_SUFFIX = "_cdn"
+
+
+def base_email(email: str) -> str:
+    """The subscriber's email behind an inbound-specific one."""
+    return email.removesuffix(CDN_EMAIL_SUFFIX)
 
 
 def find_vless_inbound(config: dict, preferred_network: str | None = None) -> dict:
@@ -51,6 +60,8 @@ def build_client_record(uuid: str, email: str, inbound: dict) -> dict:
     # tcp/REALITY clients carry the vision flow (xtls-rprx-vision); xhttp/grpc
     # stay flow-less. A node shares ONE reality keypair across inbounds — only
     # the per-client flow differs, set per the inbound the client lands on.
+    if inbound.get("tag") == CDN_INBOUND_TAG:
+        email = base_email(email) + CDN_EMAIL_SUFFIX
     record = {
         "id": uuid,
         "email": email,
@@ -338,7 +349,8 @@ async def get_online_emails() -> list[str]:
         return []
     if returncode != 0:
         return []
-    return _parse_online_users(out)
+    # Online means the subscriber's device is connected, whichever path it took.
+    return list(dict.fromkeys(base_email(email) for email in _parse_online_users(out)))
 
 
 async def get_online_count() -> int:

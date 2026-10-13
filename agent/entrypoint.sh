@@ -185,6 +185,10 @@ for inbound in existing_vless:
             # Normalize to a flow-less id+email here; build_inbound re-applies the
             # per-inbound flow (vision on tcp, none on xhttp/grpc).
             record.pop("flow", None)
+            # The CDN inbound's copy carries "_cdn" (see build_cdn_inbound); keep
+            # the subscriber's own email so the other inbounds never inherit it.
+            if isinstance(record.get("email"), str):
+                record["email"] = record["email"].removesuffix("_cdn")
             client_map[client_id] = record
 
 
@@ -329,8 +333,15 @@ def build_cdn_inbound(port: int) -> dict | None:
         "port": int(port),
         "protocol": "vless",
         "settings": {
-            # Same clients as every other inbound, flow-less like any xhttp one.
-            "clients": [{k: v for k, v in client.items() if k != "flow"} for client in client_map.values()],
+            # Same clients as every other inbound, flow-less like any xhttp one,
+            # under their own "_cdn" email so Xray counts CDN traffic apart.
+            "clients": [
+                {
+                    **{k: v for k, v in client.items() if k != "flow"},
+                    **({"email": client["email"] + "_cdn"} if client.get("email") else {}),
+                }
+                for client in client_map.values()
+            ],
             "decryption": "none",
         },
         "sniffing": {"enabled": True, "destOverride": ["http", "tls"]},

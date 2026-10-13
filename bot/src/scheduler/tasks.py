@@ -23,7 +23,9 @@ from src.services import AgentClient, NodeControlService, cdn_service, confirm_p
 from src.services.backup_archive import BackupConfigurationError, encrypt_backup
 from src.services.platega_client import PlategaError, get_transaction_status
 
-_TRAFFIC_EMAIL_RE = re.compile(r"^user_(\d+)_sub_(\d+)(?:_dev_(\d+))?$")
+# A trailing "_cdn" marks the copy of the client on a node's CDN inbound: the
+# same subscriber, traffic that went through a CDN (see agent CDN_EMAIL_SUFFIX).
+_TRAFFIC_EMAIL_RE = re.compile(r"^user_(\d+)_sub_(\d+)(?:_dev_(\d+))?(?:_cdn)?$")
 _SCHEDULER_NETWORK_CONCURRENCY = 8
 
 
@@ -428,6 +430,7 @@ async def _apply_traffic_stats(server_id: int, stats: dict) -> None:
 
             cursors = dict(link.traffic_cursors or {})
             delta_up = delta_down = 0
+            cdn_up = cdn_down = 0
             for email, cur in entries:
                 cur_up = int(cur.get("uplink", 0) or 0)
                 cur_down = int(cur.get("downlink", 0) or 0)
@@ -443,6 +446,9 @@ async def _apply_traffic_stats(server_id: int, stats: dict) -> None:
                     d_down = cur_down
                 delta_up += d_up
                 delta_down += d_down
+                if email.endswith("_cdn"):
+                    cdn_up += d_up
+                    cdn_down += d_down
                 cursors[email] = [cur_up, cur_down]
 
             if delta_up:
@@ -454,6 +460,12 @@ async def _apply_traffic_stats(server_id: int, stats: dict) -> None:
                 sub.traffic_down_bytes = (sub.traffic_down_bytes or 0) + delta_down
                 link.traffic_down_bytes = (link.traffic_down_bytes or 0) + delta_down
                 server.traffic_down_bytes = (server.traffic_down_bytes or 0) + delta_down
+                changed = True
+            # The CDN share is part of the totals above, kept apart as well.
+            if cdn_up or cdn_down:
+                for row in (sub, link, server):
+                    row.cdn_traffic_up_bytes = (row.cdn_traffic_up_bytes or 0) + cdn_up
+                    row.cdn_traffic_down_bytes = (row.cdn_traffic_down_bytes or 0) + cdn_down
                 changed = True
             if cursors != (link.traffic_cursors or {}):
                 link.traffic_cursors = cursors

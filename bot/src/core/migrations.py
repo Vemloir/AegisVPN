@@ -75,6 +75,8 @@ MIGRATIONS: dict[str, list[Column]] = {
         Column("legacy_sub_token", "VARCHAR(255)", "VARCHAR(255)"),
         Column("traffic_up_bytes", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
         Column("traffic_down_bytes", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
+        Column("cdn_traffic_up_bytes", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
+        Column("cdn_traffic_down_bytes", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
     ],
     "subscription_servers": [
         Column("traffic_last_up", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
@@ -82,6 +84,8 @@ MIGRATIONS: dict[str, list[Column]] = {
         Column("traffic_up_bytes", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
         Column("traffic_down_bytes", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
         Column("traffic_cursors", "JSON", "JSONB"),
+        Column("cdn_traffic_up_bytes", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
+        Column("cdn_traffic_down_bytes", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
     ],
     "devices": [
         Column("is_suspended", "BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE"),
@@ -175,6 +179,9 @@ MIGRATIONS: dict[str, list[Column]] = {
                 "WHERE subscription_servers.server_id = servers.id), 0)"
             ),
         ),
+        # CDN traffic is counted from its introduction; nothing to seed.
+        Column("cdn_traffic_up_bytes", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
+        Column("cdn_traffic_down_bytes", "BIGINT DEFAULT 0", "BIGINT DEFAULT 0"),
         # The website's only presentation field: an ISO 3166-1 alpha-2 code. The
         # globe derives the country outline and its camera target from the atlas,
         # and the region filter is a function of the code — storing either here

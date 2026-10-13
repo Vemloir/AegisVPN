@@ -60,8 +60,9 @@ def test_cdn_inbound_is_plain_tls_xhttp_with_shared_clients(monkeypatch, tmp_pat
     certificate = stream["tlsSettings"]["certificates"][0]
     assert Path(certificate["certificateFile"]).exists()
     assert Path(certificate["keyFile"]).exists()
-    # Same users as every other inbound, never with the vision flow.
-    assert inbound["settings"]["clients"] == [{"id": "u1", "email": "user_1_sub_1"}]
+    # Same users as every other inbound, never with the vision flow, under
+    # their own "_cdn" email so Xray counts CDN traffic separately.
+    assert inbound["settings"]["clients"] == [{"id": "u1", "email": "user_1_sub_1_cdn"}]
 
 
 def test_cdn_inbound_keeps_an_existing_certificate(monkeypatch, tmp_path):
@@ -320,3 +321,44 @@ def test_sni_split_needs_a_cdn_inbound(monkeypatch):
     _ensure_cdn_sni_split(monkeypatch)(cfg)
     assert "reality-split" not in [i["tag"] for i in cfg["inbounds"]]
     assert cfg["inbounds"][0]["streamSettings"]["realitySettings"]["dest"] == "www.example.org:443"
+
+
+# --- CDN traffic gets its own email ---------------------------------------------
+
+
+def test_cdn_inbound_clients_get_the_cdn_email_and_others_do_not():
+    from app.xray import CDN_INBOUND_TAG, build_client_record
+
+    cdn = build_client_record("u1", "user_1_sub_2_dev_3", {"tag": CDN_INBOUND_TAG, "streamSettings": {"network": "xhttp"}})
+    direct = build_client_record("u1", "user_1_sub_2_dev_3", {"tag": "vless-in", "streamSettings": {"network": "xhttp"}})
+    assert cdn["email"] == "user_1_sub_2_dev_3_cdn"
+    assert direct["email"] == "user_1_sub_2_dev_3"
+    # Idempotent: a record rebuilt from an already-suffixed email is unchanged.
+    assert build_client_record("u1", cdn["email"], {"tag": CDN_INBOUND_TAG})["email"] == cdn["email"]
+
+
+def test_hysteria_and_online_state_use_the_subscribers_email(monkeypatch):
+    import asyncio
+
+    from app import hysteria, xray
+
+    hysteria.refresh_from_config(
+        {
+            "inbounds": [
+                {"protocol": "vless", "tag": "vless-in", "settings": {"clients": [{"id": "u1", "email": "user_1_sub_1"}]}},
+                {
+                    "protocol": "vless",
+                    "tag": xray.CDN_INBOUND_TAG,
+                    "settings": {"clients": [{"id": "u1", "email": "user_1_sub_1_cdn"}]},
+                },
+            ]
+        }
+    )
+    # Hy2 traffic must never be booked as CDN traffic.
+    assert hysteria.authenticate("u1") == {"ok": True, "id": "user_1_sub_1"}
+
+    async def fake_run(*_args, **_kwargs):
+        return 0, b'{"users": {"user_1_sub_1": 1, "user_1_sub_1_cdn": 1, "user_2_sub_5_cdn": 1}}', b""
+
+    monkeypatch.setattr(xray, "_run_process", fake_run)
+    assert asyncio.run(xray.get_online_emails()) == ["user_1_sub_1", "user_2_sub_5"]

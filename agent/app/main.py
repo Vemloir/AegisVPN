@@ -22,6 +22,7 @@ from .models import ClientAddRequest, ClientRemoveRequest, ConnLimitRequest, Hy2
 from .reconcile import retry_pending_revocations
 from .security import verify_token
 from .xray import (
+    base_email,
     build_client_record,
     build_subscription_query,
     config_lock,
@@ -213,7 +214,7 @@ async def remove_client(req: ClientRemoveRequest):
             # fails, THEN drop their live QUIC session. Hy2 never re-auths, so
             # kicking without blocking would just let them reconnect.
             hysteria.refresh_from_config(config)
-            await hysteria.kick(list(removed_emails))
+            await hysteria.kick(sorted({base_email(email) for email in removed_emails}))
             if not api_ok:
                 reload_xray()
     return {"status": "ok", "removed": removed}

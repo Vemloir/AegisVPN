@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 
 from .config import settings
-from .xray import get_xray_config, list_vless_inbounds
+from .xray import base_email, get_xray_config, list_vless_inbounds
 
 # uuid -> email, the valid Hy2 user set, derived from the xray vless clients.
 # We reuse the client's xray UUID as the Hy2 auth secret and return their email
@@ -36,7 +36,8 @@ def refresh_from_config(config: dict) -> None:
             uuid = client.get("id")
             email = client.get("email")
             if uuid and email:
-                mapping[uuid] = email
+                # Hy2 traffic is never CDN traffic: key it on the subscriber's email.
+                mapping[uuid] = base_email(email)
     global _clients
     _clients = mapping
 
