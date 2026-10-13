@@ -87,6 +87,9 @@ class Server(Base):
     # reconcile, this total is not.
     traffic_up_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     traffic_down_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    # The part of the above that went through this node's CDN resources.
+    cdn_traffic_up_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    cdn_traffic_down_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
 
     # Snapshot of the last periodic health check's online-client count
     # (check_servers_health, bot/src/scheduler/tasks.py). Used to keep

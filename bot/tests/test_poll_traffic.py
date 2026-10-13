@@ -32,6 +32,7 @@ def test_stats_are_indexed_once_by_subscription():
             "user_1_sub_2": {"uplink": 1, "downlink": 2},
             "user_1_sub_2_dev_3": {"uplink": 3, "downlink": 4},
             "user_9_sub_8_dev_7": {"uplink": 5, "downlink": 6},
+            "user_9_sub_8_dev_7_cdn": {"uplink": 7, "downlink": 8},
             "user_1_sub_bad": {"uplink": 99, "downlink": 99},
             "unrelated": {"uplink": 99, "downlink": 99},
         }
@@ -44,7 +45,10 @@ def test_stats_are_indexed_once_by_subscription():
             ("user_1_sub_2", {"uplink": 1, "downlink": 2}),
             ("user_1_sub_2_dev_3", {"uplink": 3, "downlink": 4}),
         ],
-        (9, 8): [("user_9_sub_8_dev_7", {"uplink": 5, "downlink": 6})],
+        (9, 8): [
+            ("user_9_sub_8_dev_7", {"uplink": 5, "downlink": 6}),
+            ("user_9_sub_8_dev_7_cdn", {"uplink": 7, "downlink": 8}),
+        ],
     }
     assert stats.item_passes == 1
 
@@ -181,3 +185,37 @@ async def test_base_email_still_counted(monkeypatch):
     _patch_stats(monkeypatch, {prefix: {"uplink": 60, "downlink": 120}})
     await tasks.poll_traffic()
     assert await _totals(sub_id) == (50, 100)
+
+
+async def test_cdn_traffic_is_counted_in_the_total_and_kept_apart(monkeypatch):
+    sub_id, prefix = await _seed(5)
+    async with async_session_maker() as session:
+        server_id = (await session.execute(select(Server.id))).scalar_one()
+
+    # The same device on the direct inbound and, as "<email>_cdn", on the CDN one.
+    _patch_stats(
+        monkeypatch,
+        {
+            f"{prefix}_dev_1": {"uplink": 100, "downlink": 1000},
+            f"{prefix}_dev_1_cdn": {"uplink": 10, "downlink": 100},
+        },
+    )
+    await tasks.poll_traffic()  # baseline
+    _patch_stats(
+        monkeypatch,
+        {
+            f"{prefix}_dev_1": {"uplink": 150, "downlink": 1300},  # +50 / +300 direct
+            f"{prefix}_dev_1_cdn": {"uplink": 30, "downlink": 500},  # +20 / +400 via CDN
+        },
+    )
+    await tasks.poll_traffic()
+
+    assert await _totals(sub_id) == (70, 700)
+    async with async_session_maker() as session:
+        sub = await session.get(Subscription, sub_id)
+        link = (
+            await session.execute(select(SubscriptionServer).where(SubscriptionServer.subscription_id == sub_id))
+        ).scalar_one()
+        server = await session.get(Server, server_id)
+        for row in (sub, link, server):
+            assert (row.cdn_traffic_up_bytes, row.cdn_traffic_down_bytes) == (20, 400)

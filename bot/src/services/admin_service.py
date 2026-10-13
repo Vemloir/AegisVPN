@@ -30,6 +30,8 @@ class AdminStats:
     traffic_per_server: list[tuple[str, str, int, int]] = field(default_factory=list)
     traffic_total_up: int = 0
     traffic_total_down: int = 0
+    # (flag, name, up_bytes, down_bytes) through each node's CDN resources
+    cdn_traffic_per_server: list[tuple[str, str, int, int]] = field(default_factory=list)
 
 
 class AdminService:
@@ -74,6 +76,14 @@ class AdminService:
         )
         traffic_total_up = sum(r[2] for r in traffic_per_server)
         traffic_total_down = sum(r[3] for r in traffic_per_server)
+        cdn_traffic_per_server = sorted(
+            (
+                (s.flag or "", s.name, int(s.cdn_traffic_up_bytes or 0), int(s.cdn_traffic_down_bytes or 0))
+                for s in all_servers
+                if (s.cdn_traffic_up_bytes or 0) + (s.cdn_traffic_down_bytes or 0) > 0
+            ),
+            key=lambda r: r[1],
+        )
 
         async def fetch_xray_online(server: Server) -> tuple[str, str, int]:
             if server.control_mode == "pull":
@@ -98,6 +108,7 @@ class AdminService:
             traffic_per_server,
             traffic_total_up,
             traffic_total_down,
+            cdn_traffic_per_server,
         )
 
     @staticmethod

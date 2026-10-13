@@ -29,6 +29,9 @@ class Subscription(Base):
     # traffic poller (delta accounting); survives Xray restarts.
     traffic_up_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     traffic_down_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    # The part of the above that went through a CDN fallback (billed per GB).
+    cdn_traffic_up_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    cdn_traffic_down_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
 
     user: Mapped["User"] = relationship(back_populates="subscriptions")
     servers: Mapped[list["SubscriptionServer"]] = relationship(
@@ -69,6 +72,9 @@ class SubscriptionServer(Base):
     # Cumulative traffic on THIS node (per-location breakdown).
     traffic_up_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     traffic_down_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    # The part of the above that went through a CDN fallback (billed per GB).
+    cdn_traffic_up_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    cdn_traffic_down_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
 
     subscription: Mapped["Subscription"] = relationship(back_populates="servers")
     server: Mapped["Server"] = relationship(back_populates="subscription_servers")

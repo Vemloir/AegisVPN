@@ -9,6 +9,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
+from src.core.config import settings
 from src.services.admin_service import AdminService
 
 from .common import fmt_bytes, is_admin
@@ -68,6 +69,17 @@ async def cq_admin_stats(call: CallbackQuery):
             lines.append(f"  {label}: ↑ {fmt_bytes(up)} / ↓ {fmt_bytes(down)}")
         lines.append(f"  Всего: ↑ {fmt_bytes(stats.traffic_total_up)} / ↓ {fmt_bytes(stats.traffic_total_down)}")
         traffic_text = "\n\nТрафик по локациям:\n" + "\n".join(lines)
+    cdn_text = ""
+    if stats.cdn_traffic_per_server:
+        lines = []
+        for flag, name, up, down in stats.cdn_traffic_per_server:
+            label = f"{flag} {name}" if flag else name
+            lines.append(f"  {label}: ↑ {fmt_bytes(up)} / ↓ {fmt_bytes(down)}")
+        # The CDN bills what it delivers: the subscribers' downloads.
+        delivered = sum(down for _flag, _name, _up, down in stats.cdn_traffic_per_server)
+        cost = delivered / 1024**3 * settings.cdn_price_rub_per_gb
+        lines.append(f"  Стоимость: ≈ {cost:.2f} ₽ ({settings.cdn_price_rub_per_gb:g} ₽/ГБ)")
+        cdn_text = "\n\nЧерез CDN:\n" + "\n".join(lines)
     text = (
         f"{html.bold('Статистика')}\n\n"
         f"Пользователей: {stats.users}\n"
@@ -75,6 +87,7 @@ async def cq_admin_stats(call: CallbackQuery):
         f"Забаненных: {stats.banned_users}"
         f"{nodes_text}"
         f"{traffic_text}"
+        f"{cdn_text}"
     )
     try:
         await call.message.edit_text(text, parse_mode="HTML", reply_markup=admin_stats_keyboard())  # type: ignore
