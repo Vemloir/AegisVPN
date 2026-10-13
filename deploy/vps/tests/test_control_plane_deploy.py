@@ -786,3 +786,47 @@ def test_hy2_certificate_automation_is_root_owned_and_restarts_only_hysteria():
     assert "docker restart aegis-hysteria" in reload_service
     assert "xray" not in reload_service.lower()
     assert "PathExists=" in reload_path
+
+
+def _ensure_warp():
+    import os
+    import re
+
+    entrypoint = (ROOT / "agent/entrypoint.sh").read_text()
+    fn = re.search(r"(def ensure_warp\(cfg: dict\) -> None:.*?)\n\n\n", entrypoint, re.S)
+    assert fn, "ensure_warp not found in agent/entrypoint.sh"
+    scope: dict = {"os": os}
+    exec(fn.group(1), scope)
+    return scope["ensure_warp"]
+
+
+def test_google_ai_services_leave_warp_on_restart(monkeypatch):
+    # Google geolocates the shared WARP egress to Russia, so Gemini through
+    # it is "not available in your country"; the node's own IP is fine.
+    monkeypatch.delenv("WARP_SECRET_KEY", raising=False)
+    config = {
+        "outbounds": [
+            {"tag": "direct", "protocol": "freedom"},
+            {"tag": "warp", "protocol": "wireguard", "settings": {"secretKey": "secret"}},
+            {"tag": "block", "protocol": "blackhole"},
+        ],
+        "routing": {
+            "rules": [
+                {"type": "field", "inboundTag": ["api"], "outboundTag": "api"},
+                {
+                    "type": "field",
+                    "domain": ["geosite:google-gemini", "geosite:category-ai-!cn", "domain:labs.google"],
+                    "outboundTag": "warp",
+                },
+            ]
+        },
+    }
+
+    _ensure_warp()(config)
+
+    warp_rules = [rule for rule in config["routing"]["rules"] if rule.get("outboundTag") == "warp"]
+    assert warp_rules == [{"type": "field", "domain": ["geosite:microsoft"], "outboundTag": "warp"}]
+    routed = [domain for rule in config["routing"]["rules"] for domain in rule.get("domain", [])]
+    assert not [domain for domain in routed if "gemini" in domain or "google" in domain or "ai-" in domain]
+    # The node's existing WARP registration survives the rebuild.
+    assert any(outbound.get("tag") == "warp" for outbound in config["outbounds"])

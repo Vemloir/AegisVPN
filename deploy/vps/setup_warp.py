@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 """Add a Cloudflare WARP egress to a node and route AI services through it.
 
-Why: Gemini, Microsoft, and some AI services geo-block or degrade datacenter
-IPs. Our nodes are hosting IPs, so those services return
-"not available in your country". Routing ONLY the AI domains through a WARP
-(Cloudflare WireGuard) outbound gives them a clean consumer egress IP, while
-all other traffic keeps exiting via the node's own IP (no latency hit, no
-single point of failure for the whole node — if WARP dies, only AI breaks).
+Why: Microsoft services degrade datacenter IPs. Routing ONLY their domains
+through a WARP (Cloudflare WireGuard) outbound gives them a clean consumer
+egress IP, while all other traffic keeps exiting via the node's own IP (no
+latency hit, no single point of failure for the whole node — if WARP dies,
+only those services break).
 
-The routing is scoped by SNI/hostname via geosite categories that ship in
+Gemini and the other AI services are deliberately NOT routed through WARP:
+Google places the shared WARP egress in Russia, so through it Gemini answers
+"not available in your country"; the node's own IP is placed correctly.
+
+The routing is scoped by SNI/hostname via a geosite category that ships in
 geosite.dat (community-maintained, so the domain list isn't hand-kept):
-  geosite:category-ai-!cn   all non-CN AI services (Gemini, OpenAI, Claude, ...)
-  domain:labs.google        Google Labs family (Flow / Whisk / ImageFX / ...)
-  geosite:google-gemini     Gemini specifically
   geosite:microsoft         Microsoft 365, Outlook, OneDrive, Teams, Xbox, etc.
+
+The node's agent re-applies the same rule on every start (ensure_warp in
+agent/entrypoint.sh), replacing whatever this script wrote.
 
 Each node needs its OWN WARP registration — one key reused across IPs gets
 flagged by Cloudflare. Xray's wireguard outbound is userspace (no host wg
@@ -48,10 +51,7 @@ REMOTE_D = "/root/aegis/deploy/vps/data/vpn"
 WGCF_VERSION = "2.2.32"
 WGCF_URL = f"https://github.com/ViRb3/wgcf/releases/download/v{WGCF_VERSION}/wgcf_{WGCF_VERSION}_linux_amd64"
 WGCF_SHA256 = "2ff97f2201972ce582a424455d50a3719a380eef0cd1f3144f7779348e122a2c"
-AI_DOMAINS = [
-    "geosite:category-ai-!cn",
-    "domain:labs.google",
-    "geosite:google-gemini",
+WARP_DOMAINS = [
     "geosite:microsoft",
 ]
 GAME_DOMAINS = [
@@ -216,7 +216,7 @@ def main() -> int:
         "d=os.path.dirname(p);fd,t=tempfile.mkstemp(dir=d);"
         "f=os.fdopen(fd,'w');json.dump(c,f,indent=2);f.flush();os.fsync(f.fileno());f.close();"
         "os.replace(t,p);q=os.open(d,os.O_DIRECTORY);os.fsync(q);os.close(q);print('patched')"
-        % (REMOTE_D, json.dumps(warp), json.dumps(AI_DOMAINS), json.dumps(GAME_DOMAINS))
+        % (REMOTE_D, json.dumps(warp), json.dumps(WARP_DOMAINS), json.dumps(GAME_DOMAINS))
     )
     patch = "import json,os,tempfile;" + patch
     print(run(f"python3 -c {json.dumps(patch)}").strip())
