@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import settings
 from src.core.logger import logger
-from src.models import Device, Server, ServerTransportPref, Subscription, SubscriptionServer, User
+from src.models import CdnEndpoint, Device, Server, ServerTransportPref, Subscription, SubscriptionServer, User
 from src.services import cdn_service, geoip
 from src.services.agent_client import AgentClient
 from src.services.cascade_service import advertisable_routes
@@ -151,6 +151,11 @@ def _cascade_visible_servers(
 def _replace_link_label(link: str, label: str) -> str:
     parts = urlsplit(link)
     return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, label.strip()))
+
+
+def _preview_label(endpoint: CdnEndpoint) -> str:
+    """Tells a location's WL entries apart: the provider, and the fronting name if any."""
+    return f"{endpoint.provider} ({endpoint.sni})" if endpoint.sni else endpoint.provider
 
 
 class SubscriptionService:
@@ -832,11 +837,15 @@ class SubscriptionService:
         plain_configs = [cfg for _server, cfg in configs]
         # Every location keeps its direct outbound as the primary and gains its
         # CDN resources as a fallback tier; auto-select falls back to all of them.
-        endpoints = await cdn_service.endpoints_by_server(session, [server for server, _cfg in configs])
+        preview = await SubscriptionService._sees_cdn_preview(session, sub_token)
+        endpoints = await cdn_service.endpoints_by_server(
+            session, [server for server, _cfg in configs], include_preview=preview
+        )
         if endpoints:
             every_cdn_outbound: list[dict] = []
             for index, (server, cfg) in enumerate(configs):
                 client_id = cdn_service.client_id_of(cfg)
+                fallback_endpoints = [endpoint for endpoint in endpoints.get(server.id, []) if not endpoint.preview_only]
                 outbounds = [
                     cdn_service.build_outbound(
                         server,
@@ -844,17 +853,17 @@ class SubscriptionService:
                         client_id,
                         f"{cdn_service.CDN_TAG_PREFIX}{len(every_cdn_outbound) + position}",
                     )
-                    for position, endpoint in enumerate(endpoints.get(server.id, []), start=1)
+                    for position, endpoint in enumerate(fallback_endpoints, start=1)
                 ]
                 every_cdn_outbound.extend(outbounds)
                 plain_configs[index] = cdn_service.attach_fallback(cfg, outbounds)
             if autoselect is not None:
                 autoselect = cdn_service.attach_fallback(autoselect, every_cdn_outbound)
-            if await SubscriptionService._sees_cdn_preview(session, sub_token):
+            if preview:
                 for server, cfg in configs:
                     server_endpoints = endpoints.get(server.id, [])
                     for endpoint in server_endpoints:
-                        suffix = " | WL" if len(server_endpoints) == 1 else f" | WL {endpoint.provider}"
+                        suffix = " | WL" if len(server_endpoints) == 1 else f" | WL {_preview_label(endpoint)}"
                         outbound = cdn_service.build_outbound(server, endpoint, cdn_service.client_id_of(cfg), "proxy")
                         plain_configs.append(cdn_service.cdn_only(cfg, outbound, f"{cfg['remarks']}{suffix}"))
         if autoselect is not None:

@@ -14,9 +14,12 @@ to the hours an allowlist is actually in force.
 
 from __future__ import annotations
 
+import asyncio
 import copy
+import hashlib
 import json
 import secrets
+import ssl
 from collections import defaultdict
 from urllib.parse import quote, urlencode
 
@@ -78,12 +81,16 @@ def serves_cdn(server: Server) -> bool:
 async def endpoints_by_server(
     session: AsyncSession,
     servers: list[Server],
+    *,
+    include_preview: bool = False,
 ) -> dict[int, list[CdnEndpoint]]:
     """Advertisable CDN resources for each CDN-capable server.
 
     A resource the reachability check found broken is withheld: a dead
     fallback is worse than none, because the client would switch to it at
-    exactly the moment the direct path is gone. Never-checked ones are kept.
+    exactly the moment the direct path is gone. Never-checked ones are kept,
+    except a pinned one, which cannot be described before its certificate is
+    known. Preview-only resources come back only with ``include_preview``.
     """
     eligible = {server.id for server in servers if serves_cdn(server)}
     if not eligible:
@@ -105,8 +112,50 @@ async def endpoints_by_server(
     )
     grouped: dict[int, list[CdnEndpoint]] = defaultdict(list)
     for row in rows:
+        if row.preview_only and not include_preview:
+            continue
+        if row.pin_cert and not row.cert_pins:
+            continue
         grouped[row.server_id].append(row)
     return dict(grouped)
+
+
+def _unverified_tls() -> ssl.SSLContext:
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    return context
+
+
+async def edge_cert_sha256(endpoint: CdnEndpoint, *, timeout: float = 10.0) -> str:
+    """SHA-256 (hex) of the leaf certificate the edge presents for the endpoint's SNI.
+
+    What a pinned endpoint's clients are told to accept: Xray matches a pinned
+    leaf by this hash and skips every other check, the expiry included.
+    """
+    _reader, writer = await asyncio.wait_for(
+        asyncio.open_connection(
+            endpoint.connect_address,
+            443,
+            ssl=_unverified_tls(),
+            server_hostname=endpoint.tls_server_name,
+        ),
+        timeout,
+    )
+    try:
+        der = writer.get_extra_info("ssl_object").getpeercert(binary_form=True)
+    finally:
+        writer.close()
+    return hashlib.sha256(der).hexdigest()
+
+
+def merge_cert_pins(known: list[str], seen: str, *, keep: int = 4) -> str:
+    """The pin list after seeing ``seen``: it first, then the most recent others.
+
+    Older pins stay for a while because edges do not switch certificates in
+    step, and a client only learns the new list on its next subscription fetch.
+    """
+    return ",".join([seen, *(pin for pin in known if pin != seen)][:keep])
 
 
 async def probe_endpoint(server: Server, endpoint: CdnEndpoint, *, timeout: float = 10.0) -> tuple[bool, str]:
@@ -131,6 +180,9 @@ async def probe_endpoint(server: Server, endpoint: CdnEndpoint, *, timeout: floa
                 url,
                 headers=headers,
                 server_hostname=endpoint.tls_server_name,
+                # A pinned endpoint's certificate is not expected to verify;
+                # which certificate it is, is edge_cert_sha256's business.
+                ssl=_unverified_tls() if endpoint.pin_cert else True,
                 allow_redirects=False,
             ) as response:
                 cookies = response.headers.getall("Set-Cookie", [])
@@ -154,6 +206,17 @@ def _xhttp_settings(server: Server, endpoint: CdnEndpoint) -> dict:
     return settings
 
 
+def _tls_settings(endpoint: CdnEndpoint) -> dict:
+    settings: dict = {
+        "serverName": endpoint.tls_server_name,
+        "alpn": ["h2", "http/1.1"],
+        "fingerprint": "chrome",
+    }
+    if endpoint.pin_cert:
+        settings["pinnedPeerCertSha256"] = ",".join(endpoint.cert_pins)
+    return settings
+
+
 def build_outbound(server: Server, endpoint: CdnEndpoint, client_id: str, tag: str) -> dict:
     return {
         "tag": tag,
@@ -171,12 +234,9 @@ def build_outbound(server: Server, endpoint: CdnEndpoint, client_id: str, tag: s
             "network": "xhttp",
             "security": "tls",
             # The edge presents the CDN's own valid certificate for the resource
-            # (or for the fronting name), so normal verification stays on.
-            "tlsSettings": {
-                "serverName": endpoint.tls_server_name,
-                "alpn": ["h2", "http/1.1"],
-                "fingerprint": "chrome",
-            },
+            # (or for the fronting name), so normal verification stays on;
+            # a pinned endpoint is checked against its learned hashes instead.
+            "tlsSettings": _tls_settings(endpoint),
             "xhttpSettings": _xhttp_settings(server, endpoint),
             "sockopt": {"tcpKeepAliveIdle": 10, "tcpKeepAliveInterval": 5},
         },
@@ -196,6 +256,8 @@ def build_link(server: Server, endpoint: CdnEndpoint, client_id: str, label: str
         ("alpn", "h2,http/1.1"),
         ("fp", "chrome"),
     ]
+    if endpoint.pin_cert:
+        query.append(("pcs", ",".join(endpoint.cert_pins)))
     # A link has no fields for the placements, so they travel in "extra".
     extra = {**CDN_XHTTP_PROFILE, **(endpoint.xhttp_extra or {})}
     query.append(("extra", json.dumps(extra, separators=(",", ":"))))

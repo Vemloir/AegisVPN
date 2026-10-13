@@ -5,6 +5,8 @@ Run inside the bot container, e.g.::
     docker exec -it aegis-bot python -m src.cdn_admin list
     docker exec -it aegis-bot python -m src.cdn_admin origin 3 --host n3.example.ru --port 8443
     docker exec -it aegis-bot python -m src.cdn_admin add 3 --provider Beget --host abc.begetcdn.cloud
+    docker exec -it aegis-bot python -m src.cdn_admin add 3 --provider Beget --host abc.begetcdn.cloud \
+        --sni 12.img.avito.st --pin-cert --preview-only
     docker exec -it aegis-bot python -m src.cdn_admin check
 
 ``origin`` configures the node side (its agent.env must carry the printed
@@ -45,6 +47,10 @@ async def _list() -> None:
         for endpoint in by_server.get(server.id, []):
             health = {None: "unchecked", True: "ok", False: "BROKEN"}[endpoint.last_check_ok]
             flags = "" if endpoint.enabled else " [disabled]"
+            if endpoint.preview_only:
+                flags += " [preview only]"
+            if endpoint.pin_cert:
+                flags += f" pins={','.join(pin[:12] for pin in endpoint.cert_pins) or 'none yet'}"
             print(
                 f"  #{endpoint.id} {endpoint.provider}: {endpoint.host}"
                 f" addr={endpoint.connect_address} sni={endpoint.tls_server_name}"
@@ -87,10 +93,16 @@ async def _add(args: argparse.Namespace) -> None:
             sni=args.sni,
             xhttp_extra=json.loads(args.extra) if args.extra else None,
             position=args.position,
+            pin_cert=args.pin_cert,
+            preview_only=args.preview_only,
         )
+        if args.pin_cert:
+            endpoint.pinned_cert_sha256 = await cdn_service.edge_cert_sha256(endpoint)
         session.add(endpoint)
         await session.commit()
         print(f"added CDN endpoint #{endpoint.id}")
+        if endpoint.pin_cert:
+            print(f"pinned certificate sha256: {endpoint.pinned_cert_sha256}")
 
 
 async def _set_enabled(endpoint_id: int, enabled: bool) -> None:
@@ -141,6 +153,12 @@ def main() -> None:
     add.add_argument("--sni", help="TLS SNI if not the host (domain fronting)")
     add.add_argument("--extra", help="xhttp extra as JSON")
     add.add_argument("--position", type=int, default=0)
+    add.add_argument(
+        "--pin-cert",
+        action="store_true",
+        help="trust the edge's certificate by hash (fronting through a name whose certificate does not verify)",
+    )
+    add.add_argument("--preview-only", action="store_true", help='only as a "| WL" entry for preview users')
     for name in ("enable", "disable", "remove"):
         command = commands.add_parser(name)
         command.add_argument("endpoint_id", type=int)
