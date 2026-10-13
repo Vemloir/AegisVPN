@@ -60,8 +60,9 @@ async def _origin(server_id: int, host: str, port: int, path: str | None) -> Non
         server.cdn_origin_host = host.strip().lower()
         server.cdn_port = port
         # An unguessable path keeps scanners that find the origin port from
-        # telling it apart from any other HTTPS server.
-        server.cdn_path = path or server.cdn_path or f"/{secrets.token_urlsafe(9)}/"
+        # telling it apart from any other HTTPS server. It ends in a file name:
+        # the CDN forwards nothing else.
+        server.cdn_path = path or server.cdn_path or f"/{secrets.token_urlsafe(9)}/app.js"
         await session.commit()
         print(f"server {server.id} {server.name}: origin {server.cdn_origin_host}:{server.cdn_port}")
         print("Put these into the node's agent.env and restart agent + xray:")

@@ -36,6 +36,24 @@ _PROBE_URL = "http://www.gstatic.com/generate_204"
 # Through a CDN the upload must be a sequence of ordinary requests: a CDN
 # buffers or rejects a streaming request body, which stream-up/stream-one need.
 _CDN_MODE = "packet-up"
+# How XHTTP must look to pass a Russian CDN (CDNvideo behind Beget/Timeweb).
+# Its edge forwards only file-like paths, so the session id and sequence go in
+# the query instead of the path; the session id is not a UUID and padding
+# rides in a cookie, not a URL-shaped Referer, since its anti-proxy filter
+# keys on both. The node's CDN inbound uses the same profile
+# (CDN_XHTTP_PROFILE in agent/entrypoint.sh); both sides must match.
+CDN_XHTTP_PROFILE = {
+    "sessionIDPlacement": "query",
+    "sessionIDKey": "v",
+    "sessionIDTable": "Base62",
+    "sessionIDLength": "16-24",
+    "seqPlacement": "query",
+    "seqKey": "n",
+    "xPaddingObfsMode": True,
+    "xPaddingPlacement": "cookie",
+    "xPaddingKey": "sid",
+    "xPaddingMethod": "tokenish",
+}
 
 
 def serves_cdn(server: Server) -> bool:
@@ -98,8 +116,8 @@ async def probe_endpoint(server: Server, endpoint: CdnEndpoint, *, timeout: floa
     exactly what a client-side ping hides: the direct path answers, so a dead
     fallback is invisible until the allowlist switches on.
     """
-    path = (server.cdn_path or "/").rstrip("/") + "/"
-    url = f"https://{endpoint.connect_address}{path}?_={secrets.token_hex(4)}"
+    # The inbound's own path: the CDN refuses anything not shaped like a file.
+    url = f"https://{endpoint.connect_address}{server.cdn_path or '/'}?_={secrets.token_hex(4)}"
     headers = {"Host": endpoint.host, "Cache-Control": "no-cache", "User-Agent": "Mozilla/5.0"}
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as http:
@@ -121,6 +139,7 @@ def _xhttp_settings(server: Server, endpoint: CdnEndpoint) -> dict:
         "host": endpoint.host,
         "path": server.cdn_path,
         "mode": _CDN_MODE,
+        **copy.deepcopy(CDN_XHTTP_PROFILE),
         "xmux": {"hKeepAlivePeriod": 15},
     }
     if endpoint.xhttp_extra:
@@ -170,8 +189,9 @@ def build_link(server: Server, endpoint: CdnEndpoint, client_id: str, label: str
         ("alpn", "h2,http/1.1"),
         ("fp", "chrome"),
     ]
-    if endpoint.xhttp_extra:
-        query.append(("extra", json.dumps(endpoint.xhttp_extra, separators=(",", ":"))))
+    # A link has no fields for the placements, so they travel in "extra".
+    extra = {**CDN_XHTTP_PROFILE, **(endpoint.xhttp_extra or {})}
+    query.append(("extra", json.dumps(extra, separators=(",", ":"))))
     return f"vless://{client_id}@{endpoint.connect_address}:443?{urlencode(query, quote_via=quote)}#{quote(label)}"
 
 
