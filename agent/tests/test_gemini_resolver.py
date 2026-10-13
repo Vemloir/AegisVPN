@@ -33,6 +33,7 @@ def _config() -> dict:
 def test_gemini_resolves_and_leaves_through_the_resolver(monkeypatch):
     ensure, domains = _ensure_gemini_resolver()
     monkeypatch.setenv("GEMINI_RESOLVER", RESOLVER)
+    monkeypatch.delenv("GEMINI_RESOLVER_SKIP_IPS", raising=False)
     config = _config()
     ensure(config)
     ensure(config)  # idempotent across restarts
@@ -51,6 +52,15 @@ def test_gemini_resolves_and_leaves_through_the_resolver(monkeypatch):
     sniffing = {i["tag"]: i.get("sniffing") for i in config["inbounds"]}
     assert sniffing["vless-in"]["destOverride"] == ["http", "tls", "quic"]
     assert sniffing["reality-split"]["destOverride"] == ["tls"]
+
+
+def test_dead_proxies_are_dropped_from_answers(monkeypatch):
+    ensure, _domains = _ensure_gemini_resolver()
+    monkeypatch.setenv("GEMINI_RESOLVER", RESOLVER)
+    monkeypatch.setenv("GEMINI_RESOLVER_SKIP_IPS", "159.194.200.33, 203.0.113.0/24")
+    config = _config()
+    ensure(config)
+    assert config["dns"]["servers"][0]["unexpectedIPs"] == ["159.194.200.33", "203.0.113.0/24"]
 
 
 def test_without_a_resolver_everything_is_removed(monkeypatch):
