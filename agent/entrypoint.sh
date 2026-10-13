@@ -454,6 +454,57 @@ def ensure_warp(cfg: dict) -> None:
     rules.insert(api_idx + 2, warp_domains_rule)
 
 
+GEMINI_DOMAINS = [
+    "geosite:google-gemini",
+    "domain:gemini.google.com",
+    "domain:generativelanguage.googleapis.com",
+    "domain:aistudio.google.com",
+    "domain:alkalimakersuite-pa.clients6.google.com",
+]
+
+
+def ensure_gemini_resolver(cfg: dict) -> None:
+    """Send Gemini through the resolver named in GEMINI_RESOLVER (a DoH URL).
+
+    Gemini answers "not available in your country" from our nodes' own IPs,
+    whatever country Google places them in. A resolver such as comss answers
+    Gemini's names with an SNI proxy abroad that passes TLS through untouched
+    (the client still verifies Google's own certificate), so only Gemini
+    leaves through it; every other name resolves and exits as before.
+
+    QUIC to those names is blocked so browsers fall back to TCP: the proxy
+    takes TLS over TCP, and over UDP Gemini would leave from the node itself.
+    Without GEMINI_RESOLVER every piece added by an earlier boot is removed.
+    """
+    outbounds = cfg.setdefault("outbounds", [])
+    rules = cfg.setdefault("routing", {}).setdefault("rules", [])
+    dns = cfg.setdefault("dns", {})
+    servers = dns.setdefault("servers", [])
+    outbounds[:] = [o for o in outbounds if o.get("tag") != "gemini"]
+    rules[:] = [r for r in rules if r.get("domain") != GEMINI_DOMAINS]
+    servers[:] = [s for s in servers if not (isinstance(s, dict) and s.get("domains") == GEMINI_DOMAINS)]
+    for inbound in cfg.get("inbounds", []):
+        sniffing = inbound.get("sniffing") or {}
+        if "quic" in sniffing.get("destOverride", []) and not sniffing.get("routeOnly"):
+            sniffing["destOverride"] = [d for d in sniffing["destOverride"] if d != "quic"]
+
+    resolver = (os.environ.get("GEMINI_RESOLVER") or "").strip()
+    if not resolver:
+        return
+    # skipFallback: the resolver answers Gemini's names and nothing else.
+    servers.insert(0, {"address": resolver, "domains": GEMINI_DOMAINS, "skipFallback": True})
+    # ForceIPv4 resolves through the DNS above; if it fails the connection
+    # fails too instead of quietly leaving from the node's own address.
+    outbounds.append({"tag": "gemini", "protocol": "freedom", "settings": {"domainStrategy": "ForceIPv4"}})
+    for inbound in cfg.get("inbounds", []):
+        sniffing = inbound.get("sniffing") or {}
+        if "tls" in sniffing.get("destOverride", []) and not sniffing.get("routeOnly"):
+            sniffing["destOverride"] = [*sniffing["destOverride"], "quic"]
+    api_idx = next((i for i, r in enumerate(rules) if r.get("inboundTag") == ["api"]), -1)
+    rules.insert(api_idx + 1, {"type": "field", "network": "udp", "domain": GEMINI_DOMAINS, "outboundTag": "block"})
+    rules.insert(api_idx + 2, {"type": "field", "domain": GEMINI_DOMAINS, "outboundTag": "gemini"})
+
+
 def ensure_private_blocked(cfg: dict) -> None:
     """Idempotently keep subscriber traffic off the node's own private network.
 
@@ -567,6 +618,7 @@ def ensure_cdn_sni_split(cfg: dict) -> None:
 
 
 ensure_warp(config)
+ensure_gemini_resolver(config)
 ensure_private_blocked(config)
 ensure_lb_probe(config)
 ensure_conn_limit_reachable(config)
