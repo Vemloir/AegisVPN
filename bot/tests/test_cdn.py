@@ -139,6 +139,9 @@ async def test_location_gets_its_cdn_resources_as_a_fallback_tier(monkeypatch):
     balancers = {balancer["tag"]: balancer for balancer in routing["balancers"]}
     assert balancers["primary"]["selector"] == ["proxy"]
     assert balancers["primary"]["fallbackTag"] == "cdn-fallback"
+    # Not leastPing: with no health check yet that would send every fresh
+    # connect through the CDN; random keeps the unchecked direct path.
+    assert balancers["primary"]["strategy"] == {"type": "random"}
     assert balancers["cdn"]["selector"] == ["cdn-"]
     # Loopback traffic is routed to the CDN tier before anything else ...
     assert routing["rules"][0] == {"type": "field", "inboundTag": ["cdn-fallback-in"], "balancerTag": "cdn"}
@@ -187,7 +190,14 @@ async def test_autoselect_falls_back_to_every_cdn_resource(monkeypatch):
     configs = await _json_configs(token)
     autoselect = configs[0]
     balancers = {balancer["tag"]: balancer for balancer in autoselect["routing"]["balancers"]}
-    assert balancers["auto"]["fallbackTag"] == "cdn-fallback"
+    # Ranked by ping first; with no ranking yet (or none alive) any direct node
+    # not known to be dead, and only when every one is dead the CDN tier.
+    assert balancers["auto"]["fallbackTag"] == "primary-fallback"
+    assert balancers["primary-any"]["strategy"] == {"type": "random"}
+    assert balancers["primary-any"]["selector"] == balancers["auto"]["selector"]
+    assert balancers["primary-any"]["fallbackTag"] == "cdn-fallback"
+    rules = autoselect["routing"]["rules"]
+    assert {"type": "field", "inboundTag": ["primary-fallback-in"], "balancerTag": "primary-any"} in rules
     assert "cdn" in balancers
     assert any(outbound["tag"] == "cdn-1" for outbound in autoselect["outbounds"])
 

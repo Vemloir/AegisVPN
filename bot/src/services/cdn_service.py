@@ -32,6 +32,10 @@ CDN_BALANCER_TAG = "cdn"
 CDN_LOOPBACK_INBOUND = "cdn-fallback-in"
 CDN_LOOPBACK_OUTBOUND = "cdn-fallback"
 PRIMARY_BALANCER_TAG = "primary"
+# Auto-select's second stage: any direct node not known to be dead.
+PRIMARY_ANY_BALANCER_TAG = "primary-any"
+PRIMARY_FALLBACK_INBOUND = "primary-fallback-in"
+PRIMARY_FALLBACK_OUTBOUND = "primary-fallback"
 _PROBE_URL = "http://www.gstatic.com/generate_204"
 # Through a CDN the upload must be a sequence of ordinary requests: a CDN
 # buffers or rejects a streaming request body, which stream-up/stream-one need.
@@ -230,6 +234,13 @@ def attach_fallback(config: dict, cdn_outbounds: list[dict]) -> dict:
     so the fallback is a loopback outbound feeding a local inbound whose traffic
     is routed to the CDN balancer. The primary is health-checked; while it
     answers, the CDN tier carries nothing.
+
+    Until the first health check has run there is no measurement at all, and a
+    leastPing balancer then picks nothing and hands everything to its fallback:
+    every fresh connect would start out through the CDN, slower and billed. A
+    random balancer instead treats an outbound it has no report on as alive and
+    drops only the ones a check found dead, so the direct path is taken until it
+    is known to be down.
     """
     if not cdn_outbounds:
         return config
@@ -256,15 +267,46 @@ def attach_fallback(config: dict, cdn_outbounds: list[dict]) -> dict:
     rules = routing.setdefault("rules", [])
     balancers = routing.setdefault("balancers", [])
     if balancers:
-        # The auto-select entry already balances its primaries.
+        # Auto-select keeps ranking its nodes by ping. With no ranking yet, or
+        # none alive, it falls to a second stage over the same nodes that takes
+        # any one not known to be dead, and only that one falls to the CDN.
+        selectors = sorted({selector for balancer in balancers for selector in balancer.get("selector", [])})
         for balancer in balancers:
-            balancer["fallbackTag"] = CDN_LOOPBACK_OUTBOUND
+            balancer["fallbackTag"] = PRIMARY_FALLBACK_OUTBOUND
+        outbounds.append(
+            {
+                "tag": PRIMARY_FALLBACK_OUTBOUND,
+                "protocol": "loopback",
+                "settings": {"inboundTag": PRIMARY_FALLBACK_INBOUND},
+            }
+        )
+        result["inbounds"].append(
+            {
+                "tag": PRIMARY_FALLBACK_INBOUND,
+                "listen": "127.0.0.1",
+                "port": 0,
+                "protocol": "dokodemo-door",
+                "settings": {"address": "127.0.0.1", "network": "tcp,udp"},
+            }
+        )
+        balancers.append(
+            {
+                "tag": PRIMARY_ANY_BALANCER_TAG,
+                "selector": selectors,
+                "strategy": {"type": "random"},
+                "fallbackTag": CDN_LOOPBACK_OUTBOUND,
+            }
+        )
+        rules.insert(
+            0, {"type": "field", "inboundTag": [PRIMARY_FALLBACK_INBOUND], "balancerTag": PRIMARY_ANY_BALANCER_TAG}
+        )
     else:
         balancers.append(
             {
                 "tag": PRIMARY_BALANCER_TAG,
                 "selector": ["proxy"],
-                "strategy": {"type": "leastPing"},
+                # random, not leastPing: see the docstring.
+                "strategy": {"type": "random"},
                 "fallbackTag": CDN_LOOPBACK_OUTBOUND,
             }
         )
