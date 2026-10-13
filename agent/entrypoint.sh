@@ -454,12 +454,31 @@ def ensure_warp(cfg: dict) -> None:
     rules.insert(api_idx + 2, warp_domains_rule)
 
 
+# Every name comss sends to its AI proxies (checked 2026-10-13): the Gemini
+# page and app call several backends besides gemini.google.com, and one of
+# them leaving from the node's own IP is enough to bring the error back.
 GEMINI_DOMAINS = [
     "geosite:google-gemini",
     "domain:gemini.google.com",
+    "domain:bard.google.com",
     "domain:generativelanguage.googleapis.com",
-    "domain:aistudio.google.com",
+    "domain:robinfrontend-pa.googleapis.com",
+    "domain:proactivebackend-pa.googleapis.com",
     "domain:alkalimakersuite-pa.clients6.google.com",
+    "domain:waa-pa.clients6.google.com",
+    "domain:signaler-pa.clients6.google.com",
+    "domain:ogads-pa.clients6.google.com",
+    "domain:apis.google.com",
+    "domain:aistudio.google.com",
+    "domain:ai.google.dev",
+    "domain:cloudcode-pa.googleapis.com",
+    "domain:notebooklm.google.com",
+    "domain:notebooklm.google",
+    "domain:labs.google",
+    "domain:aisandbox-pa.googleapis.com",
+    "domain:aitestkitchen.withgoogle.com",
+    "domain:stitch.withgoogle.com",
+    "domain:antigravity.google",
 ]
 
 
