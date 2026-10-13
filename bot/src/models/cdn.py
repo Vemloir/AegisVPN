@@ -36,6 +36,15 @@ class CdnEndpoint(Base):
     # Optional xhttp ``extra`` for what a particular CDN tolerates (e.g. Yandex
     # rejects request bodies, so uplink must ride in GET headers there).
     xhttp_extra: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Trust the edge's certificate by its hash instead of by the CA chain. For
+    # fronting through a name whose certificate the edge serves but that would
+    # not verify (e.g. expired). The reachability check learns the hashes into
+    # ``pinned_cert_sha256`` (comma-separated hex, newest first); until it has
+    # one the resource is not advertised.
+    pin_cert: Mapped[bool] = mapped_column(Boolean, default=False)
+    pinned_cert_sha256: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Only shown as a "| WL" preview entry, never in anyone's fallback tier.
+    preview_only: Mapped[bool] = mapped_column(Boolean, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     position: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -53,3 +62,7 @@ class CdnEndpoint(Base):
     @property
     def tls_server_name(self) -> str:
         return (self.sni or "").strip() or self.host
+
+    @property
+    def cert_pins(self) -> list[str]:
+        return [pin for pin in (self.pinned_cert_sha256 or "").split(",") if pin]

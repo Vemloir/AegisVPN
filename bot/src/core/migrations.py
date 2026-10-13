@@ -233,6 +233,12 @@ MIGRATIONS: dict[str, list[Column]] = {
     "cascade_route_acks": [
         Column("config_digest", "VARCHAR(64)", "VARCHAR(64)"),
     ],
+    # See CdnEndpoint.pin_cert / preview_only.
+    "cdn_endpoints": [
+        Column("pin_cert", "BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE"),
+        Column("pinned_cert_sha256", "VARCHAR(512)", "VARCHAR(512)"),
+        Column("preview_only", "BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE"),
+    ],
 }
 
 

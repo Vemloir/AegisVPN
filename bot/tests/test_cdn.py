@@ -107,6 +107,11 @@ def _by_host(configs: list[dict], host: str) -> dict:
     return next(cfg for cfg in locations if cfg["outbounds"][0]["settings"]["vnext"][0]["address"] == host)
 
 
+def _cdn_paths(cfg: dict) -> list[str]:
+    """Tags of the CDN outbounds proper (not the loopback into the CDN tier)."""
+    return [o["tag"] for o in cfg["outbounds"] if o["tag"].startswith("cdn-") and o["protocol"] == "vless"]
+
+
 BEGET = {"provider": "Beget", "host": "abc.begetcdn.cloud"}
 
 
@@ -260,6 +265,72 @@ async def test_link_subscription_lists_cdn_paths_after_their_location(monkeypatc
     assert unquote(parts.fragment).endswith("· CDN")
 
 
+PIN_A = "a1" * 32
+PIN_B = "b2" * 32
+AVITO = {
+    "provider": "Beget",
+    "host": "abc.begetcdn.cloud",
+    "sni": "12.img.avito.st",
+    "pin_cert": True,
+    "pinned_cert_sha256": f"{PIN_A},{PIN_B}",
+    "preview_only": True,
+}
+
+
+async def test_preview_only_resource_is_a_wl_entry_and_never_a_fallback(monkeypatch):
+    monkeypatch.setattr(settings, "cdn_wl_preview_tg_ids", [940001])
+    token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[BEGET, AVITO])
+    configs = await _json_configs(token)
+    # The fallback tier (location and auto-select) carries the plain resource only.
+    location = _by_host(configs, "203.0.113.30")
+    assert _cdn_paths(location) == ["cdn-1"]
+    assert _cdn_paths(configs[0]) == ["cdn-1"]
+    wl = {cfg["remarks"]: cfg for cfg in configs if " | WL" in cfg["remarks"]}
+    assert set(wl) == {f"{location['remarks']} | WL Beget", f"{location['remarks']} | WL Beget (12.img.avito.st)"}
+    tls = wl[f"{location['remarks']} | WL Beget (12.img.avito.st)"]["outbounds"][0]["streamSettings"]["tlsSettings"]
+    assert tls["serverName"] == "12.img.avito.st"
+    assert tls["pinnedPeerCertSha256"] == f"{PIN_A},{PIN_B}"
+    plain_tls = wl[f"{location['remarks']} | WL Beget"]["outbounds"][0]["streamSettings"]["tlsSettings"]
+    assert "pinnedPeerCertSha256" not in plain_tls
+
+
+async def test_preview_only_resource_stays_out_for_everyone_else(monkeypatch):
+    token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[AVITO])
+    for cfg in await _json_configs(token):
+        assert not any(o["tag"].startswith("cdn-") for o in cfg["outbounds"])
+        assert " | WL" not in cfg["remarks"]
+    async with async_session_maker() as session:
+        body = await SubscriptionService.get_subscription_vless_links(session, token)
+    assert len(base64.b64decode(body).decode().splitlines()) == 2
+
+
+async def test_pinned_resource_waits_for_its_first_certificate(monkeypatch):
+    monkeypatch.setattr(settings, "cdn_wl_preview_tg_ids", [940001])
+    unlearned = {**AVITO, "pinned_cert_sha256": None, "preview_only": False}
+    token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[unlearned])
+    for cfg in await _json_configs(token):
+        assert not any(o["tag"].startswith("cdn-") for o in cfg["outbounds"])
+        assert " | WL" not in cfg["remarks"]
+
+
+async def test_pinned_link_carries_the_pins(monkeypatch):
+    token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[{**AVITO, "preview_only": False}])
+    async with async_session_maker() as session:
+        body = await SubscriptionService.get_subscription_vless_links(session, token)
+    cdn_link = next(link for link in base64.b64decode(body).decode().splitlines() if "abc.begetcdn.cloud" in link)
+    query = dict(parse_qsl(urlsplit(cdn_link).query))
+    assert query["sni"] == "12.img.avito.st"
+    assert query["pcs"] == f"{PIN_A},{PIN_B}"
+
+
+def test_new_certificate_goes_first_and_old_ones_age_out():
+    assert cdn_service.merge_cert_pins([], PIN_A) == PIN_A
+    assert cdn_service.merge_cert_pins([PIN_A], PIN_A) == PIN_A
+    assert cdn_service.merge_cert_pins([PIN_A], PIN_B) == f"{PIN_B},{PIN_A}"
+    pins = [f"{n:064x}" for n in range(1, 5)]
+    assert cdn_service.merge_cert_pins(pins, PIN_B).split(",") == [PIN_B, *pins[:3]]
+
+
 def test_client_and_node_share_the_cdn_xhttp_profile():
     """The node's CDN inbound and the subscription's client must agree."""
     import re
@@ -306,6 +377,29 @@ async def test_check_records_results_and_alerts_on_transitions(monkeypatch):
     async with async_session_maker() as session:
         assert (await session.get(CdnEndpoint, 1)).last_check_ok is True
     assert len(alerts) == 2 and "снова работает" in alerts[1]
+
+
+async def test_check_learns_the_certificate_of_a_pinned_resource(monkeypatch):
+    await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[{**AVITO, "pinned_cert_sha256": PIN_A}, BEGET])
+
+    async def fake_probe(server, endpoint):
+        return True, "origin reached (HTTP 400)"
+
+    seen: list[int] = []
+
+    async def fake_cert(endpoint):
+        seen.append(endpoint.id)
+        return PIN_B
+
+    monkeypatch.setattr(cdn_service, "probe_endpoint", fake_probe)
+    monkeypatch.setattr(cdn_service, "edge_cert_sha256", fake_cert)
+    monkeypatch.setattr(tasks, "_alert_admins", lambda bot, text: None)
+
+    await tasks.check_cdn_endpoints(bot=None)
+    async with async_session_maker() as session:
+        assert (await session.get(CdnEndpoint, 1)).pinned_cert_sha256 == f"{PIN_B},{PIN_A}"
+        assert (await session.get(CdnEndpoint, 2)).pinned_cert_sha256 is None
+    assert seen == [1]  # only pinned resources are asked for their certificate
 
 
 # --- origin certificate delivery ------------------------------------------------

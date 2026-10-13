@@ -840,26 +840,34 @@ async def check_cdn_endpoints(bot: Bot):
 
     semaphore = asyncio.Semaphore(8)
 
-    async def probe(endpoint: CdnEndpoint, server: Server) -> tuple[CdnEndpoint, Server, bool, str]:
+    async def probe(endpoint: CdnEndpoint, server: Server) -> tuple[CdnEndpoint, Server, bool, str, str | None]:
         async with semaphore:
             ok, detail = await cdn_service.probe_endpoint(server, endpoint)
             if not ok:
                 await asyncio.sleep(3)
                 ok, detail = await cdn_service.probe_endpoint(server, endpoint)
-            return endpoint, server, ok, detail
+            pins = None
+            if ok and endpoint.pin_cert:
+                # Re-learned on every check, so a certificate the edge rotates
+                # reaches clients with their next subscription fetch.
+                try:
+                    seen = await cdn_service.edge_cert_sha256(endpoint)
+                    pins = cdn_service.merge_cert_pins(endpoint.cert_pins, seen)
+                except Exception as exc:  # noqa: BLE001 - keep the pins we have
+                    logger.warning("CDN endpoint %s: certificate not read: %r", endpoint.id, exc)
+            return endpoint, server, ok, detail, pins
 
     results = await asyncio.gather(*(probe(endpoint, server) for endpoint, server in targets))
     now = datetime.now(UTC).replace(tzinfo=None)
     async with async_session_maker() as session:
-        for endpoint, _server, ok, detail in results:
-            await session.execute(
-                update(CdnEndpoint)
-                .where(CdnEndpoint.id == endpoint.id)
-                .values(last_check_ok=ok, last_check_at=now, last_check_detail=detail[:255])
-            )
+        for endpoint, _server, ok, detail, pins in results:
+            values = {"last_check_ok": ok, "last_check_at": now, "last_check_detail": detail[:255]}
+            if pins is not None:
+                values["pinned_cert_sha256"] = pins
+            await session.execute(update(CdnEndpoint).where(CdnEndpoint.id == endpoint.id).values(**values))
         await session.commit()
 
-    for endpoint, server, ok, detail in results:
+    for endpoint, server, ok, detail, _pins in results:
         if ok == endpoint.last_check_ok or (ok and endpoint.last_check_ok is None):
             continue
         name = f"{server.name} via {endpoint.provider} ({endpoint.host})"
