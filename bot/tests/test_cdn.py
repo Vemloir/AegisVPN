@@ -148,6 +148,31 @@ async def test_location_gets_its_cdn_resources_as_a_fallback_tier(monkeypatch):
     assert any(inbound.get("tag") == "cdn-fallback-in" for inbound in cfg["inbounds"])
 
 
+async def test_preview_user_gets_a_cdn_only_wl_location(monkeypatch):
+    monkeypatch.setattr(settings, "cdn_wl_preview_tg_ids", [940001])
+    token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[BEGET])
+    configs = await _json_configs(token)
+    wl = [cfg for cfg in configs if cfg["remarks"].endswith(" | WL")]
+    assert len(wl) == 1
+    direct = _by_host(configs, "203.0.113.30")
+    assert wl[0]["remarks"] == direct["remarks"] + " | WL"
+    proxy = wl[0]["outbounds"][0]
+    # Only the CDN: the edge is dialled, never the node itself.
+    assert proxy["tag"] == "proxy"
+    assert proxy["settings"]["vnext"][0]["address"] == "abc.begetcdn.cloud"
+    assert proxy["settings"]["vnext"][0]["users"][0]["id"] == UUID
+    assert proxy["streamSettings"]["xhttpSettings"]["sessionIDPlacement"] == "query"
+    assert not any(o["tag"].startswith("cdn-") for o in wl[0]["outbounds"])
+    assert "balancers" not in wl[0]["routing"]
+
+
+async def test_wl_location_is_only_for_preview_users(monkeypatch):
+    monkeypatch.setattr(settings, "cdn_wl_preview_tg_ids", [123])
+    token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[BEGET])
+    configs = await _json_configs(token)
+    assert not any(cfg["remarks"].endswith(" | WL") for cfg in configs)
+
+
 async def test_location_without_cdn_is_unchanged(monkeypatch):
     token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[BEGET])
     configs = await _json_configs(token)

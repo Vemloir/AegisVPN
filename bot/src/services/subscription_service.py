@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import settings
 from src.core.logger import logger
-from src.models import Device, Server, ServerTransportPref, Subscription, SubscriptionServer
+from src.models import Device, Server, ServerTransportPref, Subscription, SubscriptionServer, User
 from src.services import cdn_service, geoip
 from src.services.agent_client import AgentClient
 from src.services.cascade_service import advertisable_routes
@@ -845,11 +845,26 @@ class SubscriptionService:
                 plain_configs[index] = cdn_service.attach_fallback(cfg, outbounds)
             if autoselect is not None:
                 autoselect = cdn_service.attach_fallback(autoselect, every_cdn_outbound)
+            if await SubscriptionService._sees_cdn_preview(session, sub_token):
+                for server, cfg in configs:
+                    server_endpoints = endpoints.get(server.id, [])
+                    for endpoint in server_endpoints:
+                        suffix = " | WL" if len(server_endpoints) == 1 else f" | WL {endpoint.provider}"
+                        outbound = cdn_service.build_outbound(server, endpoint, cdn_service.client_id_of(cfg), "proxy")
+                        plain_configs.append(cdn_service.cdn_only(cfg, outbound, f"{cfg['remarks']}{suffix}"))
         if autoselect is not None:
             # First, not last: it is the entry most users should take, and the
             # one that stops mattering the moment it is scrolled past.
             plain_configs.insert(0, autoselect)
         return "json", (json.dumps(plain_configs, ensure_ascii=False) if plain_configs else "")
+
+    @staticmethod
+    async def _sees_cdn_preview(session: AsyncSession, sub_token: str) -> bool:
+        if not settings.cdn_wl_preview_tg_ids:
+            return False
+        sub = await SubscriptionService.get_subscription_by_token(session, sub_token)
+        user = await session.get(User, sub.user_id) if sub else None
+        return user is not None and user.tg_id in set(settings.cdn_wl_preview_tg_ids)
 
     @staticmethod
     def _build_autoselect_config(configs: list[tuple[Server, dict]]) -> dict | None:
