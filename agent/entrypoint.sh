@@ -379,9 +379,10 @@ def ensure_warp(cfg: dict) -> None:
     an unnecessary hop.
 
     Google's AI services (Gemini, AI Studio, Labs) used to go through WARP too
-    and must not any more: Google places the shared WARP egress in Russia (or,
-    on its IPv4 side, the US), so through it Gemini says "not available in
-    your country", while every node's own IP is placed in the node's country.
+    and must not by default: Google places the dual-stack WARP egress in
+    Russia (its IPv6 side) or the US (its IPv4 side), so through it Gemini
+    flips to "not available in your country". ensure_gemini_resolver can send
+    them through WARP forced to IPv4 instead (GEMINI_EGRESS=warp).
     """
     outbounds = cfg.setdefault("outbounds", [])
     existing_warp = next((outbound for outbound in outbounds if outbound.get("tag") == "warp"), None)
@@ -483,18 +484,23 @@ GEMINI_DOMAINS = [
 
 
 def ensure_gemini_resolver(cfg: dict) -> None:
-    """Send Gemini through the resolver named in GEMINI_RESOLVER (a DoH URL).
+    """Send Gemini out through an egress Google accepts for it.
 
     Gemini answers "not available in your country" from our nodes' own IPs,
-    whatever country Google places them in. A resolver such as comss answers
-    Gemini's names with an SNI proxy abroad that passes TLS through untouched
-    (the client still verifies Google's own certificate), so only Gemini
-    leaves through it; every other name resolves and exits as before.
+    whatever country Google places them in. Two ways out, chosen per node:
 
-    QUIC to those names is blocked so browsers fall back to TCP: the proxy
-    takes TLS over TCP, and over UDP Gemini would leave from the node itself.
-    Without GEMINI_RESOLVER every piece added by an earlier boot is removed.
-    GEMINI_RESOLVER_SKIP_IPS (comma-separated) drops dead proxies from answers.
+    - GEMINI_EGRESS=warp: the node's WARP outbound, forced to IPv4. Google
+      places WARP's IPv4 egress in the US and its IPv6 egress in Russia, so
+      without the force a dual-stack tunnel flips between the two.
+    - GEMINI_RESOLVER (a DoH URL): a resolver such as GeoHide or comss answers
+      Gemini's names with an SNI proxy that passes TLS through untouched (the
+      client still verifies Google's own certificate).
+      GEMINI_RESOLVER_SKIP_IPS (comma-separated) drops dead proxies from its
+      answers.
+
+    Only Gemini's names take that way; everything else exits as before. QUIC
+    to those names is blocked so browsers fall back to TCP, which both ways
+    carry. With neither set, every piece added by an earlier boot is removed.
     """
     outbounds = cfg.setdefault("outbounds", [])
     rules = cfg.setdefault("routing", {}).setdefault("rules", [])
@@ -503,33 +509,43 @@ def ensure_gemini_resolver(cfg: dict) -> None:
     outbounds[:] = [o for o in outbounds if o.get("tag") != "gemini"]
     rules[:] = [r for r in rules if r.get("domain") != GEMINI_DOMAINS]
     servers[:] = [s for s in servers if not (isinstance(s, dict) and s.get("domains") == GEMINI_DOMAINS)]
+    warp = next((o for o in outbounds if o.get("tag") == "warp"), None)
+    if warp is not None:
+        warp.setdefault("settings", {}).pop("domainStrategy", None)
     for inbound in cfg.get("inbounds", []):
         sniffing = inbound.get("sniffing") or {}
         if "quic" in sniffing.get("destOverride", []) and not sniffing.get("routeOnly"):
             sniffing["destOverride"] = [d for d in sniffing["destOverride"] if d != "quic"]
 
     resolver = (os.environ.get("GEMINI_RESOLVER") or "").strip()
-    if not resolver:
+    if (os.environ.get("GEMINI_EGRESS") or "").strip().lower() == "warp" and warp is not None:
+        # The one WARP session (a second one with the same key would fight it
+        # for the peer slot), forced to IPv4; Microsoft's traffic on it too.
+        warp["settings"]["domainStrategy"] = "ForceIPv4"
+        target = "warp"
+    elif resolver:
+        # skipFallback: the resolver answers Gemini's names and nothing else.
+        server = {"address": resolver, "domains": GEMINI_DOMAINS, "skipFallback": True}
+        # Proxies of the resolver's pool that do not answer from our nodes: a
+        # connection picks one of the answers at random, so a dead one would
+        # fail every few page loads.
+        skip = [ip.strip() for ip in (os.environ.get("GEMINI_RESOLVER_SKIP_IPS") or "").split(",") if ip.strip()]
+        if skip:
+            server["unexpectedIPs"] = skip
+        servers.insert(0, server)
+        # ForceIPv4 resolves through the DNS above; if it fails the connection
+        # fails too instead of quietly leaving from the node's own address.
+        outbounds.append({"tag": "gemini", "protocol": "freedom", "settings": {"domainStrategy": "ForceIPv4"}})
+        target = "gemini"
+    else:
         return
-    # skipFallback: the resolver answers Gemini's names and nothing else.
-    server = {"address": resolver, "domains": GEMINI_DOMAINS, "skipFallback": True}
-    # Proxies of the resolver's pool that do not answer from our nodes: a
-    # connection picks one of the answers at random, so a dead one would fail
-    # every few page loads.
-    skip = [ip.strip() for ip in (os.environ.get("GEMINI_RESOLVER_SKIP_IPS") or "").split(",") if ip.strip()]
-    if skip:
-        server["unexpectedIPs"] = skip
-    servers.insert(0, server)
-    # ForceIPv4 resolves through the DNS above; if it fails the connection
-    # fails too instead of quietly leaving from the node's own address.
-    outbounds.append({"tag": "gemini", "protocol": "freedom", "settings": {"domainStrategy": "ForceIPv4"}})
     for inbound in cfg.get("inbounds", []):
         sniffing = inbound.get("sniffing") or {}
         if "tls" in sniffing.get("destOverride", []) and not sniffing.get("routeOnly"):
             sniffing["destOverride"] = [*sniffing["destOverride"], "quic"]
     api_idx = next((i for i, r in enumerate(rules) if r.get("inboundTag") == ["api"]), -1)
     rules.insert(api_idx + 1, {"type": "field", "network": "udp", "domain": GEMINI_DOMAINS, "outboundTag": "block"})
-    rules.insert(api_idx + 2, {"type": "field", "domain": GEMINI_DOMAINS, "outboundTag": "gemini"})
+    rules.insert(api_idx + 2, {"type": "field", "domain": GEMINI_DOMAINS, "outboundTag": target})
 
 
 def ensure_private_blocked(cfg: dict) -> None:

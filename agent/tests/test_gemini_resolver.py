@@ -32,6 +32,7 @@ def _config() -> dict:
 
 def test_gemini_resolves_and_leaves_through_the_resolver(monkeypatch):
     ensure, domains = _ensure_gemini_resolver()
+    monkeypatch.delenv("GEMINI_EGRESS", raising=False)
     monkeypatch.setenv("GEMINI_RESOLVER", RESOLVER)
     monkeypatch.delenv("GEMINI_RESOLVER_SKIP_IPS", raising=False)
     config = _config()
@@ -56,6 +57,7 @@ def test_gemini_resolves_and_leaves_through_the_resolver(monkeypatch):
 
 def test_dead_proxies_are_dropped_from_answers(monkeypatch):
     ensure, _domains = _ensure_gemini_resolver()
+    monkeypatch.delenv("GEMINI_EGRESS", raising=False)
     monkeypatch.setenv("GEMINI_RESOLVER", RESOLVER)
     monkeypatch.setenv("GEMINI_RESOLVER_SKIP_IPS", "159.194.200.33, 203.0.113.0/24")
     config = _config()
@@ -63,8 +65,43 @@ def test_dead_proxies_are_dropped_from_answers(monkeypatch):
     assert config["dns"]["servers"][0]["unexpectedIPs"] == ["159.194.200.33", "203.0.113.0/24"]
 
 
+def _with_warp(config: dict) -> dict:
+    config["outbounds"].insert(1, {"tag": "warp", "protocol": "wireguard", "settings": {"secretKey": "k"}})
+    return config
+
+
+def test_gemini_can_leave_through_warp_over_ipv4(monkeypatch):
+    ensure, domains = _ensure_gemini_resolver()
+    monkeypatch.setenv("GEMINI_EGRESS", "warp")
+    monkeypatch.setenv("GEMINI_RESOLVER", RESOLVER)  # WARP wins over a resolver
+    config = _with_warp(_config())
+    ensure(config)
+    ensure(config)
+
+    warp = next(o for o in config["outbounds"] if o["tag"] == "warp")
+    assert warp["settings"]["domainStrategy"] == "ForceIPv4"
+    assert not any(o["tag"] == "gemini" for o in config["outbounds"])
+    assert config["dns"]["servers"] == ["https+local://9.9.9.9/dns-query"]
+    assert config["routing"]["rules"][2] == {"type": "field", "domain": domains, "outboundTag": "warp"}
+
+    monkeypatch.delenv("GEMINI_EGRESS")
+    monkeypatch.delenv("GEMINI_RESOLVER")
+    ensure(config)
+    assert config == _with_warp(_config())
+
+
+def test_warp_egress_without_a_warp_outbound_changes_nothing(monkeypatch):
+    ensure, _domains = _ensure_gemini_resolver()
+    monkeypatch.setenv("GEMINI_EGRESS", "warp")
+    monkeypatch.delenv("GEMINI_RESOLVER", raising=False)
+    config = _config()
+    ensure(config)
+    assert config == _config()
+
+
 def test_without_a_resolver_everything_is_removed(monkeypatch):
     ensure, _domains = _ensure_gemini_resolver()
+    monkeypatch.delenv("GEMINI_EGRESS", raising=False)
     monkeypatch.setenv("GEMINI_RESOLVER", RESOLVER)
     config = _config()
     ensure(config)
