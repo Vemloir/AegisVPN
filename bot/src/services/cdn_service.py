@@ -108,17 +108,19 @@ async def endpoints_by_server(
 async def probe_endpoint(server: Server, endpoint: CdnEndpoint, *, timeout: float = 10.0) -> tuple[bool, str]:
     """Does a request through this CDN resource reach the node's Xray?
 
-    A request under the inbound's path always comes back stamped with an
-    ``X-Padding`` header by Xray itself, whatever the status (a bare GET is a
-    400 to it). The CDN cannot produce that header, so its presence proves
-    the whole chain — edge, resource, origin certificate, inbound — while a
-    5xx without it is the CDN failing to reach the origin. That failure is
-    exactly what a client-side ping hides: the direct path answers, so a dead
-    fallback is invisible until the allowlist switches on.
+    A request under the inbound's path always comes back stamped with padding
+    by Xray itself, whatever the status (a bare GET is a 400 to it): a cookie
+    named after the profile's padding key, or an ``X-Padding`` header from an
+    inbound without the CDN profile. The CDN cannot produce either, so its
+    presence proves the whole chain — edge, resource, origin certificate,
+    inbound — while a 5xx without it is the CDN failing to reach the origin.
+    That failure is exactly what a client-side ping hides: the direct path
+    answers, so a dead fallback is invisible until the allowlist switches on.
     """
     # The inbound's own path: the CDN refuses anything not shaped like a file.
     url = f"https://{endpoint.connect_address}{server.cdn_path or '/'}?_={secrets.token_hex(4)}"
     headers = {"Host": endpoint.host, "Cache-Control": "no-cache", "User-Agent": "Mozilla/5.0"}
+    padding_cookie = CDN_XHTTP_PROFILE["xPaddingKey"] + "="
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as http:
             async with http.get(
@@ -127,7 +129,8 @@ async def probe_endpoint(server: Server, endpoint: CdnEndpoint, *, timeout: floa
                 server_hostname=endpoint.tls_server_name,
                 allow_redirects=False,
             ) as response:
-                if "X-Padding" in response.headers:
+                cookies = response.headers.getall("Set-Cookie", [])
+                if "X-Padding" in response.headers or any(c.startswith(padding_cookie) for c in cookies):
                     return True, f"origin reached (HTTP {response.status})"
                 return False, f"HTTP {response.status} without the origin's marker"
     except Exception as exc:  # noqa: BLE001 - any failure is a failed check
