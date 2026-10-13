@@ -494,6 +494,7 @@ def ensure_gemini_resolver(cfg: dict) -> None:
     QUIC to those names is blocked so browsers fall back to TCP: the proxy
     takes TLS over TCP, and over UDP Gemini would leave from the node itself.
     Without GEMINI_RESOLVER every piece added by an earlier boot is removed.
+    GEMINI_RESOLVER_SKIP_IPS (comma-separated) drops dead proxies from answers.
     """
     outbounds = cfg.setdefault("outbounds", [])
     rules = cfg.setdefault("routing", {}).setdefault("rules", [])
@@ -511,7 +512,14 @@ def ensure_gemini_resolver(cfg: dict) -> None:
     if not resolver:
         return
     # skipFallback: the resolver answers Gemini's names and nothing else.
-    servers.insert(0, {"address": resolver, "domains": GEMINI_DOMAINS, "skipFallback": True})
+    server = {"address": resolver, "domains": GEMINI_DOMAINS, "skipFallback": True}
+    # Proxies of the resolver's pool that do not answer from our nodes: a
+    # connection picks one of the answers at random, so a dead one would fail
+    # every few page loads.
+    skip = [ip.strip() for ip in (os.environ.get("GEMINI_RESOLVER_SKIP_IPS") or "").split(",") if ip.strip()]
+    if skip:
+        server["unexpectedIPs"] = skip
+    servers.insert(0, server)
     # ForceIPv4 resolves through the DNS above; if it fails the connection
     # fails too instead of quietly leaving from the node's own address.
     outbounds.append({"tag": "gemini", "protocol": "freedom", "settings": {"domainStrategy": "ForceIPv4"}})
