@@ -268,6 +268,26 @@ if grpc_port:
         new_inbounds.append(build_inbound(grpc_port_int, "grpc", "vless-in-grpc"))
 
 
+# How XHTTP must look to pass a Russian CDN (CDNvideo behind Beget/Timeweb).
+# Its edge forwards only file-like paths, so the session id and sequence go in
+# the query instead of the path (which would end in "/<session>/<seq>"); the
+# session id is not a UUID and padding rides in a cookie, not a URL-shaped
+# Referer, since its anti-proxy filter keys on both. The bot's subscription
+# builds clients from the same profile (bot/src/services/cdn_service.py).
+CDN_XHTTP_PROFILE = {
+    "sessionIDPlacement": "query",
+    "sessionIDKey": "v",
+    "sessionIDTable": "Base62",
+    "sessionIDLength": "16-24",
+    "seqPlacement": "query",
+    "seqKey": "n",
+    "xPaddingObfsMode": True,
+    "xPaddingPlacement": "cookie",
+    "xPaddingKey": "sid",
+    "xPaddingMethod": "tokenish",
+}
+
+
 def build_cdn_inbound(port: int) -> dict | None:
     """VLESS + XHTTP behind plain TLS: the origin a CDN resource proxies to.
 
@@ -297,7 +317,7 @@ def build_cdn_inbound(port: int) -> dict | None:
             "certificates": [{"certificateFile": cert_path, "keyFile": key_path}],
         },
         # "auto" accepts every client mode; through a CDN clients use packet-up.
-        "xhttpSettings": {"path": path, "mode": "auto"},
+        "xhttpSettings": {"path": path, "mode": "auto", **CDN_XHTTP_PROFILE},
     }
     if keepalive_idle > 0:
         stream["sockopt"] = {

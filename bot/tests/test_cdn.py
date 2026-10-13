@@ -132,6 +132,8 @@ async def test_location_gets_its_cdn_resources_as_a_fallback_tier(monkeypatch):
     assert stream["xhttpSettings"]["host"] == "abc.begetcdn.cloud"
     assert stream["xhttpSettings"]["path"] == "/media/"
     assert stream["xhttpSettings"]["mode"] == "packet-up"
+    for key, value in cdn_service.CDN_XHTTP_PROFILE.items():
+        assert stream["xhttpSettings"][key] == value
 
     routing = cfg["routing"]
     balancers = {balancer["tag"]: balancer for balancer in routing["balancers"]}
@@ -218,7 +220,22 @@ async def test_link_subscription_lists_cdn_paths_after_their_location(monkeypatc
     assert query["host"] == "abc.begetcdn.cloud"
     assert query["path"] == "/media/"
     assert query["mode"] == "packet-up"
+    # A link has no fields for the placements: they travel in "extra".
+    assert json.loads(query["extra"]) == cdn_service.CDN_XHTTP_PROFILE
     assert unquote(parts.fragment).endswith("· CDN")
+
+
+def test_client_and_node_share_the_cdn_xhttp_profile():
+    """The node's CDN inbound and the subscription's client must agree."""
+    import re
+    from pathlib import Path
+
+    entrypoint = (Path(__file__).resolve().parents[2] / "agent" / "entrypoint.sh").read_text()
+    literal = re.search(r"^CDN_XHTTP_PROFILE = (\{.*?^\})", entrypoint, re.S | re.M)
+    assert literal, "CDN_XHTTP_PROFILE not found in agent/entrypoint.sh"
+    scope: dict = {}
+    exec(f"profile = {literal.group(1)}", scope)
+    assert scope["profile"] == cdn_service.CDN_XHTTP_PROFILE
 
 
 # --- reachability check ---------------------------------------------------------

@@ -14,6 +14,15 @@ AGENT = Path(__file__).resolve().parents[1]
 # --- entrypoint: the CDN origin inbound ---------------------------------------
 
 
+def cdn_xhttp_profile() -> dict:
+    src = (AGENT / "entrypoint.sh").read_text()
+    literal = re.search(r"^CDN_XHTTP_PROFILE = (\{.*?^\})", src, re.S | re.M)
+    assert literal, "CDN_XHTTP_PROFILE not found in entrypoint.sh"
+    scope: dict = {}
+    exec(f"profile = {literal.group(1)}", scope)
+    return scope["profile"]
+
+
 def _build_cdn_inbound(monkeypatch, tmp_path, clients=None):
     src = (AGENT / "entrypoint.sh").read_text()
     fn = re.search(r"(def build_cdn_inbound\(port: int\) -> dict \| None:.*?)\n\n\n", src, re.S)
@@ -23,6 +32,7 @@ def _build_cdn_inbound(monkeypatch, tmp_path, clients=None):
     monkeypatch.setenv("XRAY_CDN_PATH", "/media/")
     scope: dict = {
         "os": os,
+        "CDN_XHTTP_PROFILE": cdn_xhttp_profile(),
         "client_map": clients or {},
         "keepalive_idle": 20,
         "keepalive_interval": 10,
@@ -41,7 +51,12 @@ def test_cdn_inbound_is_plain_tls_xhttp_with_shared_clients(monkeypatch, tmp_pat
     assert stream["network"] == "xhttp"
     assert stream["security"] == "tls"
     assert "realitySettings" not in stream
-    assert stream["xhttpSettings"] == {"path": "/media/", "mode": "auto"}
+    assert stream["xhttpSettings"] == {"path": "/media/", "mode": "auto", **cdn_xhttp_profile()}
+    # Nothing a CDN needs may live in the path: it forwards file-like paths only.
+    assert stream["xhttpSettings"]["sessionIDPlacement"] == "query"
+    assert stream["xhttpSettings"]["seqPlacement"] == "query"
+    # Padding never goes into a URL-shaped Referer, which the CDN filter flags.
+    assert stream["xhttpSettings"]["xPaddingObfsMode"] is True
     certificate = stream["tlsSettings"]["certificates"][0]
     assert Path(certificate["certificateFile"]).exists()
     assert Path(certificate["keyFile"]).exists()
