@@ -116,10 +116,10 @@ This is what makes multi-server subscriptions possible:
 - UDP-filtering providers can be worked around per node with a Hysteria2
   UDP/2053 fallback listener, without touching the default UDP/443 listener
   (see [deploy/vps/README.md](deploy/vps/README.md)).
-- An optional per-node Cloudflare WARP egress can route AI-service traffic
-  (Gemini, OpenAI, etc., by geosite category) and Microsoft domains through a
-  clean consumer IP without moving the rest of the node's traffic off its own
-  IP; game traffic is explicitly kept off WARP.
+- An optional per-node Cloudflare WARP egress can route Microsoft domains
+  through a clean consumer IP without moving the rest of the node's traffic off
+  its own IP; game traffic is explicitly kept off WARP. Gemini and other AI
+  services are kept off it too: Google geolocates the WARP egress to Russia.
 - Nodes can optionally act as cascade entry/exit hops (`node_role`,
   `cascade-v2` capability) to relay a location's traffic through another node;
   this is dormant by default and does not change the default single-hop

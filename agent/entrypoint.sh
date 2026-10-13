@@ -374,9 +374,14 @@ def ensure_warp(cfg: dict) -> None:
     outbounds/routing are otherwise preserved as-is, which would silently drop
     a WARP block added out-of-band.
 
-    Scope is deliberately narrow: Google Gemini and Microsoft services that
-    are unreliable from some VPS ranges. Everything else keeps the node's
-    direct egress and avoids an unnecessary hop.
+    Scope is deliberately narrow: Microsoft services that are unreliable from
+    some VPS ranges. Everything else keeps the node's direct egress and avoids
+    an unnecessary hop.
+
+    Google's AI services (Gemini, AI Studio, Labs) used to go through WARP too
+    and must not any more: Google places the shared WARP egress in Russia (or,
+    on its IPv4 side, the US), so through it Gemini says "not available in
+    your country", while every node's own IP is placed in the node's country.
     """
     outbounds = cfg.setdefault("outbounds", [])
     existing_warp = next((outbound for outbound in outbounds if outbound.get("tag") == "warp"), None)
@@ -439,15 +444,7 @@ def ensure_warp(cfg: dict) -> None:
     ]
     warp_domains_rule = {
         "type": "field",
-        "domain": [
-            "geosite:google-gemini",
-            "geosite:microsoft",
-            "domain:gemini.google.com",
-            "domain:generativelanguage.googleapis.com",
-            "domain:aistudio.google.com",
-            "domain:alkalimakersuite-pa.clients6.google.com",
-            "domain:labs.google",
-        ],
+        "domain": ["geosite:microsoft"],
         "outboundTag": "warp",
     }
     api_idx = next((i for i, r in enumerate(rules) if r.get("inboundTag") == ["api"]), -1)
