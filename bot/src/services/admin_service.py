@@ -107,7 +107,7 @@ class AdminService:
             result = await session.execute(
                 select(Subscription).where(
                     Subscription.is_active == True,  # noqa: E712
-                    Subscription.expires_at > now,
+                    Subscription.expires_at > now,  # lifetime (NULL) never matches
                 )
             )
             subscriptions = result.scalars().all()
@@ -122,7 +122,7 @@ class AdminService:
             result = await session.execute(
                 select(Subscription).where(
                     Subscription.is_active == True,  # noqa: E712
-                    Subscription.expires_at > now,
+                    Subscription.expires_at > now,  # lifetime (NULL) never matches
                 )
             )
             subscriptions = result.scalars().all()
@@ -163,7 +163,9 @@ class AdminService:
             now = datetime.now(UTC).replace(tzinfo=None)
             sub = await SubscriptionService.find_latest_subscription(session, user.id)
 
-            if sub and sub.is_active and sub.expires_at > now:
+            if sub and sub.is_active and sub.is_lifetime:
+                pass  # already never expires; extra days change nothing
+            elif sub and sub.is_active and not sub.is_expired(now):
                 sub.expires_at = max(sub.expires_at, now) + timedelta(days=days)
                 sub.plan_days = days
             elif sub:
@@ -207,9 +209,9 @@ class AdminService:
 
             if sub:
                 sub.is_active = True
-                if sub.expires_at <= now:
+                if sub.is_expired(now):
                     sub.started_at = now
-                sub.expires_at = SubscriptionService.LIFETIME_EXPIRES_AT
+                sub.expires_at = None
                 sub.plan_days = SubscriptionService.LIFETIME_PLAN_DAYS
                 if not sub.sub_token:
                     sub.sub_token = await SubscriptionService.generate_sub_token(session)
@@ -222,7 +224,7 @@ class AdminService:
                     client_uuid=str(uuid.uuid4()),
                     plan_days=SubscriptionService.LIFETIME_PLAN_DAYS,
                     started_at=now,
-                    expires_at=SubscriptionService.LIFETIME_EXPIRES_AT,
+                    expires_at=None,
                     is_active=True,
                 )
                 session.add(sub)

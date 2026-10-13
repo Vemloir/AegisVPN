@@ -1712,10 +1712,9 @@ export default function App() {
               {user.subscription?.is_active ? t.acc_active : t.acc_inactive}
             </span>
           </div>
-          {user.subscription?.expires_at && (
+          {(user.subscription?.is_lifetime || user.subscription?.expires_at) && (
             <div style={css('display:flex; justify-content:space-between; padding:14px 0; border-top:1px solid var(--hair); font-size:14.5px;')}>
-              {/* A lifetime subscription carries a sentinel date (2099-12-31);
-                  printing it as "valid until 31.12.2099" reads like a bug. */}
+              {/* A lifetime subscription has no end date (expires_at is null). */}
               <span style={css('color:var(--muted);')}>
                 {user.subscription.is_lifetime ? t.acc_term : t.acc_expires}
               </span>

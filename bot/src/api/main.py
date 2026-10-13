@@ -174,7 +174,7 @@ async def _me_payload(session: AsyncSession, user: User) -> dict:
         await session.execute(
             select(Subscription)
             .where(Subscription.user_id == user.id, Subscription.is_active == True)  # noqa: E712
-            .order_by(Subscription.expires_at.desc())
+            .order_by(Subscription.expires_at.desc().nulls_first())
             .limit(1)
         )
     ).scalar_one_or_none()
@@ -202,11 +202,10 @@ async def _me_payload(session: AsyncSession, user: User) -> dict:
     }
     if sub is not None:
         payload["subscription"] = {
-            "is_active": sub.expires_at > now,
-            # A lifetime subscription is stored with a sentinel far-future date
-            # (2099-12-31); the site must say "forever", not print the sentinel.
-            "is_lifetime": SubscriptionService.is_lifetime_subscription(sub),
-            "expires_at": sub.expires_at.isoformat(),
+            "is_active": not sub.is_expired(now),
+            "is_lifetime": sub.is_lifetime,
+            # None for a lifetime subscription: it has no end date.
+            "expires_at": sub.expires_at.isoformat() if sub.expires_at else None,
             "sub_url": SubscriptionService.build_subscription_url(sub.sub_token),
         }
     return payload

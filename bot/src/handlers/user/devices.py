@@ -49,7 +49,7 @@ async def _get_sub_for_user(session, tg_id: int) -> tuple["User | None", "Subscr
             select(Subscription).where(
                 Subscription.user_id == user.id,
                 Subscription.is_active == True,  # noqa: E712
-                Subscription.expires_at > now,
+                Subscription.unexpired_at(now),
             )
         )
     ).scalar_one_or_none()

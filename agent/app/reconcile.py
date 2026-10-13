@@ -159,7 +159,7 @@ def _desired_parts(
     clients: list[DesiredClient] = []
     routes: list[DesiredCascadeRoute] = []
     for item in snapshot.items:
-        if isinstance(item, DesiredClient) and item.expire_ms > now_ms:
+        if isinstance(item, DesiredClient) and (item.expire_ms is None or item.expire_ms > now_ms):
             clients.append(item)
         elif isinstance(item, DesiredCascadeService):
             clients.append(
@@ -167,7 +167,7 @@ def _desired_parts(
                     kind="client",
                     uuid=item.uuid,
                     email=item.email,
-                    expire_ms=4_102_444_800_000,
+                    expire_ms=None,  # a cascade service link never expires
                 )
             )
         elif isinstance(item, DesiredCascadeRoute):

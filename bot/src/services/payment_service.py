@@ -8,7 +8,7 @@ Payment row, then commit).
 
 import asyncio
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from aiogram import Bot, html
 from sqlalchemy import select, update
@@ -54,7 +54,7 @@ async def apply_paid_subscription(session, user: User, plan_days: int) -> tuple[
 
     if active_sub:
         # Renew the live subscription (same URL/token).
-        active_sub.expires_at = max(active_sub.expires_at, now) + timedelta(days=plan_days)
+        active_sub.expires_at = SubscriptionService.expiry_after(active_sub.expires_at, now, plan_days)
         sub_token = active_sub.sub_token
         is_renewal = True
     else:
@@ -64,15 +64,15 @@ async def apply_paid_subscription(session, user: User, plan_days: int) -> tuple[
             await session.execute(
                 select(Subscription)
                 .where(Subscription.user_id == user.id)
-                .order_by(Subscription.expires_at.desc())
+                .order_by(Subscription.expires_at.desc().nulls_first())
                 .limit(1)
             )
         ).scalar_one_or_none()
 
-        if expired_sub and expired_sub.expires_at < now:
+        if expired_sub and expired_sub.is_expired(now):
             expired_sub.is_active = True
             expired_sub.plan_days = plan_days
-            expired_sub.expires_at = now + timedelta(days=plan_days)
+            expired_sub.expires_at = SubscriptionService.expiry_after(now, now, plan_days)
             active_sub = expired_sub
             sub_token = expired_sub.sub_token
             is_renewal = True
@@ -84,7 +84,7 @@ async def apply_paid_subscription(session, user: User, plan_days: int) -> tuple[
                 client_uuid=str(uuid.uuid4()),
                 plan_days=plan_days,
                 started_at=now,
-                expires_at=now + timedelta(days=plan_days),
+                expires_at=SubscriptionService.expiry_after(now, now, plan_days),
                 is_active=True,
             )
             session.add(active_sub)

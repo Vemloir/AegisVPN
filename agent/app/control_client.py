@@ -126,7 +126,7 @@ class ControlClient:
             max_items=settings.control_max_items,
             # "cdn-v1" tells the bot this node really serves the CDN origin
             # inbound, so it never advertises a CDN path to a node without one.
-            capabilities=["cascade-v2", *(["cdn-v1"] if settings.xray_cdn_port else [])],
+            capabilities=["cascade-v2", "lifetime-v1", *(["cdn-v1"] if settings.xray_cdn_port else [])],
         )
 
     async def close(self) -> None:

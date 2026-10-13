@@ -37,7 +37,7 @@ async def render_subscription_info(tg_id: int) -> tuple[str, str | None, str, bo
             select(Subscription).where(
                 Subscription.user_id == user.id,
                 Subscription.is_active == True,  # noqa: E712
-                Subscription.expires_at > now,
+                Subscription.unexpired_at(now),
             )
         )
         sub = sub_result.scalar_one_or_none()

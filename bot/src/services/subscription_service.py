@@ -157,7 +157,6 @@ class SubscriptionService:
     SAFE_PROFILE = "safe"
     FAST_PROFILE = "fast"
     LIFETIME_PLAN_DAYS = 0
-    LIFETIME_EXPIRES_AT = datetime(2099, 12, 31, 23, 59, 59)
 
     # Per-location protocol/transport preferences.
     PROTOCOL_VLESS = "vless"
@@ -397,12 +396,18 @@ class SubscriptionService:
 
     @staticmethod
     def is_lifetime_subscription(sub: Subscription | None) -> bool:
-        if sub is None:
-            return False
-        return (
-            sub.plan_days == SubscriptionService.LIFETIME_PLAN_DAYS
-            or sub.expires_at >= SubscriptionService.LIFETIME_EXPIRES_AT
-        )
+        return sub is not None and sub.is_lifetime
+
+    @staticmethod
+    def expiry_after(current: datetime | None, now: datetime, days: int) -> datetime | None:
+        """Expiry once ``days`` are added to a subscription expiring at ``current``.
+
+        The lifetime plan (0 days) gives no expiry, and a lifetime subscription
+        keeps none: adding days to it must never turn it into a dated one.
+        """
+        if days == SubscriptionService.LIFETIME_PLAN_DAYS or current is None:
+            return None
+        return max(current, now) + timedelta(days=days)
 
     @staticmethod
     def generate_sub_token_value(existing_tokens: set[str] | None = None) -> str:
@@ -639,7 +644,7 @@ class SubscriptionService:
             return []
 
         now = datetime.now(UTC).replace(tzinfo=None)
-        if sub.expires_at <= now:
+        if sub.is_expired(now):
             sub.is_active = False
             await SubscriptionService.remove_subscription_from_servers(session, sub)
             await session.commit()
@@ -1466,7 +1471,11 @@ class SubscriptionService:
             client_uuid=old_sub.client_uuid,  # same UUID → servers already know this client
             plan_days=plan_days,
             started_at=datetime.now(UTC).replace(tzinfo=None),
-            expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=plan_days),
+            expires_at=SubscriptionService.expiry_after(
+                None if old_sub.is_lifetime else datetime.now(UTC).replace(tzinfo=None),
+                datetime.now(UTC).replace(tzinfo=None),
+                plan_days,
+            ),
             is_active=True,
         )
         session.add(new_sub)

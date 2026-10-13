@@ -20,6 +20,17 @@ def _supports_cascade(server: Server) -> bool:
     return "cascade-v2" in set(capabilities.get("features") or [])
 
 
+def _supports_lifetime(server: Server) -> bool:
+    capabilities = server.control_capabilities or {}
+    return "lifetime-v1" in set(capabilities.get("features") or [])
+
+
+# An agent without "lifetime-v1" rejects a null expiry, so until every node
+# reports it a lifetime subscription reaches the older ones as the latest
+# instant a millisecond timestamp can name (JavaScript's Date maximum).
+_PRE_LIFETIME_AGENT_EXPIRE_MS = 8_640_000_000_000_000
+
+
 def canonical_json(value: object) -> bytes:
     return json.dumps(
         value,
@@ -29,7 +40,9 @@ def canonical_json(value: object) -> bytes:
     ).encode()
 
 
-def _expiry_ms(value: datetime) -> int:
+def _expiry_ms(value: datetime | None, *, lifetime_capable: bool) -> int | None:
+    if value is None:
+        return None if lifetime_capable else _PRE_LIFETIME_AGENT_EXPIRE_MS
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return int(value.timestamp() * 1000)
@@ -74,7 +87,7 @@ async def build_desired_items(
                 .where(
                     SubscriptionServer.server_id == server_id,
                     Subscription.is_active == True,  # noqa: E712
-                    Subscription.expires_at > current_time,
+                    Subscription.unexpired_at(current_time),
                 )
             )
         )
@@ -83,11 +96,12 @@ async def build_desired_items(
         .all()
     )
 
+    lifetime_capable = _supports_lifetime(server)
     items: list[dict] = []
     conn_limits: dict[int, int] = {}
     for subscription in subscriptions:
         email = f"user_{subscription.user_id}_sub_{subscription.id}"
-        expire_ms = _expiry_ms(subscription.expires_at)
+        expire_ms = _expiry_ms(subscription.expires_at, lifetime_capable=lifetime_capable)
         items.append(
             {
                 "kind": "client",

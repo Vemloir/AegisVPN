@@ -79,7 +79,7 @@ async def render_user_details(tg_id: int) -> tuple[str, InlineKeyboardMarkup] | 
         ]
 
         has_active_subscription = False
-        if sub and sub.expires_at > now:
+        if sub and not sub.is_expired(now):
             has_active_subscription = True
             if SubscriptionService.is_lifetime_subscription(sub):
                 lines.extend(

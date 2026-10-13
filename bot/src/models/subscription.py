@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, BigInteger, Boolean, ForeignKey, Integer, String
+from sqlalchemy import JSON, BigInteger, Boolean, ColumnElement, ForeignKey, Integer, String, or_
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, utcnow
@@ -22,7 +22,8 @@ class Subscription(Base):
     client_uuid: Mapped[str] = mapped_column(String(36), unique=True, index=True)
     plan_days: Mapped[int] = mapped_column(Integer)
     started_at: Mapped[datetime] = mapped_column(default=utcnow)
-    expires_at: Mapped[datetime] = mapped_column(index=True)
+    # NULL: a lifetime subscription, which never expires.
+    expires_at: Mapped[datetime | None] = mapped_column(nullable=True, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     # Cumulative traffic across all synced nodes, in bytes. Maintained by the
     # traffic poller (delta accounting); survives Xray restarts.
@@ -34,6 +35,18 @@ class Subscription(Base):
         back_populates="subscription", cascade="all, delete-orphan"
     )
     devices: Mapped[list["Device"]] = relationship(back_populates="subscription", cascade="all, delete-orphan")
+
+    @property
+    def is_lifetime(self) -> bool:
+        return self.expires_at is None
+
+    def is_expired(self, now: datetime) -> bool:
+        return self.expires_at is not None and self.expires_at <= now
+
+    @classmethod
+    def unexpired_at(cls, now: datetime) -> ColumnElement[bool]:
+        """SQL condition: still running at ``now`` (a lifetime one always is)."""
+        return or_(cls.expires_at.is_(None), cls.expires_at > now)
 
 
 class SubscriptionServer(Base):
