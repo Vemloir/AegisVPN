@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     node_cdn_certificate_dir: str = "/control/cdn-cert"
     # Reachability check of every CDN resource (origin answering through it).
     cdn_check_interval_minutes: int = 10
+    # Telegram ids whose JSON subscription also lists every CDN resource as its
+    # own "<location> | WL" entry, reachable only through the CDN, so the path
+    # can be tested while the direct one still works.
+    cdn_wl_preview_tg_ids: list[int] = []
 
     # Default simultaneous source/session limit per user, mirroring the node default
     # (agent CONN_LIMIT). Shown in the admin card when a user has no override.

@@ -209,6 +209,20 @@ def client_id_of(config: dict) -> str:
     return str(proxy.get("streamSettings", {}).get("hysteriaSettings", {}).get("auth") or "")
 
 
+def cdn_only(config: dict, cdn_outbound: dict, remarks: str) -> dict:
+    """``config`` with its direct path replaced by one CDN resource.
+
+    The ``| WL`` preview entry: it behaves exactly like the CDN tier would
+    during an allowlist, without waiting for one.
+    """
+    result = copy.deepcopy(config)
+    proxy = copy.deepcopy(cdn_outbound)
+    proxy["tag"] = "proxy"
+    result["outbounds"][0] = proxy
+    result["remarks"] = remarks
+    return result
+
+
 def attach_fallback(config: dict, cdn_outbounds: list[dict]) -> dict:
     """Return ``config`` with a CDN tier behind its primary outbound(s).
 
