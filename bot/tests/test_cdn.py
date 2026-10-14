@@ -123,7 +123,7 @@ async def test_location_gets_its_cdn_resources_as_a_fallback_tier(monkeypatch):
     tags = [outbound["tag"] for outbound in cfg["outbounds"]]
     assert tags[0] == "proxy"  # the direct path stays first and default
     assert tags[1] == "cdn-1"
-    assert "cdn-fallback" in tags
+    assert "to-cdn" in tags
 
     cdn = cfg["outbounds"][1]
     vnext = cdn["settings"]["vnext"][0]
@@ -143,17 +143,17 @@ async def test_location_gets_its_cdn_resources_as_a_fallback_tier(monkeypatch):
     routing = cfg["routing"]
     balancers = {balancer["tag"]: balancer for balancer in routing["balancers"]}
     assert balancers["primary"]["selector"] == ["proxy"]
-    assert balancers["primary"]["fallbackTag"] == "cdn-fallback"
+    assert balancers["primary"]["fallbackTag"] == "to-cdn"
     # Not leastPing: with no health check yet that would send every fresh
     # connect through the CDN; random keeps the unchecked direct path.
     assert balancers["primary"]["strategy"] == {"type": "random"}
-    assert balancers["cdn"]["selector"] == ["cdn-"]
+    assert balancers["cdn"]["selector"] == ["cdn-1"]
     # Loopback traffic is routed to the CDN tier before anything else ...
-    assert routing["rules"][0] == {"type": "field", "inboundTag": ["cdn-fallback-in"], "balancerTag": "cdn"}
+    assert routing["rules"][0] == {"type": "field", "inboundTag": ["to-cdn-in"], "balancerTag": "cdn"}
     # ... while RU/private still bypass, and the rest goes through the balancer.
     assert routing["rules"][-1] == {"type": "field", "network": "tcp,udp", "balancerTag": "primary"}
     assert cfg["burstObservatory"]["subjectSelector"] == ["proxy"]
-    assert any(inbound.get("tag") == "cdn-fallback-in" for inbound in cfg["inbounds"])
+    assert any(inbound.get("tag") == "to-cdn-in" for inbound in cfg["inbounds"])
 
 
 async def test_preview_user_gets_a_cdn_only_wl_location(monkeypatch):
@@ -200,7 +200,7 @@ async def test_autoselect_falls_back_to_every_cdn_resource(monkeypatch):
     assert balancers["auto"]["fallbackTag"] == "primary-fallback"
     assert balancers["primary-any"]["strategy"] == {"type": "random"}
     assert balancers["primary-any"]["selector"] == balancers["auto"]["selector"]
-    assert balancers["primary-any"]["fallbackTag"] == "cdn-fallback"
+    assert balancers["primary-any"]["fallbackTag"] == "to-cdn"
     rules = autoselect["routing"]["rules"]
     assert {"type": "field", "inboundTag": ["primary-fallback-in"], "balancerTag": "primary-any"} in rules
     assert "cdn" in balancers
@@ -292,6 +292,48 @@ async def test_preview_only_resource_is_a_wl_entry_and_never_a_fallback(monkeypa
     assert tls["pinnedPeerCertSha256"] == f"{PIN_A},{PIN_B}"
     plain_tls = wl[f"{location['remarks']} | WL Beget"]["outbounds"][0]["streamSettings"]["tlsSettings"]
     assert "pinnedPeerCertSha256" not in plain_tls
+
+
+async def test_cdn_paths_form_a_checked_chain_in_order(monkeypatch):
+    # Direct first, then the plain resource, then the fronted one: each tier is
+    # taken only while the one before it is found dead.
+    token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[BEGET, {**AVITO, "preview_only": False}])
+    cfg = _by_host(await _json_configs(token), "203.0.113.30")
+    by_tag = {o["tag"]: o for o in cfg["outbounds"]}
+    assert by_tag["cdn-1"]["streamSettings"]["tlsSettings"]["serverName"] == "abc.begetcdn.cloud"
+    assert by_tag["cdn-2"]["streamSettings"]["tlsSettings"]["serverName"] == "12.img.avito.st"
+    balancers = {b["tag"]: b for b in cfg["routing"]["balancers"]}
+    assert balancers["primary"]["fallbackTag"] == "to-cdn"
+    assert balancers["cdn"] == {
+        "tag": "cdn",
+        "selector": ["cdn-1"],
+        "strategy": {"type": "random"},
+        "fallbackTag": "to-cdn-2",
+    }
+    assert balancers["cdn-tier-2"] == {"tag": "cdn-tier-2", "selector": ["cdn-2"], "strategy": {"type": "random"}}
+    rules = cfg["routing"]["rules"]
+    assert rules[:2] == [
+        {"type": "field", "inboundTag": ["to-cdn-in"], "balancerTag": "cdn"},
+        {"type": "field", "inboundTag": ["to-cdn-2-in"], "balancerTag": "cdn-tier-2"},
+    ]
+    # The chain only moves on from a path a check found dead.
+    assert cfg["burstObservatory"]["subjectSelector"] == ["proxy", "cdn-"]
+    # No selector reaches a loopback: a loopback picked as a path would loop.
+    loopbacks = {o["tag"] for o in cfg["outbounds"] if o["protocol"] == "loopback"}
+    for balancer in balancers.values():
+        assert not [t for t in loopbacks for sel in balancer["selector"] if t.startswith(sel)]
+
+
+async def test_single_cdn_path_is_not_health_checked(monkeypatch):
+    token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[BEGET])
+    cfg = _by_host(await _json_configs(token), "203.0.113.30")
+    assert cfg["burstObservatory"]["subjectSelector"] == ["proxy"]
+
+
+def test_cdn_tags_are_never_a_prefix_of_one_another():
+    tags = cdn_service._cdn_tier_tags(12)
+    assert tags[0] == "cdn-01" and tags[-1] == "cdn-12"
+    assert not [a for a in tags for b in tags if a != b and b.startswith(a)]
 
 
 async def test_preview_only_resource_stays_out_for_everyone_else(monkeypatch):
