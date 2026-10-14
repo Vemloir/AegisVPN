@@ -21,6 +21,7 @@ from src.services import cdn_service, geoip
 from src.services.agent_client import AgentClient
 from src.services.cascade_service import advertisable_routes
 from src.services.node_control_service import NodeControlService
+from src.services.preview import sees_previews, visible_servers
 from src.services.server_access_service import ServerAccessService
 
 _UA_VERSION_RE = re.compile(r"/[\d.]+")
@@ -479,6 +480,8 @@ class SubscriptionService:
         name = SubscriptionService.server_display_name(server)
         key = name.casefold()
         suffix = f" \u2116{server.id}" if duplicate_name_keys and key in duplicate_name_keys else ""
+        if getattr(server, "preview_only", False):
+            suffix += " | Preview"
         label = f"{server.flag} {name}{suffix}".strip()
         return label or f"Server {server.id}"
 
@@ -676,6 +679,8 @@ class SubscriptionService:
             )
         )
         servers = result.scalars().all()
+        owner = await session.get(User, sub.user_id)
+        servers = visible_servers(list(servers), owner.tg_id if owner else None)
 
         routes = await advertisable_routes(
             session,
@@ -837,7 +842,7 @@ class SubscriptionService:
         plain_configs = [cfg for _server, cfg in configs]
         # Every location keeps its direct outbound as the primary and gains its
         # CDN resources as a fallback tier; auto-select falls back to all of them.
-        preview = await SubscriptionService._sees_cdn_preview(session, sub_token)
+        preview = await SubscriptionService._sees_previews(session, sub_token)
         endpoints = await cdn_service.endpoints_by_server(
             session, [server for server, _cfg in configs], include_preview=preview
         )
@@ -860,8 +865,10 @@ class SubscriptionService:
             if autoselect is not None:
                 autoselect = cdn_service.attach_fallback(autoselect, every_cdn_outbound)
             if preview:
+                # Only resources still on trial get their own entry; one already
+                # in the fallback chain is tested by the location itself.
                 for server, cfg in configs:
-                    server_endpoints = endpoints.get(server.id, [])
+                    server_endpoints = [endpoint for endpoint in endpoints.get(server.id, []) if endpoint.preview_only]
                     for endpoint in server_endpoints:
                         suffix = " | WL" if len(server_endpoints) == 1 else f" | WL {_preview_label(endpoint)}"
                         outbound = cdn_service.build_outbound(server, endpoint, cdn_service.client_id_of(cfg), "proxy")
@@ -873,12 +880,12 @@ class SubscriptionService:
         return "json", (json.dumps(plain_configs, ensure_ascii=False) if plain_configs else "")
 
     @staticmethod
-    async def _sees_cdn_preview(session: AsyncSession, sub_token: str) -> bool:
-        if not settings.cdn_wl_preview_tg_ids:
+    async def _sees_previews(session: AsyncSession, sub_token: str) -> bool:
+        if not settings.preview_tg_ids:
             return False
         sub = await SubscriptionService.get_subscription_by_token(session, sub_token)
         user = await session.get(User, sub.user_id) if sub else None
-        return user is not None and user.tg_id in set(settings.cdn_wl_preview_tg_ids)
+        return sees_previews(user.tg_id if user else None)
 
     @staticmethod
     def _build_autoselect_config(configs: list[tuple[Server, dict]]) -> dict | None:
@@ -899,7 +906,8 @@ class SubscriptionService:
         a hash of the client UUID so the node can recognise its active users.
         The bot still decides nothing: it has neither the per-user latency nor
         live load, the node and the client each supply their half."""
-        candidates = configs
+        # A location on trial is taken only when picked by hand.
+        candidates = [(server, cfg) for server, cfg in configs if not getattr(server, "preview_only", False)]
         if len(candidates) < 2:
             return None
         outbounds: list[dict] = []

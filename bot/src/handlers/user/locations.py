@@ -29,6 +29,7 @@ from sqlalchemy import select
 from src.core.database import async_session_maker
 from src.models import Server, User
 from src.services import UserService, get_user_language, t
+from src.services.preview import visible_servers
 from src.services.server_access_service import ServerAccessService
 from src.services.subscription_service import SubscriptionService
 
@@ -49,7 +50,7 @@ async def _active_servers_for(session, tg_id: int) -> tuple["User | None", list[
         return None, []
     servers = await ServerAccessService.get_accessible_servers_for_user(session, user.id)
     servers = sorted([s for s in servers if s.is_active], key=SubscriptionService.server_sort_key)
-    return user, servers
+    return user, visible_servers(servers, tg_id)
 
 
 @router.callback_query(F.data == "locations_open")
@@ -88,7 +89,7 @@ async def _load_location(call: CallbackQuery, server_id: int, language: str):
     async with async_session_maker() as session:
         user = (await session.execute(select(User).where(User.tg_id == call.from_user.id))).scalar_one_or_none()
         server = await session.get(Server, server_id)
-        if user is None or server is None or not server.is_active:
+        if user is None or server is None or not server.is_active or not visible_servers([server], call.from_user.id):
             await call.answer(t(language, "locations_none"), show_alert=True)
             return None
         # Re-check access so a user can't poke at a location they lost.

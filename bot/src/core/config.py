@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -87,10 +87,15 @@ class Settings(BaseSettings):
     node_cdn_certificate_dir: str = "/control/cdn-cert"
     # Reachability check of every CDN resource (origin answering through it).
     cdn_check_interval_minutes: int = 10
-    # Telegram ids whose JSON subscription also lists every CDN resource as its
-    # own "<location> | WL" entry, reachable only through the CDN, so the path
-    # can be tested while the direct one still works.
-    cdn_wl_preview_tg_ids: list[int] = []
+    # Telegram ids that see preview locations: nodes marked preview_only (in
+    # their subscription and the bot, never on the site) and preview-only CDN
+    # resources as "<location> | WL" entries reachable only through the CDN,
+    # so a new location or path can be tried before everyone gets it.
+    # CDN_WL_PREVIEW_TG_IDS is the older name, still read.
+    preview_tg_ids: list[int] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("PREVIEW_TG_IDS", "CDN_WL_PREVIEW_TG_IDS"),
+    )
     # What a CDN charges per GB it delivers (Beget: 0.6 RUB of outgoing
     # traffic, i.e. what subscribers download), for the admin cost estimate.
     cdn_price_rub_per_gb: float = 0.6

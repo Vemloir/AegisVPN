@@ -157,8 +157,8 @@ async def test_location_gets_its_cdn_resources_as_a_fallback_tier(monkeypatch):
 
 
 async def test_preview_user_gets_a_cdn_only_wl_location(monkeypatch):
-    monkeypatch.setattr(settings, "cdn_wl_preview_tg_ids", [940001])
-    token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[BEGET])
+    monkeypatch.setattr(settings, "preview_tg_ids", [940001])
+    token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[{**BEGET, "preview_only": True}])
     configs = await _json_configs(token)
     wl = [cfg for cfg in configs if cfg["remarks"].endswith(" | WL")]
     assert len(wl) == 1
@@ -175,10 +175,19 @@ async def test_preview_user_gets_a_cdn_only_wl_location(monkeypatch):
 
 
 async def test_wl_location_is_only_for_preview_users(monkeypatch):
-    monkeypatch.setattr(settings, "cdn_wl_preview_tg_ids", [123])
-    token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[BEGET])
+    monkeypatch.setattr(settings, "preview_tg_ids", [123])
+    token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[{**BEGET, "preview_only": True}])
     configs = await _json_configs(token)
     assert not any(cfg["remarks"].endswith(" | WL") for cfg in configs)
+
+
+async def test_resource_in_the_fallback_chain_gets_no_wl_entry(monkeypatch):
+    # Once a resource joins the chain the location itself exercises it; a WL
+    # entry of its own is only for a resource still on trial.
+    monkeypatch.setattr(settings, "preview_tg_ids", [940001])
+    token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[BEGET, {**AVITO, "preview_only": False}])
+    configs = await _json_configs(token)
+    assert not any(" | WL" in cfg["remarks"] for cfg in configs)
 
 
 async def test_location_without_cdn_is_unchanged(monkeypatch):
@@ -278,20 +287,19 @@ AVITO = {
 
 
 async def test_preview_only_resource_is_a_wl_entry_and_never_a_fallback(monkeypatch):
-    monkeypatch.setattr(settings, "cdn_wl_preview_tg_ids", [940001])
+    monkeypatch.setattr(settings, "preview_tg_ids", [940001])
     token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[BEGET, AVITO])
     configs = await _json_configs(token)
     # The fallback tier (location and auto-select) carries the plain resource only.
     location = _by_host(configs, "203.0.113.30")
     assert _cdn_paths(location) == ["cdn-1"]
     assert _cdn_paths(configs[0]) == ["cdn-1"]
-    wl = {cfg["remarks"]: cfg for cfg in configs if " | WL" in cfg["remarks"]}
-    assert set(wl) == {f"{location['remarks']} | WL Beget", f"{location['remarks']} | WL Beget (12.img.avito.st)"}
-    tls = wl[f"{location['remarks']} | WL Beget (12.img.avito.st)"]["outbounds"][0]["streamSettings"]["tlsSettings"]
+    # Only the resource on trial gets an entry; the plain one is in the chain.
+    wl = [cfg for cfg in configs if " | WL" in cfg["remarks"]]
+    assert [cfg["remarks"] for cfg in wl] == [f"{location['remarks']} | WL"]
+    tls = wl[0]["outbounds"][0]["streamSettings"]["tlsSettings"]
     assert tls["serverName"] == "12.img.avito.st"
     assert tls["pinnedPeerCertSha256"] == f"{PIN_A},{PIN_B}"
-    plain_tls = wl[f"{location['remarks']} | WL Beget"]["outbounds"][0]["streamSettings"]["tlsSettings"]
-    assert "pinnedPeerCertSha256" not in plain_tls
 
 
 async def test_cdn_paths_form_a_checked_chain_in_order(monkeypatch):
@@ -347,7 +355,7 @@ async def test_preview_only_resource_stays_out_for_everyone_else(monkeypatch):
 
 
 async def test_pinned_resource_waits_for_its_first_certificate(monkeypatch):
-    monkeypatch.setattr(settings, "cdn_wl_preview_tg_ids", [940001])
+    monkeypatch.setattr(settings, "preview_tg_ids", [940001])
     unlearned = {**AVITO, "pinned_cert_sha256": None, "preview_only": False}
     token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[unlearned])
     for cfg in await _json_configs(token):

@@ -142,6 +142,13 @@ MIGRATIONS: dict[str, list[Column]] = {
             post_sql="UPDATE servers SET subscription_group = 'safe' WHERE subscription_group IS NULL",
         ),
         Column("display_order", "INTEGER DEFAULT 0", "INTEGER DEFAULT 0"),
+        # See Server.preview_only.
+        Column(
+            "preview_only",
+            "BOOLEAN DEFAULT 0",
+            "BOOLEAN DEFAULT FALSE",
+            post_sql="UPDATE servers SET preview_only = 0 WHERE preview_only IS NULL",
+        ),
         # Delist from the rendered subscription without touching access control
         # or the control-plane desired-state (see Server.hidden_from_subscription).
         Column(

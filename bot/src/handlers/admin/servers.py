@@ -153,6 +153,32 @@ async def cq_admin_server_hide_toggle(call: CallbackQuery, state: FSMContext):
     await call.answer("Убрана из выдачи подписки" if target else "Возвращена в выдачу подписки")
 
 
+@router.callback_query(F.data.startswith("admin_server_preview_toggle:"))
+async def cq_admin_server_preview_toggle(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        await call.answer("Доступ запрещён", show_alert=True)
+        return
+
+    server_id = int(call.data.split(":", 1)[1])  # type: ignore[arg-type]
+    async with async_session_maker() as session:
+        server = await session.get(Server, server_id)
+        if server is None:
+            await call.answer("Сервер не найден", show_alert=True)
+            return
+        # Like the hide toggle, only what is shown changes, never who has
+        # access: clients already synced to the node keep their config.
+        server.preview_only = not server.preview_only
+        target = server.preview_only
+        await session.commit()
+
+    await state.clear()
+    rendered = await render_server_details(server_id)
+    assert rendered is not None
+    text, keyboard = rendered
+    await call.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)  # type: ignore
+    await call.answer("Теперь видна только тестерам" if target else "Открыта всем")
+
+
 @router.callback_query(F.data.startswith("admin_server_allow_start:"))
 async def cq_admin_server_allow_start(call: CallbackQuery, state: FSMContext):
     if not is_admin(call.from_user.id):

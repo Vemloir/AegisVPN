@@ -60,6 +60,8 @@ def server_list_keyboard(servers: list[Server]) -> InlineKeyboardMarkup:
             label = f"OFF · {label}"
         elif server.hidden_from_subscription:
             label = f"HIDDEN · {label}"
+        elif server.preview_only:
+            label = f"PREVIEW · {label}"
         rows.append([InlineKeyboardButton(text=label, callback_data=f"admin_server_manage:{server.id}")])
     rows.append([InlineKeyboardButton(text="Назад в админку", callback_data="admin_back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -69,11 +71,13 @@ def server_manage_keyboard(server: Server) -> InlineKeyboardMarkup:
     active_text = "Включить локацию" if not server.is_active else "Отключить локацию"
     toggle_text = "Сделать доступным всем" if server.access_mode == "restricted" else "Ограничить доступ"
     hide_text = "Вернуть в выдачу подписки" if server.hidden_from_subscription else "Убрать из выдачи подписки"
+    preview_text = "Открыть всем (снять превью)" if server.preview_only else "Сделать превью (только тестерам)"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=active_text, callback_data=f"admin_server_active_toggle:{server.id}")],
             [InlineKeyboardButton(text=toggle_text, callback_data=f"admin_server_toggle:{server.id}")],
             [InlineKeyboardButton(text=hide_text, callback_data=f"admin_server_hide_toggle:{server.id}")],
+            [InlineKeyboardButton(text=preview_text, callback_data=f"admin_server_preview_toggle:{server.id}")],
             [
                 InlineKeyboardButton(
                     text="Разрешить пользователю", callback_data=f"admin_server_allow_start:{server.id}"

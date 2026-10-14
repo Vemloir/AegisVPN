@@ -65,7 +65,9 @@ async def configure_bot_commands(bot: Bot) -> None:
 async def get_public_info() -> dict:
     async with async_session_maker() as session:
         plans_result = await session.execute(select(Plan).where(Plan.is_active == True).order_by(Plan.days))
-        servers_result = await session.execute(select(Server).where(Server.is_active == True).order_by(Server.name))
+        servers_result = await session.execute(
+            select(Server).where(Server.is_active == True, Server.preview_only == False).order_by(Server.name)  # noqa: E712
+        )
 
         plans = [
             {
