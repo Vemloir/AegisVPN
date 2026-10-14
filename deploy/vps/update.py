@@ -153,6 +153,8 @@ def connect(
 ) -> paramiko.SSHClient:
     if paramiko is None:
         raise SystemExit("paramiko required: pip install paramiko")
+    if not host:
+        raise SystemExit("no host: pass --main-host or set AEGIS_MAIN_HOST")
     delay = 8.0
     last: Exception | None = None
     for attempt in range(1, attempts + 1):
@@ -1649,8 +1651,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--main-host",
         default=os.environ.get("AEGIS_MAIN_HOST"),
-        required="AEGIS_MAIN_HOST" not in os.environ,
-        help="control-plane host (or set AEGIS_MAIN_HOST)",
+        help="control-plane host (or set AEGIS_MAIN_HOST); needed by every step that reaches it",
     )
     p.add_argument("--main-password", required=False)
     p.add_argument("--bot", action="store_true", help="Update the bot on the main VPS")
