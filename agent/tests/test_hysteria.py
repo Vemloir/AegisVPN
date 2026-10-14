@@ -175,7 +175,7 @@ def test_hy2_auth_refuses_non_loopback_callers():
     from app.models import Hy2AuthRequest
 
     hysteria.refresh_from_config(SAMPLE_CONFIG)
-    remote = SimpleNamespace(client=SimpleNamespace(host="193.111.117.197"))
+    remote = SimpleNamespace(client=SimpleNamespace(host="203.0.113.10"))
     with pytest.raises(HTTPException) as exc:
         asyncio.run(main.hy2_auth(Hy2AuthRequest(auth="uuid-aaa"), remote))
     assert exc.value.status_code == 403
