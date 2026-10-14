@@ -454,3 +454,55 @@ def test_interrupted_atomic_state_write_preserves_previous_file(
 
     assert path.read_bytes() == previous
     assert list(tmp_path.glob(".control-state-*.tmp")) == []
+
+
+def _config_with_cdn() -> dict:
+    config = _config()
+    config["inbounds"].insert(
+        2,
+        {
+            "tag": xray.CDN_INBOUND_TAG,
+            "port": 8443,
+            "protocol": "vless",
+            "settings": {"clients": [{"id": "keep", "email": "user_1_sub_1_cdn"}]},
+            "streamSettings": {"network": "xhttp", "security": "tls"},
+        },
+    )
+    return config
+
+
+async def test_rekeyed_subscriber_on_the_cdn_inbound_is_not_revoked(monkeypatch, tmp_path):
+    # A subscriber whose key changes is removed and re-added on every inbound,
+    # including the CDN one under "<email>_cdn". That must not journal a
+    # revocation: the subscriber is still authorized, so it could never clear.
+    config_path, _additions, _removals, events = await _patch_runtime(monkeypatch, tmp_path)
+    config_path.write_text(json.dumps(_config_with_cdn()))
+    snapshot = DesiredSnapshot(
+        generation=9,
+        digest="9" * 64,
+        items=[{"kind": "client", "uuid": "rekeyed", "email": "user_1_sub_1", "expire_ms": None}],
+    )
+
+    result = await reconcile.reconcile_snapshot(snapshot, observe=False)
+
+    assert result.success is True
+    assert reconcile.load_pending_revocations() == set()
+    assert reconcile.load_applied_state().generation == 9
+    # Only the subscriber that really lost access is kicked.
+    assert events[-1] == ("kick", ["user_2_sub_2", "user_2_sub_2_dev_3"])
+    cdn = next(i for i in json.loads(config_path.read_text())["inbounds"] if i["tag"] == xray.CDN_INBOUND_TAG)
+    assert cdn["settings"]["clients"] == [{"id": "rekeyed", "email": "user_1_sub_1_cdn"}]
+
+
+async def test_a_suffixed_journal_entry_no_longer_blocks_reconcile(monkeypatch, tmp_path):
+    # The state a node was left in by the old bookkeeping: the CDN variant of
+    # an authorized subscriber stuck in the journal, failing every reconcile.
+    config_path, _additions, _removals, _events = await _patch_runtime(monkeypatch, tmp_path)
+    config_path.write_text(json.dumps(_config_with_cdn()))
+    reconcile.save_pending_revocations({"user_1_sub_1_cdn"})
+
+    result = await reconcile.reconcile_snapshot(_snapshot(), observe=False)
+
+    assert result.success is True
+    assert reconcile.load_applied_state().generation == 8
+    assert reconcile.load_pending_revocations() == set()
