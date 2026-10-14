@@ -32,8 +32,10 @@ from src.models import CdnEndpoint, Server
 CDN_CAPABILITY = "cdn-v1"
 CDN_TAG_PREFIX = "cdn-"
 CDN_BALANCER_TAG = "cdn"
-CDN_LOOPBACK_INBOUND = "cdn-fallback-in"
-CDN_LOOPBACK_OUTBOUND = "cdn-fallback"
+# Not under CDN_TAG_PREFIX: balancer selectors and the observatory match tags
+# by prefix, and a loopback picked as a "CDN path" would send traffic round.
+CDN_LOOPBACK_INBOUND = "to-cdn-in"
+CDN_LOOPBACK_OUTBOUND = "to-cdn"
 PRIMARY_BALANCER_TAG = "primary"
 # Auto-select's second stage: any direct node not known to be dead.
 PRIMARY_ANY_BALANCER_TAG = "primary-any"
@@ -289,41 +291,63 @@ def cdn_only(config: dict, cdn_outbound: dict, remarks: str) -> dict:
     return result
 
 
+def _cdn_tier_tags(count: int) -> list[str]:
+    """Tags for ``count`` CDN paths, none a prefix of another ("cdn-1" would
+    also select "cdn-10")."""
+    width = len(str(count))
+    return [f"{CDN_TAG_PREFIX}{index:0{width}d}" for index in range(1, count + 1)]
+
+
+def _loopback(tier: int) -> tuple[str, str]:
+    """(outbound, inbound) tags of the loopback into CDN tier ``tier``."""
+    if tier == 1:
+        return CDN_LOOPBACK_OUTBOUND, CDN_LOOPBACK_INBOUND
+    return f"{CDN_LOOPBACK_OUTBOUND}-{tier}", f"{CDN_LOOPBACK_OUTBOUND}-{tier}-in"
+
+
+def _loopback_inbound(tag: str) -> dict:
+    return {
+        "tag": tag,
+        "listen": "127.0.0.1",
+        "port": 0,
+        "protocol": "dokodemo-door",
+        "settings": {"address": "127.0.0.1", "network": "tcp,udp"},
+    }
+
+
 def attach_fallback(config: dict, cdn_outbounds: list[dict]) -> dict:
-    """Return ``config`` with a CDN tier behind its primary outbound(s).
+    """Return ``config`` with CDN tiers behind its primary outbound(s).
 
     Xray's balancer cannot fall back to another balancer, only to an outbound,
-    so the fallback is a loopback outbound feeding a local inbound whose traffic
-    is routed to the CDN balancer. The primary is health-checked; while it
-    answers, the CDN tier carries nothing.
+    so each fallback is a loopback outbound feeding a local inbound whose
+    traffic is routed to the next balancer. The CDN paths form a chain in the
+    order given (the first one first, the next only while it is down); the
+    primary is health-checked and, while it answers, no CDN tier carries
+    anything.
 
     Until the first health check has run there is no measurement at all, and a
     leastPing balancer then picks nothing and hands everything to its fallback:
     every fresh connect would start out through the CDN, slower and billed. A
     random balancer instead treats an outbound it has no report on as alive and
     drops only the ones a check found dead, so the direct path is taken until it
-    is known to be down.
+    is known to be down. The same holds down the chain.
     """
     if not cdn_outbounds:
         return config
     result = copy.deepcopy(config)
+    cdn_outbounds = copy.deepcopy(cdn_outbounds)
+    tags = _cdn_tier_tags(len(cdn_outbounds))
+    for outbound, tag in zip(cdn_outbounds, tags, strict=True):
+        outbound["tag"] = tag
     outbounds = result["outbounds"]
     # Keep the primary first (it stays the default outbound), CDN right after.
     insert_at = 1 + sum(1 for outbound in outbounds[1:] if str(outbound.get("tag", "")).startswith("proxy"))
-    outbounds[insert_at:insert_at] = copy.deepcopy(cdn_outbounds)
-    outbounds.append(
-        {"tag": CDN_LOOPBACK_OUTBOUND, "protocol": "loopback", "settings": {"inboundTag": CDN_LOOPBACK_INBOUND}}
-    )
-    result["inbounds"] = [
-        *result.get("inbounds", []),
-        {
-            "tag": CDN_LOOPBACK_INBOUND,
-            "listen": "127.0.0.1",
-            "port": 0,
-            "protocol": "dokodemo-door",
-            "settings": {"address": "127.0.0.1", "network": "tcp,udp"},
-        },
-    ]
+    outbounds[insert_at:insert_at] = cdn_outbounds
+    result["inbounds"] = list(result.get("inbounds", []))
+    for tier in range(1, len(tags) + 1):
+        out_tag, in_tag = _loopback(tier)
+        outbounds.append({"tag": out_tag, "protocol": "loopback", "settings": {"inboundTag": in_tag}})
+        result["inbounds"].append(_loopback_inbound(in_tag))
 
     routing = result.setdefault("routing", {})
     rules = routing.setdefault("rules", [])
@@ -342,15 +366,7 @@ def attach_fallback(config: dict, cdn_outbounds: list[dict]) -> dict:
                 "settings": {"inboundTag": PRIMARY_FALLBACK_INBOUND},
             }
         )
-        result["inbounds"].append(
-            {
-                "tag": PRIMARY_FALLBACK_INBOUND,
-                "listen": "127.0.0.1",
-                "port": 0,
-                "protocol": "dokodemo-door",
-                "settings": {"address": "127.0.0.1", "network": "tcp,udp"},
-            }
-        )
+        result["inbounds"].append(_loopback_inbound(PRIMARY_FALLBACK_INBOUND))
         balancers.append(
             {
                 "tag": PRIMARY_ANY_BALANCER_TAG,
@@ -384,10 +400,26 @@ def attach_fallback(config: dict, cdn_outbounds: list[dict]) -> dict:
                 "timeout": "3s",
             },
         }
-    # No observatory for the CDN tier: it is only used while the primary is
-    # down, and random needs no measurements to pick a working resource.
-    balancers.append({"tag": CDN_BALANCER_TAG, "selector": [CDN_TAG_PREFIX], "strategy": {"type": "random"}})
-    # First rule: traffic re-entering through the loopback goes to the CDN tier
+    if len(tags) > 1:
+        # A chain only moves on from a CDN path a check found dead, so the paths
+        # are checked too. A single path needs no check (it is the only choice)
+        # and costs nothing while the primary is up; with several, the checks
+        # themselves go through the CDN.
+        observatory = result.setdefault("burstObservatory", {"subjectSelector": []})
+        observatory["subjectSelector"] = [*observatory.get("subjectSelector", []), CDN_TAG_PREFIX]
+    for tier, tag in enumerate(tags, start=1):
+        balancer: dict = {
+            "tag": CDN_BALANCER_TAG if tier == 1 else f"{CDN_BALANCER_TAG}-tier-{tier}",
+            "selector": [tag],
+            "strategy": {"type": "random"},
+        }
+        if tier < len(tags):
+            balancer["fallbackTag"] = _loopback(tier + 1)[0]
+        balancers.append(balancer)
+    # First rules: traffic re-entering through a loopback goes to its CDN tier
     # (it already passed the direct-routing rules on its first pass).
-    rules.insert(0, {"type": "field", "inboundTag": [CDN_LOOPBACK_INBOUND], "balancerTag": CDN_BALANCER_TAG})
+    rules[0:0] = [
+        {"type": "field", "inboundTag": [_loopback(tier)[1]], "balancerTag": balancer["tag"]}
+        for tier, balancer in enumerate(balancers[-len(tags) :], start=1)
+    ]
     return result
