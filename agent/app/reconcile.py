@@ -15,6 +15,7 @@ from .control_models import (
     DesiredSnapshot,
 )
 from .xray import (
+    base_email,
     build_client_record,
     config_lock,
     get_xray_config,
@@ -101,7 +102,11 @@ def load_pending_revocations() -> set[str]:
     emails = payload.get("emails") if isinstance(payload, dict) else None
     if not isinstance(emails, list) or not all(isinstance(email, str) and email for email in emails):
         raise ReconcileError("invalid pending revocations journal")
-    return set(emails)
+    # Kept in subscriber emails. An entry written with the CDN inbound's suffix
+    # could never clear (the subscriber stays configured under the bare email,
+    # the desired state never names the suffixed one) and blocked every later
+    # reconcile; read it as the subscriber it stands for.
+    return {base_email(email) for email in emails}
 
 
 def save_pending_revocations(values: set[str]) -> None:
@@ -112,8 +117,9 @@ def save_pending_revocations(values: set[str]) -> None:
 
 
 def _configured_emails(config: dict) -> set[str]:
+    """Subscribers still authorized somewhere, by their bare email."""
     return {
-        str(email)
+        base_email(str(email))
         for inbound in list_vless_inbounds(config)
         for record in inbound.get("settings", {}).get("clients", [])
         if (email := record.get("email"))
@@ -213,7 +219,8 @@ async def reconcile_snapshot(
                 tag = inbound.get("tag")
                 if tag and email:
                     removals.append((tag, email))
-                    removed_emails.add(email)
+                    # Compared with the desired (bare) emails below.
+                    removed_emails.add(base_email(email))
 
             for uuid, desired_record in desired_by_uuid.items():
                 existing_record = existing_by_uuid.get(uuid)
