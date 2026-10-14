@@ -56,6 +56,7 @@ import base64
 import copy
 import hashlib
 import json
+import os
 import posixpath
 import re
 import secrets
@@ -1645,7 +1646,12 @@ def setup_mtproxy(c: paramiko.SSHClient, host: str, main_c: paramiko.SSHClient, 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Push code updates to AegisVPN nodes.")
-    p.add_argument("--main-host", default="89.125.181.236")
+    p.add_argument(
+        "--main-host",
+        default=os.environ.get("AEGIS_MAIN_HOST"),
+        required="AEGIS_MAIN_HOST" not in os.environ,
+        help="control-plane host (or set AEGIS_MAIN_HOST)",
+    )
     p.add_argument("--main-password", required=False)
     p.add_argument("--bot", action="store_true", help="Update the bot on the main VPS")
     p.add_argument("--nodes", action="store_true", help="Update agent on --node targets")

@@ -16,7 +16,7 @@ async def test_server_bootstrap_is_opt_in(monkeypatch, tmp_path):
 
     stale_agent_env = tmp_path / "agent.env"
     stale_agent_env.write_text(
-        "HOST_IP=89.125.181.236\n"
+        "HOST_IP=203.0.113.40\n"
         "XRAY_PORT=443\n"
         "PUBLIC_KEY=stale-public-key\n"
         "SHORT_ID=stale-short-id\n"
