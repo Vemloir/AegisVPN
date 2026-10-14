@@ -70,7 +70,8 @@ async def locations() -> list[dict]:
             (
                 await session.execute(
                     select(Server)
-                    .where(Server.is_active == True)  # noqa: E712 - SQLAlchemy needs ==
+                    # A location on trial is never advertised publicly.
+                    .where(Server.is_active == True, Server.preview_only == False)  # noqa: E712 - SQLAlchemy needs ==
                     .order_by(Server.display_order, Server.id)
                 )
             )

@@ -49,6 +49,8 @@ async def render_server_details(server_id: int) -> tuple[str, InlineKeyboardMark
                 access_lines.append("- Пока никого не добавили")
 
         hide_line = "Выдача подписки: скрыта (существующие клиенты продолжают работать)\n" if server.hidden_from_subscription else ""
+        if server.preview_only:
+            hide_line += "Превью: видна только тестерам (PREVIEW_TG_IDS), нет в автовыборе и на сайте\n"
         text = (
             f"{html.bold(SubscriptionService.format_server_label(server))}\n\n"
             f"Статус: {status}\n"

@@ -61,6 +61,10 @@ class Server(Base):
     # Distinct from is_active/access_mode, which both flow through
     # ServerAccessService reconcile and DO strip the node's live client list.
     hidden_from_subscription: Mapped[bool] = mapped_column(Boolean, default=False)
+    # A location on trial: listed only to settings.preview_tg_ids (subscription
+    # and bot), kept out of auto-select and off the public site. Like
+    # hidden_from_subscription it changes what is shown, never who has access.
+    preview_only: Mapped[bool] = mapped_column(Boolean, default=False)
     display_order: Mapped[int] = mapped_column(Integer, default=0)
     mtproxy_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # MTProto-proxy (fake-TLS mtg) listen port. Together with mtproxy_secret it

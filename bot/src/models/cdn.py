@@ -43,7 +43,8 @@ class CdnEndpoint(Base):
     # one the resource is not advertised.
     pin_cert: Mapped[bool] = mapped_column(Boolean, default=False)
     pinned_cert_sha256: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    # Only shown as a "| WL" preview entry, never in anyone's fallback tier.
+    # On trial: shown only as a "| WL" entry to preview users, never in anyone's
+    # fallback chain. A resource in the chain gets no entry of its own.
     preview_only: Mapped[bool] = mapped_column(Boolean, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     position: Mapped[int] = mapped_column(Integer, default=0)
