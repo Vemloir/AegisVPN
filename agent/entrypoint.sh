@@ -492,6 +492,8 @@ def ensure_gemini_resolver(cfg: dict) -> None:
     - GEMINI_EGRESS=warp: the node's WARP outbound, forced to IPv4. Google
       places WARP's IPv4 egress in the US and its IPv6 egress in Russia, so
       without the force a dual-stack tunnel flips between the two.
+    - GEMINI_EGRESS=ipv6 / ipv4: the node's own address of that family only,
+      as Google may judge a node's IPv6 and IPv4 addresses differently.
     - GEMINI_RESOLVER (a DoH URL): a resolver such as GeoHide or comss answers
       Gemini's names with an SNI proxy that passes TLS through untouched (the
       client still verifies Google's own certificate).
@@ -527,7 +529,12 @@ def ensure_gemini_resolver(cfg: dict) -> None:
     extra = [d.strip() for d in (os.environ.get("GEMINI_EXTRA_DOMAINS") or "").split(",") if d.strip()]
     domains = GEMINI_DOMAINS + [d for d in extra if d not in GEMINI_DOMAINS]
     resolver = (os.environ.get("GEMINI_RESOLVER") or "").strip()
-    if (os.environ.get("GEMINI_EGRESS") or "").strip().lower() == "warp" and warp is not None:
+    egress = (os.environ.get("GEMINI_EGRESS") or "").strip().lower()
+    if egress in ("ipv6", "ipv4"):
+        strategy = "ForceIPv6" if egress == "ipv6" else "ForceIPv4"
+        outbounds.append({"tag": "gemini", "protocol": "freedom", "settings": {"domainStrategy": strategy}})
+        target = "gemini"
+    elif egress == "warp" and warp is not None:
         # The one WARP session (a second one with the same key would fight it
         # for the peer slot), forced to IPv4; Microsoft's traffic on it too.
         warp["settings"]["domainStrategy"] = "ForceIPv4"
