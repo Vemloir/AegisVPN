@@ -498,7 +498,9 @@ def ensure_gemini_resolver(cfg: dict) -> None:
       GEMINI_RESOLVER_SKIP_IPS (comma-separated) drops dead proxies from its
       answers.
 
-    Only Gemini's names take that way; everything else exits as before. QUIC
+    Only Gemini's names take that way, plus GEMINI_EXTRA_DOMAINS (comma-
+    separated Xray domain rules, e.g. "domain:google.com") for when Google
+    checks more than Gemini's own hosts; everything else exits as before. QUIC
     to those names is blocked so browsers fall back to TCP, which both ways
     carry. With neither set, every piece added by an earlier boot is removed.
     """
@@ -522,6 +524,8 @@ def ensure_gemini_resolver(cfg: dict) -> None:
         if "quic" in sniffing.get("destOverride", []) and not sniffing.get("routeOnly"):
             sniffing["destOverride"] = [d for d in sniffing["destOverride"] if d != "quic"]
 
+    extra = [d.strip() for d in (os.environ.get("GEMINI_EXTRA_DOMAINS") or "").split(",") if d.strip()]
+    domains = GEMINI_DOMAINS + [d for d in extra if d not in GEMINI_DOMAINS]
     resolver = (os.environ.get("GEMINI_RESOLVER") or "").strip()
     if (os.environ.get("GEMINI_EGRESS") or "").strip().lower() == "warp" and warp is not None:
         # The one WARP session (a second one with the same key would fight it
@@ -530,7 +534,7 @@ def ensure_gemini_resolver(cfg: dict) -> None:
         target = "warp"
     elif resolver:
         # skipFallback: the resolver answers Gemini's names and nothing else.
-        server = {"address": resolver, "domains": GEMINI_DOMAINS, "skipFallback": True}
+        server = {"address": resolver, "domains": domains, "skipFallback": True}
         # Proxies of the resolver's pool that do not answer from our nodes: a
         # connection picks one of the answers at random, so a dead one would
         # fail every few page loads.
@@ -549,8 +553,8 @@ def ensure_gemini_resolver(cfg: dict) -> None:
         if "tls" in sniffing.get("destOverride", []) and not sniffing.get("routeOnly"):
             sniffing["destOverride"] = [*sniffing["destOverride"], "quic"]
     api_idx = next((i for i, r in enumerate(rules) if r.get("inboundTag") == ["api"]), -1)
-    rules.insert(api_idx + 1, {"type": "field", "network": "udp", "domain": GEMINI_DOMAINS, "outboundTag": "block"})
-    rules.insert(api_idx + 2, {"type": "field", "domain": GEMINI_DOMAINS, "outboundTag": target})
+    rules.insert(api_idx + 1, {"type": "field", "network": "udp", "domain": domains, "outboundTag": "block"})
+    rules.insert(api_idx + 2, {"type": "field", "domain": domains, "outboundTag": target})
 
 
 def ensure_private_blocked(cfg: dict) -> None:

@@ -72,6 +72,7 @@ def _with_warp(config: dict) -> dict:
 
 def test_gemini_can_leave_through_warp_over_ipv4(monkeypatch):
     ensure, domains = _ensure_gemini_resolver()
+    monkeypatch.delenv("GEMINI_EXTRA_DOMAINS", raising=False)
     monkeypatch.setenv("GEMINI_EGRESS", "warp")
     monkeypatch.setenv("GEMINI_RESOLVER", RESOLVER)  # WARP wins over a resolver
     config = _with_warp(_config())
@@ -86,6 +87,25 @@ def test_gemini_can_leave_through_warp_over_ipv4(monkeypatch):
 
     monkeypatch.delenv("GEMINI_EGRESS")
     monkeypatch.delenv("GEMINI_RESOLVER")
+    ensure(config)
+    assert config == _with_warp(_config())
+
+
+def test_extra_domains_take_the_same_way_out(monkeypatch):
+    ensure, domains = _ensure_gemini_resolver()
+    monkeypatch.setenv("GEMINI_EGRESS", "warp")
+    monkeypatch.delenv("GEMINI_RESOLVER", raising=False)
+    monkeypatch.setenv("GEMINI_EXTRA_DOMAINS", "domain:google.com, domain:googleapis.com,domain:gemini.google.com")
+    config = _with_warp(_config())
+    ensure(config)
+    ensure(config)
+    expected = [*domains, "domain:google.com", "domain:googleapis.com"]
+    assert config["routing"]["rules"][1:3] == [
+        {"type": "field", "network": "udp", "domain": expected, "outboundTag": "block"},
+        {"type": "field", "domain": expected, "outboundTag": "warp"},
+    ]
+    monkeypatch.delenv("GEMINI_EGRESS")
+    monkeypatch.delenv("GEMINI_EXTRA_DOMAINS")
     ensure(config)
     assert config == _with_warp(_config())
 
