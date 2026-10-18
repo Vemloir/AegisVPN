@@ -110,6 +110,23 @@ def test_extra_domains_take_the_same_way_out(monkeypatch):
     assert config == _with_warp(_config())
 
 
+def test_gemini_can_leave_from_one_address_family_of_the_node(monkeypatch):
+    ensure, domains = _ensure_gemini_resolver()
+    monkeypatch.setenv("GEMINI_RESOLVER", RESOLVER)  # an address family wins over a resolver
+    monkeypatch.delenv("GEMINI_EXTRA_DOMAINS", raising=False)
+    for egress, strategy in (("ipv6", "ForceIPv6"), ("ipv4", "ForceIPv4")):
+        monkeypatch.setenv("GEMINI_EGRESS", egress)
+        config = _with_warp(_config())
+        ensure(config)
+        ensure(config)
+        assert [o for o in config["outbounds"] if o["tag"] == "gemini"] == [
+            {"tag": "gemini", "protocol": "freedom", "settings": {"domainStrategy": strategy}}
+        ]
+        assert config["dns"]["servers"] == ["https+local://9.9.9.9/dns-query"]
+        assert config["routing"]["rules"][2] == {"type": "field", "domain": domains, "outboundTag": "gemini"}
+        assert "domainStrategy" not in next(o for o in config["outbounds"] if o["tag"] == "warp")["settings"]
+
+
 def test_warp_egress_without_a_warp_outbound_changes_nothing(monkeypatch):
     ensure, _domains = _ensure_gemini_resolver()
     monkeypatch.setenv("GEMINI_EGRESS", "warp")
