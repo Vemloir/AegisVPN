@@ -125,6 +125,21 @@ def test_gemini_can_leave_from_one_address_family_of_the_node(monkeypatch):
         assert config["dns"]["servers"] == ["https+local://9.9.9.9/dns-query"]
         assert config["routing"]["rules"][2] == {"type": "field", "domain": domains, "outboundTag": "gemini"}
         assert "domainStrategy" not in next(o for o in config["outbounds"] if o["tag"] == "warp")["settings"]
+        # The global IPv4-only strategy would veto the IPv6 lookups.
+        assert config["dns"].get("queryStrategy") == ("UseIP" if egress == "ipv6" else None)
+
+
+def test_leaving_ipv6_mode_restores_ipv4_only_resolution(monkeypatch):
+    ensure, _domains = _ensure_gemini_resolver()
+    monkeypatch.delenv("GEMINI_RESOLVER", raising=False)
+    monkeypatch.setenv("GEMINI_EGRESS", "ipv6")
+    config = _config()
+    config["dns"]["queryStrategy"] = "UseIPv4"
+    ensure(config)
+    assert config["dns"]["queryStrategy"] == "UseIP"
+    monkeypatch.delenv("GEMINI_EGRESS")
+    ensure(config)
+    assert config["dns"]["queryStrategy"] == "UseIPv4"
 
 
 def test_warp_egress_without_a_warp_outbound_changes_nothing(monkeypatch):
