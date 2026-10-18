@@ -530,6 +530,13 @@ def ensure_gemini_resolver(cfg: dict) -> None:
     domains = GEMINI_DOMAINS + [d for d in extra if d not in GEMINI_DOMAINS]
     resolver = (os.environ.get("GEMINI_RESOLVER") or "").strip()
     egress = (os.environ.get("GEMINI_EGRESS") or "").strip().lower()
+    # The template resolves IPv4 only, and that global strategy also vetoes the
+    # IPv6 lookups a ForceIPv6 outbound makes; let it answer both while one
+    # does, and put the template's value back once none does.
+    if egress == "ipv6":
+        dns["queryStrategy"] = "UseIP"
+    elif dns.get("queryStrategy") == "UseIP":
+        dns["queryStrategy"] = "UseIPv4"
     if egress in ("ipv6", "ipv4"):
         strategy = "ForceIPv6" if egress == "ipv6" else "ForceIPv4"
         outbounds.append({"tag": "gemini", "protocol": "freedom", "settings": {"domainStrategy": strategy}})
