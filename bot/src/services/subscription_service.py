@@ -1292,12 +1292,18 @@ class SubscriptionService:
         fingerprint = SubscriptionService.fingerprint_ua(ua)
         now = datetime.now(UTC).replace(tzinfo=None)
 
+        # Concurrent first fetches can leave several active rows for the same
+        # UA. Reuse a stable canonical row without deleting any
+        # UUIDs or bypassing its suspension state; duplicates must not cause 500s.
         result = await session.execute(
-            select(Device).where(
+            select(Device)
+            .where(
                 Device.subscription_id == sub.id,
                 Device.ua_fingerprint == fingerprint,
                 Device.is_active == True,  # noqa: E712
             )
+            .order_by(Device.id)
+            .limit(1)
         )
         device = result.scalar_one_or_none()
 
