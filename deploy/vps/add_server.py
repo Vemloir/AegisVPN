@@ -26,6 +26,7 @@ import argparse
 import base64
 import getpass
 import hashlib
+import json
 import posixpath
 import secrets
 import stat
@@ -57,7 +58,7 @@ except ImportError:  # Direct execution: python deploy/vps/add_server.py
 
 ROOT = Path(__file__).resolve().parents[2]
 AGENT_DIR = ROOT / "agent"
-COMPOSE_FILE = ROOT / "deploy" / "vps" / "docker-compose.yml"
+COMPOSE_FILE = ROOT / "deploy" / "vps" / "docker-compose.node.yml"
 # Both live beside this script. They used to be pulled from an untracked scratch
 # directory (.codex_tmp/, which is gitignored), so a fresh clone of the repo could
 # not add a server at all — the deploy path depended on files that were never
@@ -115,6 +116,10 @@ def parse_args() -> argparse.Namespace:
         help="IP/hostname the client connects to (use bare IP, not sslip.io)",
     )
     p.add_argument("--agent-url", help="Defaults to http://<new-host>:8444")
+    p.add_argument(
+        "--hidden-from-subscription", action="store_true",
+        help="Keep the new location hidden until end-to-end verification succeeds.",
+    )
     p.add_argument(
         "--control-url",
         action="append",
@@ -514,8 +519,8 @@ docker --version
 # WireGuard outbound + the AI-domain routing rule on the next restart. Each node
 # gets its OWN account (Cloudflare rate-limits one identity across many IPs, and
 # we don't want every location egressing as the same WARP peer). Idempotent:
-# bails out if agent.env already carries a WARP_SECRET_KEY. Best-effort — a
-# failed registration must not abort provisioning, so the caller ignores errors.
+# bails out if agent.env already carries a WARP_SECRET_KEY. configure_warp
+# validates the complete registration and stops deployment on failure.
 WARP_REGISTER_SCRIPT = r"""#!/bin/sh
 set -eu
 ENV=/root/aegis/deploy/vps/data/vpn/agent.env
@@ -527,15 +532,15 @@ if ! command -v wg >/dev/null 2>&1; then
     apt-get update -qq >/dev/null 2>&1 || true
     apt-get install -y -qq wireguard-tools curl >/dev/null 2>&1 || true
 fi
-command -v wg >/dev/null 2>&1 || { echo "wg missing; skip warp"; exit 0; }
+command -v wg >/dev/null 2>&1 || { echo "wg missing; cannot register WARP" >&2; exit 1; }
 PRIV=$(wg genkey)
 PUB=$(printf '%s' "$PRIV" | wg pubkey)
 TOS=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
-RESP=$(curl -s --max-time 25 -X POST 'https://api.cloudflareclient.com/v0a2158/reg' \
+RESP=$(curl -fsS --max-time 25 -X POST 'https://api.cloudflareclient.com/v0a2158/reg' \
     -H 'User-Agent: okhttp/3.12.1' -H 'CF-Client-Version: a-6.30-3596' \
     -H 'Content-Type: application/json' \
     -d "{\"key\":\"$PUB\",\"install_id\":\"\",\"fcm_token\":\"\",\"tos\":\"$TOS\",\"model\":\"PC\",\"type\":\"Linux\",\"locale\":\"en_US\"}") || {
-        echo "warp reg request failed; skip"; exit 0; }
+        echo "WARP registration request failed" >&2; exit 1; }
 # RESP goes via env, NOT a pipe: python3's stdin is already taken by the
 # heredoc that carries the program itself — piping data in too would make
 # json read an empty/exhausted stdin.
@@ -554,7 +559,7 @@ try:
     client_id = cfg.get("client_id") or result.get("client_id")
     reserved = list(base64.b64decode(client_id))[:3]
 except Exception as exc:
-    print("warp parse failed:", exc); sys.exit(0)
+    print("WARP registration response invalid:", exc); sys.exit(1)
 fields = {
     "WARP_SECRET_KEY": os.environ["PRIV"],
     "WARP_ADDR_V4": v4 + "/32",
@@ -607,6 +612,8 @@ XRAY_NETWORK={args.xray_network}
 REALITY_DEST={args.reality_dest}
 REALITY_SERVER_NAME={args.reality_server_name}
 HOST_IP={args.server_domain}
+GEMINI_EGRESS=warp
+WARP_DOMAIN_STRATEGY=ForceIPv6
 {render_node_control_env(control_urls=args.control_url, mode="observe").rstrip()}
 EOF
 # Reset client state so re-provisioned nodes don't get duplicate clients
@@ -683,6 +690,122 @@ def shell_quote(s: str) -> str:
     through json.dumps (which would escape non-ASCII as \\uXXXX and the
     target shell would write literal backslash sequences into the DB)."""
     return "'" + s.replace("'", "'\\''") + "'"
+
+
+def configure_warp(client: paramiko.SSHClient) -> None:
+    """Register, validate and apply WARP; never report an ignored failure as OK."""
+    write_remote_script(client, "/root/aegis/warp_register.sh", WARP_REGISTER_SCRIPT)
+    run_or_die(
+        client, "sh /root/aegis/warp_register.sh", "register WARP", timeout=180
+    )
+    env = parse_env(run_or_die(
+        client,
+        "cat /root/aegis/deploy/vps/data/vpn/agent.env",
+        "validate WARP registration",
+    ))
+    required = (
+        "WARP_SECRET_KEY", "WARP_ADDR_V4", "WARP_ADDR_V6",
+        "WARP_PEER_PUBKEY", "WARP_ENDPOINT", "WARP_RESERVED",
+    )
+    if not all(env.get(key) for key in required):
+        raise SystemExit("WARP registration incomplete; use --no-warp only to opt out explicitly")
+    # Credentials are read by the Agent entrypoint, not by the already-running
+    # Xray process. Wait for its atomic config write, validate before any
+    # interruption, then recreate it again against Xray's new PID namespace.
+    expected_strategy = env.get("WARP_DOMAIN_STRATEGY") or (
+        "ForceIPv6" if env.get("GEMINI_EGRESS") == "warp" else None
+    )
+    wait_script = (
+        "import json,time\n"
+        f"expected={expected_strategy!r}\n"
+        "for _ in range(60):\n"
+        "    c=json.load(open('/data/xray-config.json'))\n"
+        "    if any(o.get('tag') == 'warp' and (expected is None or "
+        "o.get('settings', {}).get('domainStrategy') == expected) "
+        "for o in c.get('outbounds', [])): break\n"
+        "    time.sleep(0.5)\n"
+        "else: raise SystemExit('Agent did not publish WARP configuration')\n"
+    )
+    run_or_die(
+        client,
+        "cd /root/aegis/deploy/vps && "
+        "docker compose up -d --no-deps --force-recreate agent && "
+        f"docker exec aegis-vpn python3 -c {shell_quote(wait_script)} && "
+        "docker exec aegis-vpn xray run -test -config /data/xray-config.json && "
+        "docker compose restart xray && "
+        "docker compose up -d --no-deps --force-recreate agent",
+        "apply WARP routing",
+        timeout=240,
+    )
+    print("     WARP credentials validated and routing applied")
+
+
+def render_mtproxy_config(secret: str, port: int = 80) -> str:
+    """Render a protected mtg config, keeping its secret out of process arguments."""
+    try:
+        if secret.startswith("ee") and all(c in "0123456789abcdefABCDEF" for c in secret):
+            decoded = bytes.fromhex(secret)
+        else:
+            decoded = base64.urlsafe_b64decode(secret + "=" * (-len(secret) % 4))
+    except (ValueError, TypeError) as exc:
+        raise ValueError("Invalid fake-TLS MTProxy secret") from exc
+    if len(decoded) <= 17 or decoded[0] != 0xEE or not 1 <= port <= 65535:
+        raise ValueError("Invalid fake-TLS MTProxy configuration")
+    return f"secret = {json.dumps(secret)}\nbind-to = {json.dumps(f'0.0.0.0:{port}')}\n"
+
+
+def configure_mtproxy(client: paramiko.SSHClient) -> str:
+    """Idempotently configure the node's pinned, Compose-managed MTProxy."""
+    directory = "/root/aegis/deploy/vps/data/mtproxy"
+    config_path = f"{directory}/config.toml"
+    run_or_die(client, f"install -d -m 0700 {directory}", "protect MTProxy directory")
+    read_secret = (
+        "import pathlib,tomllib; "
+        f"p=pathlib.Path({config_path!r}); "
+        "print(tomllib.loads(p.read_text()).get('secret', '') if p.exists() else '')"
+    )
+    secret = run_or_die(
+        client, f"python3 -c {shell_quote(read_secret)}", "read existing MTProxy identity"
+    ).strip()
+    if not secret:
+        image = parse_env((ROOT / "deploy/vps/runtime-versions.env").read_text())["MTG_IMAGE"]
+        if "@sha256:" not in image:
+            raise SystemExit("MTProxy image must be pinned by digest")
+        secret = run_or_die(
+            client,
+            f"docker run --rm {shell_quote(image)} generate-secret google.com",
+            "generate MTProxy identity",
+            timeout=180,
+        ).strip()
+    rendered = render_mtproxy_config(secret)
+    write_remote_script(client, config_path, rendered)
+    run_or_die(client, f"chmod 0600 {config_path}", "protect MTProxy config")
+    run_or_die(
+        client,
+        "cd /root/aegis/deploy/vps && "
+        "docker compose --profile mtproxy up -d --no-deps mtg",
+        "start MTProxy",
+        timeout=180,
+    )
+    state = run_or_die(
+        client, "sleep 3; docker inspect -f '{{.State.Running}}' aegis-mtg", "verify MTProxy"
+    ).strip()
+    if state != "true":
+        raise SystemExit("MTProxy did not remain running; database advertisement was not updated")
+    return secret
+
+
+def save_mtproxy(client: paramiko.SSHClient, server_id: int, secret: str) -> None:
+    """Advertise only an operational proxy, without logging its secret or URL."""
+    script = (
+        "import sqlite3\n"
+        "c=sqlite3.connect('/root/aegis/deploy/vps/data/bot/aegis.db')\n"
+        "r=c.execute('UPDATE servers SET mtproxy_secret=?, mtproxy_port=? WHERE id=?', "
+        f"({secret!r}, 80, {int(server_id)}))\n"
+        "assert r.rowcount == 1, 'server not found'\n"
+        "c.commit()\n"
+    )
+    run_or_die(client, f"python3 -c {shell_quote(script)}", "advertise MTProxy")
 
 
 # --- main flow -------------------------------------------------------------
@@ -851,16 +974,7 @@ def main() -> int:
 
         if not args.no_warp:
             print("     registering a per-location WARP account…")
-            write_remote_script(
-                new_client, "/root/aegis/warp_register.sh", WARP_REGISTER_SCRIPT
-            )
-            # Best-effort: a WARP failure must not abort the deploy. The final
-            # restart picks up agent.env's WARP_* via entrypoint ensure_warp().
-            code, wout, werr = exec_command(
-                new_client, "sh /root/aegis/warp_register.sh", timeout=120
-            )
-            tail = (wout or werr).strip().splitlines()[-1:] or ["(no output)"]
-            print("     " + tail[0])
+            configure_warp(new_client)
 
         print(f"[5/6] registering server on main VPS {args.main_host}…")
         main_client = connect(
@@ -889,6 +1003,7 @@ def main() -> int:
             f"ACCESS_MODE={shell_quote(args.access_mode)} "
             f"COUNTRY_CODE={shell_quote(args.country_code or '')} "
             f"DISPLAY_ORDER={shell_quote(str(args.display_order))} "
+            f"HIDDEN_FROM_SUBSCRIPTION={int(args.hidden_from_subscription)} "
             "CONTROL_MODE=observe "
             f"CONTROL_TOKEN_HASH={shell_quote(credentials.token_hash)} "
             "CONTROL_CERT_FINGERPRINT="
@@ -939,72 +1054,9 @@ def main() -> int:
 
         if not args.no_mtproxy and server_id is not None:
             print("[+] setting up MTProxy (Telegram proxy) on port 80…")
-            code, secret_out, _ = exec_command(
-                new_client,
-                "docker run --rm ghcr.io/9seconds/mtg:2 generate-secret google.com 2>/dev/null",
-                timeout=60,
-            )
-            mtproxy_secret = secret_out.strip()
-            if code == 0 and mtproxy_secret:
-                # `mtg run` takes a TOML CONFIG PATH, not a secret: passing the
-                # secret positionally made mtg exit 80 immediately with
-                # "stat /<secret>: no such file or directory" while every step
-                # here still reported success, so the node advertised a proxy
-                # link pointing at a dead port. `simple-run <bind> <secret>` is
-                # the flag-free form (same as update.py's provision_mtproxy).
-                # `compose run` also ignores the service's restart policy, so
-                # the container is re-tagged unless-stopped explicitly.
-                run_or_die(
-                    new_client,
-                    f"cd /root/aegis/deploy/vps && "
-                    f"docker compose --profile mtproxy run -d --name aegis-mtg "
-                    f"--no-deps mtg simple-run 0.0.0.0:80 {mtproxy_secret} 2>&1 | tail -2",
-                    "start mtg",
-                    timeout=60,
-                )
-                exec_command(
-                    new_client,
-                    "docker update --restart unless-stopped aegis-mtg",
-                    timeout=30,
-                )
-                # Verify it is actually serving before claiming success — the
-                # bug above stayed invisible precisely because nothing checked.
-                mtg_code, mtg_state, _ = exec_command(
-                    new_client,
-                    "sleep 3; docker inspect -f '{{.State.Running}}' aegis-mtg",
-                    timeout=30,
-                )
-                if mtg_code != 0 or mtg_state.strip() != "true":
-                    _, mtg_log, _ = exec_command(
-                        new_client, "docker logs aegis-mtg 2>&1 | tail -3", timeout=30
-                    )
-                    raise SystemExit(
-                        f"MTProxy failed to start on {args.new_host}: {mtg_log.strip()}"
-                    )
-                # Store secret AND port in the bot DB. Server.mtproxy_capable
-                # requires both — writing only the secret left mtproxy_port NULL,
-                # so the node ran mtg happily and the bot never showed anyone the
-                # link. (The success line below printed a working link anyway,
-                # which is what made this look provisioned when it wasn't.)
-                update_cmd = (
-                    f"docker exec aegis-bot python3 -c "
-                    f"'import asyncio; from sqlalchemy import text; from src.core.database import async_session_maker\n"
-                    f'exec("""async def q():\\n'
-                    f"    async with async_session_maker() as s:\\n"
-                    f'        await s.execute(text(\\"UPDATE servers SET mtproxy_secret=\\\\\\"{mtproxy_secret}\\\\\\", mtproxy_port=80 WHERE id={server_id}\\"))\\n'
-                    f"        await s.commit()\\n"
-                    f'        print(\\"ok\\")\\n'
-                    f'asyncio.run(q())""")\''
-                )
-                run_or_die(
-                    main_client, update_cmd, "save mtproxy_secret + port", timeout=30
-                )
-                print(f"     MTProxy ready — secret={mtproxy_secret[:8]}…")
-                print(
-                    f"     Link: https://t.me/proxy?server={args.server_domain}&port=80&secret={mtproxy_secret}"
-                )
-            else:
-                print("     [warn] failed to generate MTProxy secret, skipping.")
+            mtproxy_secret = configure_mtproxy(new_client)
+            save_mtproxy(main_client, server_id, mtproxy_secret)
+            print("     MTProxy ready on TCP/80; identity stored without logging it")
     finally:
         credential_workspace.cleanup()
         if main_client is not None:

@@ -21,9 +21,10 @@ The production control host is not a VPN exit. A default `docker compose up`
 therefore excludes `xray` and `agent`, preventing Linux `SO_REUSEPORT` from
 splitting HTTPS connections between Caddy and Reality.
 
-Remote VPN nodes use `docker-compose.node.yml`. It contains only `xray`,
-`agent`, and the optional `hysteria` profile, so node updates never require
-control-host-only `bot.env` or `support.env` files.
+Remote VPN nodes use `docker-compose.node.yml`. It contains `xray`, `agent`,
+and the optional `hysteria` and `mtproxy` profiles, so node updates never
+require control-host-only `bot.env` or `support.env` files. MTProxy reads its
+secret from root-only `data/mtproxy/config.toml`, not process arguments.
 
 ## What This Deploy Does
 
@@ -108,4 +109,22 @@ docker compose --profile local-exit up -d --build xray agent
 
 ## Adding More VPN Servers
 
-Use [add_server.py](C:/Users/detko/Documents/VPN/deploy/vps/add_server.py) from the project root to provision and register additional VPN nodes.
+Use [add_server.py](add_server.py) from the project root to provision and
+register a fresh VPN node. By default it configures both VLESS transports,
+registers and applies a unique WARP identity, sets `GEMINI_EGRESS=warp` and
+`WARP_DOMAIN_STRATEGY=ForceIPv6` for Gemini and Microsoft through WARP IPv6,
+and starts a pinned,
+Compose-managed MTProxy on TCP/80. Games and ordinary unmatched traffic keep
+the node's direct egress. WARP registration or MTProxy startup
+failures stop provisioning; `--no-warp` and `--no-mtproxy` are explicit opt-outs.
+Hysteria2 remains a separate per-node opt-in, not a prerequisite for VLESS.
+
+Do not rerun the fresh-node bootstrap on an existing node: it resets client
+state and observation settings. For a partial installation, back up the node
+and database, preserve its Reality/control identities and current control
+mode, then complete only the missing components. For a fresh rollout, pass `--hidden-from-subscription` to stage the new
+location without advertising it; publish it only after verification. Before
+advertising success, verify real WARP egress (`warp=on`), ordinary direct egress, both VLESS
+transports, MTProxy health, current exact control ACK, and existing-device
+subscription output. Keep private-network blocking and game traffic outside
+WARP. Record explicitly whether optional Hysteria2 is enabled.

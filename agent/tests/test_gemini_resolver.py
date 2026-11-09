@@ -2,6 +2,14 @@ import os
 import re
 from pathlib import Path
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def isolated_warp_strategy(monkeypatch):
+    monkeypatch.delenv("WARP_DOMAIN_STRATEGY", raising=False)
+
+
 AGENT = Path(__file__).resolve().parents[1]
 RESOLVER = "https+local://dns.comss.one/dns-query"
 
@@ -70,10 +78,11 @@ def _with_warp(config: dict) -> dict:
     return config
 
 
-def test_gemini_can_leave_through_warp_over_ipv4(monkeypatch):
+def test_gemini_can_leave_through_warp_over_ipv4_when_explicitly_selected(monkeypatch):
     ensure, domains = _ensure_gemini_resolver()
     monkeypatch.delenv("GEMINI_EXTRA_DOMAINS", raising=False)
     monkeypatch.setenv("GEMINI_EGRESS", "warp")
+    monkeypatch.setenv("WARP_DOMAIN_STRATEGY", "ForceIPv4")
     monkeypatch.setenv("GEMINI_RESOLVER", RESOLVER)  # WARP wins over a resolver
     config = _with_warp(_config())
     ensure(config)
@@ -87,6 +96,7 @@ def test_gemini_can_leave_through_warp_over_ipv4(monkeypatch):
 
     monkeypatch.delenv("GEMINI_EGRESS")
     monkeypatch.delenv("GEMINI_RESOLVER")
+    monkeypatch.delenv("WARP_DOMAIN_STRATEGY")
     ensure(config)
     assert config == _with_warp(_config())
 
@@ -104,10 +114,51 @@ def test_extra_domains_take_the_same_way_out(monkeypatch):
         {"type": "field", "network": "udp", "domain": expected, "outboundTag": "block"},
         {"type": "field", "domain": expected, "outboundTag": "warp"},
     ]
+    assert config["dns"]["queryStrategy"] == "UseIP"
     monkeypatch.delenv("GEMINI_EGRESS")
     monkeypatch.delenv("GEMINI_EXTRA_DOMAINS")
     ensure(config)
-    assert config == _with_warp(_config())
+    expected_config = _with_warp(_config())
+    expected_config["dns"]["queryStrategy"] = "UseIPv4"
+    assert config == expected_config
+
+
+@pytest.mark.parametrize("explicit_strategy", [None, "ForceIPv6"])
+def test_gemini_warp_uses_ipv6_without_native_or_ipv4_fallback(monkeypatch, explicit_strategy):
+    ensure, domains = _ensure_gemini_resolver()
+    monkeypatch.setenv("GEMINI_EGRESS", "warp")
+    monkeypatch.delenv("GEMINI_RESOLVER", raising=False)
+    monkeypatch.delenv("GEMINI_EXTRA_DOMAINS", raising=False)
+    if explicit_strategy:
+        monkeypatch.setenv("WARP_DOMAIN_STRATEGY", explicit_strategy)
+    config = _with_warp(_config())
+    config["dns"]["queryStrategy"] = "UseIPv4"
+    ensure(config)
+    ensure(config)
+    warp = next(o for o in config["outbounds"] if o["tag"] == "warp")
+    assert warp["settings"]["domainStrategy"] == "ForceIPv6"
+    assert config["dns"]["queryStrategy"] == "UseIP"
+    assert not any(o["tag"] == "gemini" for o in config["outbounds"])
+    assert config["routing"]["rules"][2] == {"type": "field", "domain": domains, "outboundTag": "warp"}
+
+
+def test_warp_ipv6_policy_also_applies_without_gemini_override(monkeypatch):
+    ensure, _ = _ensure_gemini_resolver()
+    monkeypatch.delenv("GEMINI_EGRESS", raising=False)
+    monkeypatch.delenv("GEMINI_RESOLVER", raising=False)
+    monkeypatch.setenv("WARP_DOMAIN_STRATEGY", "ForceIPv6")
+    config = _with_warp(_config())
+    ensure(config)
+    assert next(o for o in config["outbounds"] if o["tag"] == "warp")["settings"]["domainStrategy"] == "ForceIPv6"
+    assert config["dns"]["queryStrategy"] == "UseIP"
+
+
+def test_invalid_warp_family_is_rejected_instead_of_falling_back(monkeypatch):
+    ensure, _ = _ensure_gemini_resolver()
+    monkeypatch.setenv("GEMINI_EGRESS", "warp")
+    monkeypatch.setenv("WARP_DOMAIN_STRATEGY", "PreferIPv6")
+    with pytest.raises(ValueError, match="WARP_DOMAIN_STRATEGY"):
+        ensure(_with_warp(_config()))
 
 
 def test_gemini_can_leave_from_one_address_family_of_the_node(monkeypatch):

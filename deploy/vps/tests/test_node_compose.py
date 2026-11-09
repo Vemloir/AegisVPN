@@ -11,10 +11,16 @@ def test_node_compose_contains_only_data_plane_services():
         (ROOT / "deploy/vps/docker-compose.node.yml").read_text()
     )
 
-    assert set(compose["services"]) == {"xray", "agent", "hysteria"}
+    assert set(compose["services"]) == {"xray", "agent", "hysteria", "mtg"}
     assert compose["services"]["agent"]["pid"] == "service:xray"
     assert compose["services"]["agent"]["depends_on"] == ["xray"]
     assert compose["services"]["hysteria"]["profiles"] == ["hysteria"]
+    mtg = compose["services"]["mtg"]
+    assert mtg["profiles"] == ["mtproxy"]
+    assert "@sha256:" in mtg["image"]
+    assert mtg["command"] == ["run", "/etc/mtg/config.toml"]
+    assert mtg["volumes"] == ["./data/mtproxy:/etc/mtg:ro"]
+    assert mtg["restart"] == "unless-stopped"
 
 
 def test_node_compose_never_requires_control_plane_env_files():

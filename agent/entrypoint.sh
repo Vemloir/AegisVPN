@@ -366,7 +366,7 @@ level0["connIdle"] = conn_idle
 
 
 def ensure_warp(cfg: dict) -> None:
-    """Idempotently wire a Cloudflare WARP (WireGuard) outbound + an AI-domain
+    """Idempotently wire a Cloudflare WARP (WireGuard) outbound + a Microsoft
     routing rule into the config when WARP_SECRET_KEY is present in the env.
 
     Lives here (not in template.json) so the creds never touch the repo and so
@@ -378,11 +378,11 @@ def ensure_warp(cfg: dict) -> None:
     some VPS ranges. Everything else keeps the node's direct egress and avoids
     an unnecessary hop.
 
-    Google's AI services (Gemini, AI Studio, Labs) used to go through WARP too
-    and must not by default: Google places the dual-stack WARP egress in
-    Russia (its IPv6 side) or the US (its IPv4 side), so through it Gemini
-    flips to "not available in your country". ensure_gemini_resolver can send
-    them through WARP forced to IPv4 instead (GEMINI_EGRESS=warp).
+    Gemini routing is configured separately by ensure_gemini_resolver. The
+    standard provisioning profile uses GEMINI_EGRESS=warp and
+    WARP_DOMAIN_STRATEGY=ForceIPv6. This selects IPv6 destinations inside the
+    shared WARP tunnel, not the host's native IPv6. Explicit per-node
+    egress/resolver and address-family overrides remain supported.
     """
     outbounds = cfg.setdefault("outbounds", [])
     existing_warp = next((outbound for outbound in outbounds if outbound.get("tag") == "warp"), None)
@@ -486,12 +486,13 @@ GEMINI_DOMAINS = [
 def ensure_gemini_resolver(cfg: dict) -> None:
     """Send Gemini out through an egress Google accepts for it.
 
-    Gemini answers "not available in your country" from our nodes' own IPs,
-    whatever country Google places them in. Two ways out, chosen per node:
+    Gemini availability depends on the egress address and Google's geolocation.
+    The egress/resolver mode is selected explicitly per node:
 
-    - GEMINI_EGRESS=warp: the node's WARP outbound, forced to IPv4. Google
-      places WARP's IPv4 egress in the US and its IPv6 egress in Russia, so
-      without the force a dual-stack tunnel flips between the two.
+    - GEMINI_EGRESS=warp: the node's WARP outbound, forced to IPv6 by default.
+      WARP_DOMAIN_STRATEGY may explicitly select ForceIPv4 or ForceIPv6 for
+      the shared WARP session. ForceIPv6 requires AAAA resolution but does not
+      require native IPv6 connectivity on the VPS.
     - GEMINI_EGRESS=ipv6 / ipv4: the node's own address of that family only,
       as Google may judge a node's IPv6 and IPv4 addresses differently.
     - GEMINI_RESOLVER (a DoH URL): a resolver such as GeoHide or comss answers
@@ -519,8 +520,17 @@ def ensure_gemini_resolver(cfg: dict) -> None:
     rules[:] = [r for r in rules if not ours(r, "domain")]
     servers[:] = [s for s in servers if not (isinstance(s, dict) and ours(s, "domains"))]
     warp = next((o for o in outbounds if o.get("tag") == "warp"), None)
+    egress = (os.environ.get("GEMINI_EGRESS") or "").strip().lower()
+    warp_strategy = (os.environ.get("WARP_DOMAIN_STRATEGY") or "").strip()
+    if not warp_strategy and egress == "warp" and warp is not None:
+        warp_strategy = "ForceIPv6"
+    if warp_strategy not in ("", "ForceIPv4", "ForceIPv6"):
+        raise ValueError("WARP_DOMAIN_STRATEGY must be ForceIPv4 or ForceIPv6")
     if warp is not None:
-        warp.setdefault("settings", {}).pop("domainStrategy", None)
+        if warp_strategy:
+            warp.setdefault("settings", {})["domainStrategy"] = warp_strategy
+        else:
+            warp.setdefault("settings", {}).pop("domainStrategy", None)
     for inbound in cfg.get("inbounds", []):
         sniffing = inbound.get("sniffing") or {}
         if "quic" in sniffing.get("destOverride", []) and not sniffing.get("routeOnly"):
@@ -529,11 +539,10 @@ def ensure_gemini_resolver(cfg: dict) -> None:
     extra = [d.strip() for d in (os.environ.get("GEMINI_EXTRA_DOMAINS") or "").split(",") if d.strip()]
     domains = GEMINI_DOMAINS + [d for d in extra if d not in GEMINI_DOMAINS]
     resolver = (os.environ.get("GEMINI_RESOLVER") or "").strip()
-    egress = (os.environ.get("GEMINI_EGRESS") or "").strip().lower()
-    # The template resolves IPv4 only, and that global strategy also vetoes the
-    # IPv6 lookups a ForceIPv6 outbound makes; let it answer both while one
-    # does, and put the template's value back once none does.
-    if egress == "ipv6":
+    # The template's IPv4-only DNS vetoes AAAA lookups even inside WARP.
+    # Permit both families while any managed outbound requires IPv6; its
+    # ForceIPv6 strategy prevents fallback to IPv4 or native direct egress.
+    if egress == "ipv6" or (warp is not None and warp_strategy == "ForceIPv6"):
         dns["queryStrategy"] = "UseIP"
     elif dns.get("queryStrategy") == "UseIP":
         dns["queryStrategy"] = "UseIPv4"
@@ -542,9 +551,9 @@ def ensure_gemini_resolver(cfg: dict) -> None:
         outbounds.append({"tag": "gemini", "protocol": "freedom", "settings": {"domainStrategy": strategy}})
         target = "gemini"
     elif egress == "warp" and warp is not None:
-        # The one WARP session (a second one with the same key would fight it
-        # for the peer slot), forced to IPv4; Microsoft's traffic on it too.
-        warp["settings"]["domainStrategy"] = "ForceIPv4"
+        # Keep one WARP session; a second session with the same key would fight
+        # for the peer slot. Its explicit family also governs Microsoft traffic.
+        warp["settings"]["domainStrategy"] = warp_strategy
         target = "warp"
     elif resolver:
         # skipFallback: the resolver answers Gemini's names and nothing else.

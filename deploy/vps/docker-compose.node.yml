@@ -38,6 +38,18 @@ services:
       - ./data/control/node:/data/control:ro
       - ./data/hysteria:/data/hysteria
 
+  mtg:
+    image: ghcr.io/9seconds/mtg:2@sha256:c082586a19886e4822f92aa8c1949a771df3519053d64b1b5505a9a280a3929d
+    container_name: aegis-mtg
+    restart: unless-stopped
+    network_mode: host
+    command: ["run", "/etc/mtg/config.toml"]
+    volumes:
+      - ./data/mtproxy:/etc/mtg:ro
+    logging: *default-logging
+    profiles:
+      - mtproxy
+
   hysteria:
     image: tobyxdd/hysteria@sha256:97a8deb6c57765a72d4251420481dc8124222590d8e1b5af564e0858859cfe09
     container_name: aegis-hysteria
