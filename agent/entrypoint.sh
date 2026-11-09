@@ -365,6 +365,31 @@ level0 = config.setdefault("policy", {}).setdefault("levels", {}).setdefault("0"
 level0["connIdle"] = conn_idle
 
 
+def ensure_github_direct(cfg: dict) -> None:
+    """Keep GitHub off Microsoft's WARP rule, including IPv4-only endpoints.
+
+    geosite:microsoft includes geosite:github. Strict IPv6 inside WARP cannot
+    reach github.com, api.github.com or IPv4-only release-asset hosts. GitHub
+    therefore uses the node's direct egress, not the subscriber's connection.
+    The later private-network guards retain priority over this exception.
+    """
+    rules = cfg.setdefault("routing", {}).setdefault("rules", [])
+    rules[:] = [rule for rule in rules if rule.get("ruleTag") != "github-direct"]
+    microsoft_idx = next(
+        (index for index, rule in enumerate(rules)
+         if rule.get("outboundTag") == "warp" and "geosite:microsoft" in rule.get("domain", [])),
+        None,
+    )
+    if microsoft_idx is None:
+        return
+    rules.insert(microsoft_idx, {
+        "type": "field",
+        "domain": ["geosite:github"],
+        "outboundTag": "direct",
+        "ruleTag": "github-direct",
+    })
+
+
 def ensure_warp(cfg: dict) -> None:
     """Idempotently wire a Cloudflare WARP (WireGuard) outbound + a Microsoft
     routing rule into the config when WARP_SECRET_KEY is present in the env.
@@ -693,6 +718,7 @@ def ensure_cdn_sni_split(cfg: dict) -> None:
 
 
 ensure_warp(config)
+ensure_github_direct(config)
 ensure_gemini_resolver(config)
 ensure_private_blocked(config)
 ensure_lb_probe(config)

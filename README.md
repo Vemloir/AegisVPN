@@ -125,7 +125,9 @@ This is what makes multi-server subscriptions possible:
   domains through the same WARP session over IPv6. DNS permits AAAA lookups;
   no native VPS IPv6 route is required. This is distinct from
   `GEMINI_EGRESS=ipv6`, which uses the VPS's own IPv6 without WARP.
-  Other egress/resolver modes remain explicit per-node choices.
+  Other egress/resolver modes remain explicit per-node choices. GitHub and
+  its assets use the node's direct egress before the broad Microsoft rule:
+  several GitHub endpoints are IPv4-only and cannot use IPv6-only WARP.
 - Nodes can optionally act as cascade entry/exit hops (`node_role`,
   `cascade-v2` capability) to relay a location's traffic through another node;
   this is dormant by default and does not change the default single-hop
