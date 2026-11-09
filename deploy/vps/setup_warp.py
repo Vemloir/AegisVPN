@@ -7,9 +7,11 @@ egress IP, while all other traffic keeps exiting via the node's own IP (no
 latency hit, no single point of failure for the whole node — if WARP dies,
 only those services break).
 
-Gemini and the other AI services are deliberately NOT routed through WARP:
-Google places the shared WARP egress in Russia, so through it Gemini answers
-"not available in your country"; the node's own IP is placed correctly.
+Gemini routing is controlled separately by the agent's GEMINI_EGRESS setting.
+The standard node profile uses GEMINI_EGRESS=warp together with
+WARP_DOMAIN_STRATEGY=ForceIPv6, selecting IPv6 inside WARP rather than the
+host's native IPv6. This helper's base Microsoft rule does not replace that
+per-node Gemini policy.
 
 The routing is scoped by SNI/hostname via a geosite category that ships in
 geosite.dat (community-maintained, so the domain list isn't hand-kept):

@@ -68,6 +68,7 @@ def main() -> None:
     subscription_group = env_optional("SUBSCRIPTION_GROUP", "safe") or "safe"
     access_mode = env_optional("ACCESS_MODE", "public") or "public"
     is_active = 0 if env_optional("IS_ACTIVE", "1") == "0" else 1
+    hidden_from_subscription = 1 if env_optional("HIDDEN_FROM_SUBSCRIPTION", "0") == "1" else 0
     # ISO 3166-1 alpha-2. The website's globe keys its country outline off this;
     # a node without it is served by the bot but never drawn on the site.
     country_code = (env_optional("COUNTRY_CODE") or "").upper() or None
@@ -107,9 +108,9 @@ def main() -> None:
                 name, flag, host, port, public_key, short_id, agent_url, agent_token,
                 access_mode, subscription_group, is_active, tcp_port, country_code,
                 display_order, control_mode, control_token_hash,
-                control_cert_fingerprint, created_at
+                control_cert_fingerprint, created_at, hidden_from_subscription
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 server_name,
@@ -130,6 +131,7 @@ def main() -> None:
                 control_token_hash,
                 control_cert_fingerprint,
                 created_at,
+                hidden_from_subscription,
             ),
         )
         server_id = cur.lastrowid
@@ -145,7 +147,8 @@ def main() -> None:
                 display_order = ?,
                 control_mode = ?,
                 control_token_hash = COALESCE(?, control_token_hash),
-                control_cert_fingerprint = COALESCE(?, control_cert_fingerprint)
+                control_cert_fingerprint = COALESCE(?, control_cert_fingerprint),
+                hidden_from_subscription = ?
             WHERE id = ?
             """,
             (
@@ -165,6 +168,7 @@ def main() -> None:
                 control_mode,
                 control_token_hash,
                 control_cert_fingerprint,
+                hidden_from_subscription,
                 server_id,
             ),
         )
