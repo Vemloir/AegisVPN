@@ -15,11 +15,10 @@ class ServerTransportPref(Base):
 
     Keyed by ``(user_id, server_id)`` — NOT by subscription — so the preference
     survives a subscription reissue (which mints a new ``subscription_id`` but
-    keeps the same user). A MISSING row means the current capability-aware
-    VLESS default (TCP when available, otherwise XHTTP); we only store a row
-    when the user picks something
-    other than the server's capability-aware default, and ``reset`` deletes the
-    row to return to that default.
+    keeps the same user). A MISSING row means VLESS/XHTTP. We only store a row
+    when the user picks something other than the server's default; an explicit
+    TCP/Vision choice remains available on capable nodes. ``reset`` deletes the
+    row to return to XHTTP.
     """
 
     __tablename__ = "server_transport_prefs"
@@ -28,8 +27,8 @@ class ServerTransportPref(Base):
     server_id: Mapped[int] = mapped_column(ForeignKey("servers.id", ondelete="CASCADE"), primary_key=True)
     # "vless" (default) | "hy2" (future; never emitted until a Hy2 backend exists).
     protocol: Mapped[str] = mapped_column(String(16), default="vless")
-    # "tcp" (product default) | "xhttp". Only meaningful for protocol == "vless".
-    transport: Mapped[str] = mapped_column(String(16), default="tcp")
+    # "xhttp" (product default) | "tcp". Only meaningful for protocol == "vless".
+    transport: Mapped[str] = mapped_column(String(16), default="xhttp")
 
     user: Mapped["User"] = relationship()
     server: Mapped["Server"] = relationship()

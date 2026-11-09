@@ -91,8 +91,9 @@ This is what makes multi-server subscriptions possible:
 ## Protocols
 
 - **VLESS + Reality** (Xray) is the default protocol on every node. The
-  default transport is TCP with XTLS Vision flow; `xhttp` is available as an
-  alternate transport per location.
+  default subscription transport is XHTTP. TCP with XTLS Vision remains
+  available per location and for already-imported configurations; changing
+  subscription defaults does not disable its listener.
 - **Hysteria2** (`hy2`) is an opt-in, per-location alternative data plane. Every
   node runs the identical agent code and the same `hysteria` compose service —
   there is no per-node technical constraint on whether Hysteria2 can run.
@@ -118,8 +119,13 @@ This is what makes multi-server subscriptions possible:
   (see [deploy/vps/README.md](deploy/vps/README.md)).
 - An optional per-node Cloudflare WARP egress can route Microsoft domains
   through a clean consumer IP without moving the rest of the node's traffic off
-  its own IP; game traffic is explicitly kept off WARP. Gemini and other AI
-  services are kept off it too: Google geolocates the WARP egress to Russia.
+  its own IP; game traffic is explicitly kept off WARP. The standard node
+  provisioning profile sets `GEMINI_EGRESS=warp` and
+  `WARP_DOMAIN_STRATEGY=ForceIPv6`, routing managed Gemini and Microsoft
+  domains through the same WARP session over IPv6. DNS permits AAAA lookups;
+  no native VPS IPv6 route is required. This is distinct from
+  `GEMINI_EGRESS=ipv6`, which uses the VPS's own IPv6 without WARP.
+  Other egress/resolver modes remain explicit per-node choices.
 - Nodes can optionally act as cascade entry/exit hops (`node_role`,
   `cascade-v2` capability) to relay a location's traffic through another node;
   this is dormant by default and does not change the default single-hop
@@ -153,8 +159,8 @@ This is what makes multi-server subscriptions possible:
 - public website (aegisvpn.org) with its own checkout and Telegram Login,
   sharing the bot's database
 - separate support bot for two-way user/operator feedback
-- optional MTProto proxy (`aegis-mtg`, control host only — it's not a
-  per-VPN-node service)
+- optional MTProto proxy (`aegis-mtg`) on the control host or VPN nodes;
+  the node provisioning helper configures it by default
 
 ## User Commands
 
@@ -295,7 +301,7 @@ Instead:
 2. checks that it is active
 3. reconciles allowed servers for the user
 4. for each server, resolves the user's chosen protocol/transport for that
-   location (VLESS/TCP by default, VLESS/xhttp, or Hysteria2 where the
+   location (VLESS/XHTTP by default, explicit VLESS/TCP, or Hysteria2 where the
    operator has enabled it on that node)
 5. builds a `vless://` or `hysteria2://` URI accordingly, from the node's
    authenticated outbound telemetry

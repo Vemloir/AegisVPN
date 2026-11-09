@@ -233,10 +233,9 @@ async def _seed_hy2_sub(
         return sub.sub_token
 
 
-async def test_misconfigured_hy2_falls_back_to_tcp_vision(monkeypatch):
-    # A path-filtered node is explicitly disabled while all of its provisioned
-    # fields remain present. The stale Hy2 preference must resolve to VLESS/TCP,
-    # matching the Switzerland production quarantine.
+async def test_misconfigured_hy2_falls_back_to_xhttp(monkeypatch):
+    # A disabled Hy2 node falls back to the current VLESS/XHTTP default while
+    # its provisioned TCP/Vision port remains available.
     async def fake_get_subscription(self, token, profile="safe"):
         return (
             "vless://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@203.0.113.10:443"
@@ -256,9 +255,9 @@ async def test_misconfigured_hy2_falls_back_to_tcp_vision(monkeypatch):
     assert body.startswith("vless://")
     assert "hysteria2://" not in body
     query = parse_qs(urlsplit(body).query)
-    assert urlsplit(body).port == 2053
-    assert query["type"] == ["tcp"]
-    assert query["flow"] == ["xtls-rprx-vision"]
+    assert urlsplit(body).port == 443
+    assert query["type"] == ["xhttp"]
+    assert "flow" not in query
 
 
 async def test_capable_hy2_preference_emits_hysteria_link():
@@ -330,8 +329,9 @@ async def test_disabled_swiss_falls_back_without_disabling_hy2_elsewhere(monkeyp
     swiss_link = next(link for link in links if "Switzerland" in link)
     germany_link = next(link for link in links if "Germany" in link)
     assert swiss_link.startswith("vless://")
-    assert urlsplit(swiss_link).port == 2053
-    assert parse_qs(urlsplit(swiss_link).query)["flow"] == ["xtls-rprx-vision"]
+    assert urlsplit(swiss_link).port == 443
+    assert parse_qs(urlsplit(swiss_link).query)["type"] == ["xhttp"]
+    assert "flow" not in parse_qs(urlsplit(swiss_link).query)
     assert germany_link.startswith("hysteria2://")
 
     async with async_session_maker() as session:
@@ -348,6 +348,6 @@ async def test_disabled_swiss_falls_back_without_disabling_hy2_elsewhere(monkeyp
     swiss_proxy = next(proxy for name, proxy in proxies.items() if "Switzerland" in name)
     germany_proxy = next(proxy for name, proxy in proxies.items() if "Germany" in name)
     assert swiss_proxy["protocol"] == "vless"
-    assert swiss_proxy["streamSettings"]["network"] == "tcp"
-    assert swiss_proxy["settings"]["vnext"][0]["users"][0]["flow"] == "xtls-rprx-vision"
+    assert swiss_proxy["streamSettings"]["network"] == "xhttp"
+    assert "flow" not in swiss_proxy["settings"]["vnext"][0]["users"][0]
     assert germany_proxy["protocol"] == "hysteria"

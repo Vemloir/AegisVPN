@@ -170,23 +170,21 @@ class SubscriptionService:
     DEFAULT_PROTOCOL = PROTOCOL_VLESS
     TRANSPORT_XHTTP = "xhttp"
     TRANSPORT_TCP = "tcp"
-    DEFAULT_TRANSPORT = TRANSPORT_TCP
-    # Transports the bot can actually emit a VLESS link for, given a server's
-    # capability fields. xhttp is always available; tcp needs its port.
-    VLESS_TRANSPORTS = (TRANSPORT_TCP, TRANSPORT_XHTTP)
+    DEFAULT_TRANSPORT = TRANSPORT_XHTTP
+    # XHTTP is the subscription default. A provisioned TCP/Vision port remains
+    # available for explicit selection and already-imported configurations.
+    VLESS_TRANSPORTS = (TRANSPORT_XHTTP, TRANSPORT_TCP)
 
     @staticmethod
     def default_transport_for(server: Server) -> str:
-        """The best VLESS transport this server can serve by default."""
-        if getattr(server, "tcp_port", None):
-            return SubscriptionService.TRANSPORT_TCP
+        """Prefer XHTTP without disabling a node's TCP/Vision listener."""
         return SubscriptionService.TRANSPORT_XHTTP
 
     @staticmethod
     def available_transports(server: Server) -> list[str]:
-        """VLESS transports this server can serve, best default first."""
+        """VLESS transports this server can serve, subscription default first."""
         if getattr(server, "tcp_port", None):
-            return [SubscriptionService.TRANSPORT_TCP, SubscriptionService.TRANSPORT_XHTTP]
+            return [SubscriptionService.TRANSPORT_XHTTP, SubscriptionService.TRANSPORT_TCP]
         return [SubscriptionService.TRANSPORT_XHTTP]
 
     @staticmethod
@@ -497,8 +495,8 @@ class SubscriptionService:
         params (host/port/reality keypair).
 
         ``transport`` selects which of the server's VLESS+REALITY inbounds to
-        target. ``None`` resolves to TCP+Vision when ``tcp_port`` is provisioned,
-        otherwise XHTTP. An explicit choice always wins when the node supports it.
+        target. ``None`` resolves to XHTTP even when ``tcp_port`` is provisioned.
+        An explicit choice always wins when the node supports it.
         """
         parts = urlsplit(raw_uri)
         userinfo, _, _ = parts.netloc.rpartition("@")
@@ -696,7 +694,7 @@ class SubscriptionService:
         effective_uuid = device_uuid or sub.client_uuid
 
         # Resolve a concrete per-location transport. A missing preference row
-        # becomes TCP on a TCP-capable server and XHTTP everywhere else.
+        # uses XHTTP; an explicit TCP preference remains usable.
         server_ids = [server.id for server in servers]
         transport_by_server = await SubscriptionService._transport_prefs_for_user(session, sub.user_id, server_ids)
         # Locations the user pinned to Hysteria2 (only those that are actually
