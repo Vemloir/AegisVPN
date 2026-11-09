@@ -220,20 +220,20 @@ def test_vless_link_to_xray_config_xhttp_has_recovery_knobs_and_clean_routing():
 # --- per-location transport selection ---------------------------------------
 
 
-def test_tcp_capable_server_defaults_to_tcp_vision():
-    """No explicit preference uses the best transport the node can serve."""
+def test_tcp_capable_server_defaults_to_xhttp_without_disabling_vision():
+    """Refreshing a subscription moves it to XHTTP, not the node's TCP port."""
     server = _hy2_node_server()
     with_none = SubscriptionService.normalize_vless_uri(_AGENT_RAW, server, transport=None)
     with_xhttp = SubscriptionService.normalize_vless_uri(_AGENT_RAW, server, transport="xhttp")
-    assert with_none != with_xhttp
-    assert "type=tcp" in with_none
-    assert "@203.0.113.10:2053" in with_none
-    assert "headerType=none" in with_none
-    assert "flow=xtls-rprx-vision" in with_none
+    assert with_none == with_xhttp
+    assert "type=xhttp" in with_none
+    assert "@203.0.113.10:443" in with_none
+    assert "path=%2Fgr-xh" in with_none
+    assert "flow=" not in with_none
+    assert "headerType=" not in with_none
     assert "pbk=GRPBK" in with_none and "sid=GRSID" in with_none
-    assert "type=xhttp" in with_xhttp
-    assert "@203.0.113.10:443" in with_xhttp
-    assert "flow=" not in with_xhttp
+    assert SubscriptionService.DEFAULT_TRANSPORT == "xhttp"
+    assert server.tcp_port == 2053
 
 
 def test_xhttp_only_server_keeps_xhttp_default():
@@ -269,16 +269,16 @@ def test_every_server_offers_the_settings_screen():
     assert SubscriptionService.available_transports(server) == ["xhttp"]
 
 
-def test_tcp_capable_node_offers_tcp_then_xhttp():
+def test_tcp_capable_node_offers_xhttp_then_tcp():
     server = _hy2_node_server()
     assert server.has_alt_transports is True
-    assert SubscriptionService.available_transports(server) == ["tcp", "xhttp"]
+    assert SubscriptionService.available_transports(server) == ["xhttp", "tcp"]
 
 
 def test_non_vless_and_stale_prefs_use_capability_aware_default():
     server = _hy2_node_server()
-    assert SubscriptionService.resolve_transport(server, "hy2", "xhttp") == "tcp"
-    assert SubscriptionService.resolve_transport(server, "hy2", "tcp") == "tcp"
+    assert SubscriptionService.resolve_transport(server, "hy2", "xhttp") == "xhttp"
+    assert SubscriptionService.resolve_transport(server, "hy2", "tcp") == "xhttp"
     # A tcp pref on a server that lost the capability also falls back.
     assert SubscriptionService.resolve_transport(_xhttp_only_server(), "vless", "tcp") == "xhttp"
     # A valid tcp pref resolves to tcp.
