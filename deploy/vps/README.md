@@ -126,5 +126,7 @@ mode, then complete only the missing components. For a fresh rollout, pass `--hi
 location without advertising it; publish it only after verification. Before
 advertising success, verify real WARP egress (`warp=on`), ordinary direct egress, both VLESS
 transports, MTProxy health, current exact control ACK, and existing-device
-subscription output. Keep private-network blocking and game traffic outside
-WARP. Record explicitly whether optional Hysteria2 is enabled.
+subscription output. Keep private-network blocking enabled and game traffic
+outside WARP. GitHub also uses the node's direct egress ahead of the broad
+Microsoft rule, because IPv4-only GitHub endpoints cannot use IPv6-only WARP.
+Record explicitly whether optional Hysteria2 is enabled.
