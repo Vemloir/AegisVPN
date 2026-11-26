@@ -96,3 +96,41 @@ test('english route updates document language and metadata', async () => {
     'Fast, private VPN with VLESS Reality and one subscription for every location.',
   )
 })
+
+const subscriptionUrl = 'https://example.test/sub/sample'
+
+async function openSubscriberAccount(isActive = true) {
+  api.getMe.mockResolvedValue({
+    display_name: 'Тест', subscription: { is_active: isActive, sub_url: subscriptionUrl },
+  })
+  const user = userEvent.setup()
+  render(<App />)
+  await user.click((await screen.findAllByRole('button', { name: 'Account' }))[0])
+  return user
+}
+
+test('account copies the original subscription URL without an import tutorial', async () => {
+  const user = await openSubscriberAccount()
+  expect(screen.getByText('Подключить устройство')).toBeVisible()
+  expect(screen.queryByText(/добавьте подписку из буфера обмена/)).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Скопировать' }))
+  expect(await navigator.clipboard.readText()).toBe(subscriptionUrl)
+  expect(screen.getByRole('status')).toHaveTextContent('Скопировано')
+})
+
+test('clipboard refusal leaves the URL selected for manual copy', async () => {
+  const user = await openSubscriberAccount()
+  vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValueOnce(new Error('not allowed'))
+  await user.click(screen.getByRole('button', { name: 'Скопировать' }))
+  expect(screen.getByRole('status')).toHaveTextContent('Скопируйте ссылку из поля вручную.')
+  const field = screen.getByRole('textbox', { name: 'Ссылка на подписку' })
+  expect(field).toHaveFocus()
+  expect(field.value.slice(field.selectionStart, field.selectionEnd)).toBe(subscriptionUrl)
+})
+
+test('inactive account never offers to import a stale URL', async () => {
+  await openSubscriberAccount(false)
+  expect(screen.getByText('Не активна')).toBeVisible()
+  expect(screen.queryByDisplayValue(subscriptionUrl)).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Скопировать' })).not.toBeInTheDocument()
+})

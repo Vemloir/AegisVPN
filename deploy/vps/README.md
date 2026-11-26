@@ -2,6 +2,8 @@
 
 This deploy path is the current production layout for the main Aegis VPN VPS.
 
+For a scoped, rollbackable **web + siteapi + bot** update on the control host, see [the control release runbook](control_release/README.md). This path is separate from node provisioning and does not deploy VPN agents.
+
 ## Services
 
 The control host uses `docker-compose.yml`:
@@ -112,8 +114,9 @@ docker compose --profile local-exit up -d --build xray agent
 Use [add_server.py](add_server.py) from the project root to provision and
 register a fresh VPN node. By default it configures both VLESS transports,
 registers and applies a unique WARP identity, sets `GEMINI_EGRESS=warp` and
-`WARP_DOMAIN_STRATEGY=ForceIPv6` for Gemini and Microsoft through WARP IPv6,
-and starts a pinned,
+`WARP_DOMAIN_STRATEGY=ForceIPv6` for Gemini through WARP IPv6. Microsoft
+uses a ForceIPv4 freedom/dialerProxy adapter over that same WARP peer, without
+creating another WireGuard identity. The helper starts a pinned,
 Compose-managed MTProxy on TCP/80. Games and ordinary unmatched traffic keep
 the node's direct egress. WARP registration or MTProxy startup
 failures stop provisioning; `--no-warp` and `--no-mtproxy` are explicit opt-outs.
@@ -130,3 +133,12 @@ subscription output. Keep private-network blocking enabled and game traffic
 outside WARP. GitHub also uses the node's direct egress ahead of the broad
 Microsoft rule, because IPv4-only GitHub endpoints cannot use IPv6-only WARP.
 Record explicitly whether optional Hysteria2 is enabled.
+
+Temporary per-node Gemini relays use `GEMINI_EGRESS=proxy` with
+`GEMINI_PROXY_HOST`, `GEMINI_PROXY_PORT`, `GEMINI_PROXY_USER`,
+`GEMINI_PROXY_PASSWORD`, `GEMINI_PROXY_SERVER_NAME`, and
+`GEMINI_PROXY_CA_FILE` (a path inside Xray's container). The relay is
+SOCKS5 over verified TLS, with no native-egress fallback. Keep its receiving
+listener authenticated and source-IP restricted; only managed Gemini names
+use it, and their QUIC remains blocked. Restore the previous `GEMINI_EGRESS`
+value to remove the proxy outbound at the next Agent start.

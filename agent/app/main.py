@@ -12,7 +12,7 @@ from urllib.parse import quote, urlencode
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
-from . import hysteria
+from . import gemini_dot, hysteria
 from .certificate_sync import cdn_certificate_sync_loop, certificate_sync_loop
 from .config import settings
 from .connlimit import conn_limit_loop, set_override
@@ -56,6 +56,8 @@ async def _start_background_tasks() -> None:
     # immediately. No-op (empty set) on nodes without any vless clients.
     await hysteria.refresh()
     await retry_pending_revocations()
+    if settings.control_mode != "off":
+        await gemini_dot.start()
     _control_task = start_control_task()
     if settings.hy2_enabled and settings.control_mode != "off":
         _certificate_task = asyncio.create_task(
@@ -78,6 +80,7 @@ async def _stop_background_tasks() -> None:
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
+    await gemini_dot.stop()
     _control_task = None
     _certificate_task = None
     _cdn_certificate_task = None

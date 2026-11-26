@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { css, useHoverStyle } from './css.js'
 import { dict } from './i18n.js'
 import TelegramLogin from './TelegramLogin.jsx'
+import SubscriptionImport from './SubscriptionImport.jsx'
 import { regionOf } from './countries.js'
 import * as api from './api.js'
 
@@ -715,7 +716,6 @@ export default function App() {
   const [authOpen, setAuthOpen] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
   const [authError, setAuthError] = useState(false)
-  const [copied, setCopied] = useState(false)
 
   // Which unit prices are DISPLAYED in; the payment method is chosen at
   // checkout, so this is presentation only.
@@ -837,12 +837,6 @@ export default function App() {
     await api.logout().catch(() => {})
     setUser(null)
     setAccountOpen(false)
-  }, [])
-
-  const copySub = useCallback((url) => {
-    navigator.clipboard?.writeText(url)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1600)
   }, [])
 
   // Plans differ only in term (days) and price — one card, term picked via a
@@ -1726,20 +1720,8 @@ export default function App() {
             </div>
           )}
 
-          {user.subscription?.sub_url && (
-            <>
-              <div style={css('margin:22px 0 8px; font-size:13px; font-weight:600; color:var(--ink);')}>{t.acc_sub_url}</div>
-              <div style={css('display:flex; gap:8px;')}>
-                <input
-                  readOnly
-                  value={user.subscription.sub_url}
-                  style={css('flex:1; min-width:0; background:var(--codeBg); border:1px solid var(--hair2); border-radius:10px; padding:12px; font-size:12.5px; color:var(--muted); font-family:ui-monospace,monospace;')}
-                />
-                <button onClick={() => copySub(user.subscription.sub_url)} style={css('flex-shrink:0; background:var(--ink); color:var(--bg); border:none; border-radius:10px; padding:0 16px; font-size:13.5px; font-weight:500; cursor:pointer; font-family:inherit;')}>
-                  {copied ? t.acc_copied : t.acc_copy}
-                </button>
-              </div>
-            </>
+          {user.subscription?.is_active && user.subscription.sub_url && (
+            <SubscriptionImport key={user.subscription.sub_url} url={user.subscription.sub_url} t={t} />
           )}
 
           <HoverLink href={BOT_URL} target="_blank" rel="noopener" base={primaryBtn + 'width:100%; margin:24px 0 10px; padding:14px;'} hover="background:var(--btnHover);">

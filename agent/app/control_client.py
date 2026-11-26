@@ -18,6 +18,8 @@ from .control_models import (
     SnapshotManifest,
     SnapshotPage,
 )
+from .gemini_admin_proxy import available as admin_proxy_available
+from .gemini_policy import capabilities as gemini_capabilities
 
 
 class ControlProtocolError(RuntimeError):
@@ -126,7 +128,9 @@ class ControlClient:
             max_items=settings.control_max_items,
             # "cdn-v1" tells the bot this node really serves the CDN origin
             # inbound, so it never advertises a CDN path to a node without one.
-            capabilities=["cascade-v2", "lifetime-v1", *(["cdn-v1"] if settings.xray_cdn_port else [])],
+            capabilities=["cascade-v2", "lifetime-v1", *(["cdn-v1"] if settings.xray_cdn_port else []),
+                          *gemini_capabilities(settings.xray_config_path),
+                          *(["gemini-admin-proxy-v1", "gemini-admin-proxy-ip-v1"] if admin_proxy_available() else [])],
         )
 
     async def close(self) -> None:
@@ -340,7 +344,10 @@ class ControlClient:
             },
             max_bytes=64 * 1024,
         )
-        if response.status != 200:
+        if response.status == 413 and "subscription_ips_v1" in payload:
+            # Don't starve existing template/traffic telemetry on a small control limit.
+            await self.send_telemetry(sequence=sequence, payload={k: v for k, v in payload.items() if k != "subscription_ips_v1"})
+        elif response.status != 200:
             raise ControlRequestError(f"control telemetry rejected with status {response.status}")
 
     async def get_hy2_certificate(self) -> dict[str, str] | None:

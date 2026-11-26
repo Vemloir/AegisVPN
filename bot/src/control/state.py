@@ -49,6 +49,8 @@ def _expiry_ms(value: datetime | None, *, lifetime_capable: bool) -> int | None:
 
 
 def _item_sort_key(item: dict) -> tuple[str, str, str]:
+    if item["kind"] in {"gemini_policy", "gemini_admin_proxy"}:
+        return item["kind"], "", ""
     if item["kind"] == "client":
         return "client", str(item["email"]), str(item["uuid"])
     if item["kind"] == "conn_limit":
@@ -141,6 +143,30 @@ async def build_desired_items(
         from src.services.cascade_service import build_cascade_items
 
         items.extend(await build_cascade_items(session, server))
+    if server.gemini_policy is not None:
+        from src.services.gemini_policy import supported, validate_policy
+
+        if supported(server):
+            items.append({"kind": "gemini_policy", "policy": validate_policy(server.gemini_policy)})
+    features = (server.control_capabilities or {}).get("features", [])
+    if server.control_mode == "pull" and "gemini-admin-proxy-v1" in features:
+        from src.core.config import settings
+        from src.services.gemini_policy import DECODO_IP_CAPABILITY, DECODO_PORTS, decodo_port
+
+        admin_users = set()
+        if server.gemini_admin_proxy and len(settings.admin_ids) == 1:
+            admin_users = {sub.user_id for sub in subscriptions if sub.user.tg_id in settings.admin_ids}
+        emails = [
+            item["email"]
+            for item in items
+            if item["kind"] == "client"
+            and any(item["email"].startswith(f"user_{user_id}_sub_") for user_id in admin_users)
+        ]
+        item = {"kind": "gemini_admin_proxy", "users": sorted(emails)}
+        port = decodo_port(server)
+        if emails and DECODO_IP_CAPABILITY in features and port != DECODO_PORTS.start:
+            item["port"] = port
+        items.append(item)
     items.sort(key=_item_sort_key)
     return items
 

@@ -56,6 +56,29 @@ async def test_run_migrations_adds_missing_columns_idempotently():
         assert value in ("safe", None)
 
 
+async def test_cdn_monitor_counters_migrate_without_changing_publication_or_credentials():
+    async with async_session_maker() as session:
+        await session.execute(text("DROP TABLE IF EXISTS cdn_endpoints"))
+        await session.execute(text(
+            "CREATE TABLE cdn_endpoints (id INTEGER PRIMARY KEY, enabled BOOLEAN, "
+            "last_check_ok BOOLEAN, pinned_cert_sha256 VARCHAR(512))"
+        ))
+        await session.execute(text(
+            "INSERT INTO cdn_endpoints VALUES (1, 1, 0, 'existing-pin'), (2, 0, 1, NULL)"
+        ))
+        await session.commit()
+    await run_migrations()
+    await run_migrations()
+    async with async_session_maker() as session:
+        rows = (await session.execute(text(
+            "SELECT id, enabled, last_check_ok, pinned_cert_sha256, health_failures, "
+            "health_successes, health_alerted FROM cdn_endpoints ORDER BY id"
+        ))).all()
+    assert [tuple(row) for row in rows] == [
+        (1, 1, 0, "existing-pin", 0, 0, 0), (2, 0, 1, None, 0, 0, 0)
+    ]
+
+
 async def test_hy2_columns_are_added_but_never_populated():
     """The migration only ADDS the Hy2 capability columns. It never populates them
     for any node: every value (including the obfs password and SNI secrets) is set

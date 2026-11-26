@@ -43,17 +43,21 @@ class CdnEndpoint(Base):
     # one the resource is not advertised.
     pin_cert: Mapped[bool] = mapped_column(Boolean, default=False)
     pinned_cert_sha256: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    # On trial: shown only as a "| WL" entry to preview users, never in anyone's
-    # fallback chain. A resource in the chain gets no entry of its own.
+    # On trial: excluded from the public fallback chain. Standalone diagnostic
+    # entries are not published, including to preview users.
     preview_only: Mapped[bool] = mapped_column(Boolean, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     position: Mapped[int] = mapped_column(Integer, default=0)
 
-    # Result of the periodic reachability check (scheduler.check_cdn_endpoints).
-    # NULL = never checked; a resource is advertised until it is known broken.
+    # Confirmed control-host probe state, not subscriber reachability. Diagnostic
+    # only: does not govern publication. NULL = not confirmed yet.
+    # Counters persist across scheduler/process restarts.
     last_check_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     last_check_at: Mapped[datetime | None] = mapped_column(nullable=True)
     last_check_detail: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    health_failures: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    health_successes: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    health_alerted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     @property

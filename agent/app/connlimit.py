@@ -119,17 +119,21 @@ async def online_users() -> list[str]:
     if rc != 0:
         raise StatsQueryError("online user query failed")
     try:
-        payload = json.loads(out or "{}")
+        payload = json.loads(out)
     except json.JSONDecodeError:
         raise StatsQueryError("online user query returned invalid JSON") from None
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or (payload and "users" not in payload):
         raise StatsQueryError("online user query returned an invalid payload")
     names = payload.get("users", [])
     if not isinstance(names, (list, dict)):
         raise StatsQueryError("online user query returned an invalid users shape")
     emails: list[str] = []
     for name in names:
-        email = normalize_online_name(str(name))
+        if isinstance(name, dict):
+            name = name.get("email") or name.get("user") or name.get("name")
+        if not isinstance(name, str):
+            raise StatsQueryError("online user query returned an invalid identity")
+        email = normalize_online_name(name)
         if email:
             emails.append(email)
     return emails
@@ -141,10 +145,10 @@ async def online_ips(email: str) -> dict[str, int]:
     if rc != 0:
         raise StatsQueryError("online IP query failed")
     try:
-        payload = json.loads(out or "{}")
+        payload = json.loads(out)
     except json.JSONDecodeError:
         raise StatsQueryError("online IP query returned invalid JSON") from None
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or ("ips" not in payload and "name" not in payload):
         raise StatsQueryError("online IP query returned an invalid payload")
     ips = payload.get("ips", {})
     if not isinstance(ips, dict):

@@ -2,6 +2,8 @@ from aiogram.fsm.state import State, StatesGroup
 
 
 class AdminStates(StatesGroup):
+    gemini_edit = State()
+    gemini_resolver = State()
     waiting_user_lookup = State()
     waiting_server_allow_user = State()
     waiting_server_revoke_user = State()

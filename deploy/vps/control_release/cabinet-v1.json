@@ -1,0 +1,49 @@
+{
+  "backend": {
+    "src/api/main.py": {
+      "after": "b8be3f8b07d5e9f3b813e1e93e0d95c27db57fa1e16fc4f904e3ac511e66b8a7",
+      "before": "cada8e8dab706a9c81876193b3449d60419ab135d2f2f91135318f8267601af5"
+    },
+    "src/main.py": {
+      "after": "6dfa4c6e26617fc956e40f21d6c512a4b90efb7da549cc0b26e6b4f9dd3fb6df",
+      "before": "9733283a71206715a8815a95c0497fe2b59a4f138d369f2f63d95df01a09a768"
+    },
+    "src/services/subscription_import.py": {
+      "after": "e024ac9d01ef99455efbb59e45932fba27515441a790d1888d9ea26cf6346eee",
+      "before": null
+    },
+    "src/services/subscription_service.py": {
+      "after": "0302b25a23c15451f6ac6a3515e4f93217cd624c691d264c4e79ee2b10489b9e",
+      "before": "9f2c537a762875a32edc704270f522fad56cbee1712797e836b532095121168d"
+    }
+  },
+  "service_files": {
+    "bot": ["src/main.py", "src/services/subscription_import.py", "src/services/subscription_service.py"],
+    "siteapi": ["src/api/main.py"]
+  },
+  "web_inputs": {
+    "index.html": "70c904147dd251e9228a2f5b95d0e46e8141adc55ca3752d559f13a859ad666d",
+    "package-lock.json": "c19747ea8f75bb3022c6aec7c646b84361c90383422a97e0d34d2a8dec5bc1cf",
+    "package.json": "77bfd18d6bb0e5904917bd7b61891fc79f6d31a95f04ae1fcc29502c4656e0b2",
+    "public/colortest.html": "2b3ca1d63358d0d7eea568a738611ac014d0251bbb06530fc1fc892e4c294dd5",
+    "public/favicon.svg": "6e68a655087bd2c95885419fda2e452d8c6f56d34ffe99ed6a2e614cd6964543",
+    "public/robots.txt": "e854cd0c3a1fc7c550ba476258b7ea1cb6b62c6222578113228bca05586243e0",
+    "public/sitemap.xml": "c2fa9bfdd723da49ab2e76623fd6b10bbbbc0b063d10ae7fcdcd209152014b0e",
+    "scripts/localize-dist.mjs": "bb92029399eb523b2a675dd07f55858583e55db60dfcbe832952ac5a47ed9dc4",
+    "scripts/localize-dist.test.mjs": "d6642d51c9c2dd7d7bec2bac14f6d7b4d84dc5c14ff6178bfcf20d1d5d2f0f4b",
+    "src/App.jsx": "edef7632c844fda7fb12b46614d2c3e4e4194201ce8a960f8fe906bc4c649a42",
+    "src/App.test.jsx": "33db9236ae25e100e5a525bf7d1fde818203c27fe3b00ca082c3bec8a0684454",
+    "src/Globe.jsx": "470f9c786d132b99f337a863e129b9d1276dbe9efd401dc3ed9d6d7bfe7012ef",
+    "src/SubscriptionImport.jsx": "994821999ed1d761d9d41740d0080fe52c74c1555b5841c46c00d86c57753149",
+    "src/TelegramLogin.jsx": "0ef0d89c8d7b866a82c8447b195a7557705090e4f8de6144b97d89d85475d7e1",
+    "src/api.js": "d214ec32d282a8b12c8915e36cddbc4a8d5743eec02dd44765adbba62104fca0",
+    "src/countries.js": "7e4487bf17c68fddd40e80383e3f2f8067e562540cf12b50008bad96ab3404e9",
+    "src/css.js": "5fccd90473423caac87cdc47bf44c7139755329f8928a923bfcfd2eb08d30a8f",
+    "src/hk.json": "b2e91fa4ed4f8dad1ff7c768f9c4b55c6e466d191c3af19de88a5f8282479811",
+    "src/i18n.js": "6eec4131db56cdaf60d97273bc78f548e53352f2d592bde6806bc36171399abd",
+    "src/index.css": "8ded8b6a492769136cd05ee2a9b2cdedf17315afa7a7aebd2c1f3418a611bdbe",
+    "src/main.jsx": "3073a476724375b55ca7aeb6db5a5968a6d7dbf9345cd1d97754544ff0550d66",
+    "src/test/setup.js": "3a74c10814cbc1228887ac3f4a21e323a443b26c7da260a39570ab6a3d0314bb",
+    "vite.config.js": "65db9241abae7e8950922ab708603ce1b6252feddc1374b21391c69bebdc3fa2"
+  }
+}

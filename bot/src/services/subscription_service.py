@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import settings
 from src.core.logger import logger
-from src.models import CdnEndpoint, Device, Server, ServerTransportPref, Subscription, SubscriptionServer, User
+from src.models import Device, Server, ServerTransportPref, Subscription, SubscriptionServer, User
 from src.services import cdn_service, geoip
 from src.services.agent_client import AgentClient
 from src.services.cascade_service import advertisable_routes
@@ -152,11 +152,6 @@ def _cascade_visible_servers(
 def _replace_link_label(link: str, label: str) -> str:
     parts = urlsplit(link)
     return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, label.strip()))
-
-
-def _preview_label(endpoint: CdnEndpoint) -> str:
-    """Tells a location's WL entries apart: the provider, and the fronting name if any."""
-    return f"{endpoint.provider} ({endpoint.sni})" if endpoint.sni else endpoint.provider
 
 
 class SubscriptionService:
@@ -646,14 +641,7 @@ class SubscriptionService:
         include_all_profiles = profile != SubscriptionService.FAST_PROFILE
         sub = await SubscriptionService.get_subscription_by_token(session, sub_token)
 
-        if not sub:
-            return []
-
-        now = datetime.now(UTC).replace(tzinfo=None)
-        if sub.is_expired(now):
-            sub.is_active = False
-            await SubscriptionService.remove_subscription_from_servers(session, sub)
-            await session.commit()
+        if not sub or sub.is_expired(datetime.now(UTC).replace(tzinfo=None)):
             return []
 
         if include_all_profiles:
@@ -778,21 +766,8 @@ class SubscriptionService:
     ) -> str:
         pairs = await SubscriptionService._collect_links(session, sub_token, profile, device_uuid)
         links = [link for _, link in pairs]
-        # A link list cannot express a fallback, so each CDN path becomes its
-        # own entry right after its location, for the user to pick by hand.
-        endpoints = await cdn_service.endpoints_by_server(session, [server for server, _ in pairs])
-        if endpoints:
-            links = []
-            for server, link in pairs:
-                links.append(link)
-                parts = urlsplit(link)
-                client_id = parts.username or ""
-                label = unquote(parts.fragment) if parts.fragment else SubscriptionService.server_display_name(server)
-                links.extend(
-                    cdn_service.build_link(server, endpoint, client_id, f"{label} · CDN")
-                    for endpoint in endpoints.get(server.id, [])
-                    if client_id
-                )
+        # Standalone diagnostic CDN entries are not published. Automatic CDN
+        # fallback is available in the full Xray JSON, not in a flat link list.
         body = "\n".join(links)
         return base64.b64encode(body.encode("utf-8")).decode("utf-8") if body else ""
 
@@ -862,15 +837,7 @@ class SubscriptionService:
                 plain_configs[index] = cdn_service.attach_fallback(cfg, outbounds)
             if autoselect is not None:
                 autoselect = cdn_service.attach_fallback(autoselect, every_cdn_outbound)
-            if preview:
-                # Only resources still on trial get their own entry; one already
-                # in the fallback chain is tested by the location itself.
-                for server, cfg in configs:
-                    server_endpoints = [endpoint for endpoint in endpoints.get(server.id, []) if endpoint.preview_only]
-                    for endpoint in server_endpoints:
-                        suffix = " | WL" if len(server_endpoints) == 1 else f" | WL {_preview_label(endpoint)}"
-                        outbound = cdn_service.build_outbound(server, endpoint, cdn_service.client_id_of(cfg), "proxy")
-                        plain_configs.append(cdn_service.cdn_only(cfg, outbound, f"{cfg['remarks']}{suffix}"))
+
         if autoselect is not None:
             # First, not last: it is the entry most users should take, and the
             # one that stops mattering the moment it is scrolled past.

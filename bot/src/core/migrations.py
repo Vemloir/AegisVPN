@@ -98,6 +98,10 @@ MIGRATIONS: dict[str, list[Column]] = {
         Column("added_country_code", "VARCHAR(2)", "VARCHAR(2)"),
     ],
     "servers": [
+        Column("gemini_policy", "JSON", "JSON"),
+        Column("gemini_policy_generation", "INTEGER", "INTEGER"),
+        Column("gemini_preferences", "JSON", "JSON"),
+        Column("gemini_admin_proxy", "BOOLEAN DEFAULT 0 NOT NULL", "BOOLEAN DEFAULT FALSE NOT NULL"),
         Column(
             "node_role",
             "VARCHAR(16) DEFAULT 'both'",
@@ -245,6 +249,9 @@ MIGRATIONS: dict[str, list[Column]] = {
         Column("pin_cert", "BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE"),
         Column("pinned_cert_sha256", "VARCHAR(512)", "VARCHAR(512)"),
         Column("preview_only", "BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE"),
+        Column("health_failures", "INTEGER DEFAULT 0 NOT NULL", "INTEGER DEFAULT 0 NOT NULL"),
+        Column("health_successes", "INTEGER DEFAULT 0 NOT NULL", "INTEGER DEFAULT 0 NOT NULL"),
+        Column("health_alerted", "BOOLEAN DEFAULT 0 NOT NULL", "BOOLEAN DEFAULT FALSE NOT NULL"),
     ],
 }
 

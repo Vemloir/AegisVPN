@@ -48,8 +48,24 @@ class DesiredCascadeRoute(BaseModel):
     health_policy: dict = Field(default_factory=dict)
 
 
+class DesiredGeminiPolicy(BaseModel):
+    kind: Literal["gemini_policy"] = "gemini_policy"
+    policy: dict
+
+
+class DesiredGeminiAdminProxy(BaseModel):
+    kind: Literal["gemini_admin_proxy"] = "gemini_admin_proxy"
+    users: list[str] = Field(max_length=1000)
+    port: int | None = Field(default=None, strict=True, ge=10001, le=10010, exclude_if=lambda value: value is None)
+
+
 DesiredItem = Annotated[
-    DesiredClient | DesiredConnLimit | DesiredCascadeService | DesiredCascadeRoute,
+    DesiredClient
+    | DesiredConnLimit
+    | DesiredCascadeService
+    | DesiredCascadeRoute
+    | DesiredGeminiPolicy
+    | DesiredGeminiAdminProxy,
     Field(discriminator="kind"),
 ]
 

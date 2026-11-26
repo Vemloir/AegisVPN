@@ -1,6 +1,6 @@
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class DesiredClient(BaseModel):
@@ -48,8 +48,32 @@ class DesiredCascadeRoute(BaseModel):
     health_policy: dict = Field(default_factory=dict)
 
 
+class DesiredGeminiPolicy(BaseModel):
+    kind: Literal["gemini_policy"]
+    policy: dict
+
+    @field_validator("policy")
+    @classmethod
+    def validate_policy(cls, value: dict) -> dict:
+        from .gemini_policy import validate_policy
+        return validate_policy(value)
+
+
+class DesiredGeminiAdminProxy(BaseModel):
+    kind: Literal["gemini_admin_proxy"]
+    users: list[str] = Field(max_length=1000)
+    # Omitting the default preserves the canonical digest of v1 snapshots.
+    port: int | None = Field(default=None, strict=True, ge=10001, le=10010, exclude_if=lambda value: value is None)
+
+    @field_validator("users")
+    @classmethod
+    def validate_users(cls, users: list[str]) -> list[str]:
+        from .gemini_admin_proxy import validate_users
+        return validate_users(users)
+
+
 DesiredItem = Annotated[
-    DesiredClient | DesiredConnLimit | DesiredCascadeService | DesiredCascadeRoute,
+    DesiredClient | DesiredConnLimit | DesiredCascadeService | DesiredCascadeRoute | DesiredGeminiPolicy | DesiredGeminiAdminProxy,
     Field(discriminator="kind"),
 ]
 

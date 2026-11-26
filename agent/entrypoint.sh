@@ -20,7 +20,25 @@ if [ "$XRAY_RUN_MODE" = "xray-only" ]; then
         [ -f "$XRAY_CONFIG" ] && break
         sleep 0.5
     done
-    exec xray run -c "$XRAY_CONFIG"
+    # The agent joins this container's PID namespace. Xray must not be PID 1:
+    # a policy reload HUP would kill the namespace (including the agent).
+    xray_pid=
+    stop_xray_only() {
+        trap '' TERM INT
+        if [ -n "$xray_pid" ]; then
+            kill -TERM "$xray_pid" 2>/dev/null || true
+            wait "$xray_pid" || true
+        fi
+        exit 0
+    }
+    trap stop_xray_only TERM INT
+    while true; do
+        xray run -c "$XRAY_CONFIG" &
+        xray_pid=$!
+        wait "$xray_pid" || true
+        xray_pid=
+        sleep 0.5
+    done
 fi
 
 if [ ! -f "$ENV_FILE" ]; then
@@ -377,7 +395,8 @@ def ensure_github_direct(cfg: dict) -> None:
     rules[:] = [rule for rule in rules if rule.get("ruleTag") != "github-direct"]
     microsoft_idx = next(
         (index for index, rule in enumerate(rules)
-         if rule.get("outboundTag") == "warp" and "geosite:microsoft" in rule.get("domain", [])),
+         if rule.get("outboundTag") in {"warp", "microsoft-warp-ipv4"}
+         and "geosite:microsoft" in rule.get("domain", [])),
         None,
     )
     if microsoft_idx is None:
@@ -388,6 +407,35 @@ def ensure_github_direct(cfg: dict) -> None:
         "outboundTag": "direct",
         "ruleTag": "github-direct",
     })
+
+
+def ensure_microsoft_warp_ipv4(cfg: dict) -> None:
+    """Resolve Microsoft to IPv4, then pass that IP through the existing WARP.
+
+    Freedom resolves the destination before dialerProxy hands it to WireGuard.
+    WireGuard's domainStrategy only applies to domain names, not literal IPs:
+    Gemini can therefore keep strict IPv6 without a second WARP identity/peer.
+    """
+    outbounds = cfg.setdefault("outbounds", [])
+    rules = cfg.setdefault("routing", {}).setdefault("rules", [])
+    tag = "microsoft-warp-ipv4"
+    microsoft_rules = [
+        rule for rule in rules
+        if rule.get("domain") == ["geosite:microsoft"]
+        and rule.get("outboundTag") in {"warp", tag}
+    ]
+    if not any(outbound.get("tag") == "warp" for outbound in outbounds) or not microsoft_rules:
+        return
+    outbounds[:] = [outbound for outbound in outbounds if outbound.get("tag") != tag]
+    warp_idx = next(index for index, outbound in enumerate(outbounds) if outbound.get("tag") == "warp")
+    outbounds.insert(warp_idx + 1, {
+        "tag": tag,
+        "protocol": "freedom",
+        "settings": {"domainStrategy": "ForceIPv4"},
+        "streamSettings": {"sockopt": {"dialerProxy": "warp"}},
+    })
+    for rule in microsoft_rules:
+        rule["outboundTag"] = tag
 
 
 def ensure_warp(cfg: dict) -> None:
@@ -406,8 +454,9 @@ def ensure_warp(cfg: dict) -> None:
     Gemini routing is configured separately by ensure_gemini_resolver. The
     standard provisioning profile uses GEMINI_EGRESS=warp and
     WARP_DOMAIN_STRATEGY=ForceIPv6. This selects IPv6 destinations inside the
-    shared WARP tunnel, not the host's native IPv6. Explicit per-node
-    egress/resolver and address-family overrides remain supported.
+    shared WARP tunnel, not the host's native IPv6. Microsoft resolves to IPv4
+    through a freedom/dialerProxy adapter over that same WARP peer. Explicit
+    per-node Gemini egress/resolver and address-family overrides remain supported.
     """
     outbounds = cfg.setdefault("outbounds", [])
     existing_warp = next((outbound for outbound in outbounds if outbound.get("tag") == "warp"), None)
@@ -452,7 +501,7 @@ def ensure_warp(cfg: dict) -> None:
     rules = cfg.setdefault("routing", {}).setdefault("rules", [])
     # Drop any prior warp rule and re-add, so a narrowed/updated domain set
     # takes effect on restart instead of being frozen at first-write.
-    rules[:] = [r for r in rules if r.get("outboundTag") != "warp"]
+    rules[:] = [r for r in rules if r.get("outboundTag") not in {"warp", "microsoft-warp-ipv4"}]
     games_direct_rule = {
         "type": "field",
         "domain": [
@@ -518,6 +567,9 @@ def ensure_gemini_resolver(cfg: dict) -> None:
       WARP_DOMAIN_STRATEGY may explicitly select ForceIPv4 or ForceIPv6 for
       the shared WARP session. ForceIPv6 requires AAAA resolution but does not
       require native IPv6 connectivity on the VPS.
+    - GEMINI_EGRESS=proxy: an authenticated SOCKS5-over-TLS relay, verified
+      against GEMINI_PROXY_CA_FILE and GEMINI_PROXY_SERVER_NAME. Its endpoint
+      and credentials are GEMINI_PROXY_HOST/PORT/USER/PASSWORD. No direct fallback.
     - GEMINI_EGRESS=ipv6 / ipv4: the node's own address of that family only,
       as Google may judge a node's IPv6 and IPv4 addresses differently.
     - GEMINI_RESOLVER (a DoH URL): a resolver such as GeoHide or comss answers
@@ -571,13 +623,31 @@ def ensure_gemini_resolver(cfg: dict) -> None:
         dns["queryStrategy"] = "UseIP"
     elif dns.get("queryStrategy") == "UseIP":
         dns["queryStrategy"] = "UseIPv4"
-    if egress in ("ipv6", "ipv4"):
+    if egress == "proxy":
+        names = ("HOST", "PORT", "USER", "PASSWORD", "SERVER_NAME", "CA_FILE")
+        proxy = {name: (os.environ.get("GEMINI_PROXY_" + name) or "").strip() for name in names}
+        if not all(proxy.values()):
+            raise ValueError("GEMINI_EGRESS=proxy requires HOST, PORT, USER, PASSWORD, SERVER_NAME and CA_FILE")
+        port = int(proxy["PORT"])
+        if not 1 <= port <= 65535:
+            raise ValueError("GEMINI_PROXY_PORT must be between 1 and 65535")
+        outbounds.append({
+            "tag": "gemini", "protocol": "socks",
+            "settings": {"servers": [{"address": proxy["HOST"], "port": port,
+                "users": [{"user": proxy["USER"], "pass": proxy["PASSWORD"]}]}]},
+            "streamSettings": {"network": "tcp", "security": "tls", "tlsSettings": {
+                "serverName": proxy["SERVER_NAME"], "disableSystemRoot": True,
+                "certificates": [{"certificateFile": proxy["CA_FILE"], "usage": "verify"}],
+            }},
+        })
+        target = "gemini"
+    elif egress in ("ipv6", "ipv4"):
         strategy = "ForceIPv6" if egress == "ipv6" else "ForceIPv4"
         outbounds.append({"tag": "gemini", "protocol": "freedom", "settings": {"domainStrategy": strategy}})
         target = "gemini"
     elif egress == "warp" and warp is not None:
         # Keep one WARP session; a second session with the same key would fight
-        # for the peer slot. Its explicit family also governs Microsoft traffic.
+        # for the peer slot. Microsoft's adapter passes pre-resolved IPv4 IPs.
         warp["settings"]["domainStrategy"] = warp_strategy
         target = "warp"
     elif resolver:
@@ -720,10 +790,20 @@ def ensure_cdn_sni_split(cfg: dict) -> None:
 ensure_warp(config)
 ensure_github_direct(config)
 ensure_gemini_resolver(config)
+ensure_microsoft_warp_ipv4(config)
 ensure_private_blocked(config)
 ensure_lb_probe(config)
 ensure_conn_limit_reachable(config)
 ensure_cdn_sni_split(config)
+
+# Explicit admin policy overrides legacy env only after a successful apply.
+# With no policy file, existing WARP/DNS/custom relay routing is untouched.
+from app.gemini_policy import apply_policy, load_policy
+apply_policy(config, load_policy())
+from app.gemini_admin_proxy import apply as apply_admin_proxy, load_selection
+apply_admin_proxy(config, *load_selection())
+from app.personal_ai import apply as apply_personal_ai, load_profile as load_personal_ai_profile
+apply_personal_ai(config, load_personal_ai_profile())
 
 config_directory = os.path.dirname(config_path) or "."
 descriptor, temporary_path = tempfile.mkstemp(prefix=".config-", dir=config_directory)

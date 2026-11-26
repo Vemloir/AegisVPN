@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from src.core.config import settings
 from src.core.database import async_session_maker
 from src.models import Server, ServerAccessGrant, Subscription, SubscriptionServer, User
-from src.services import SubscriptionService
+from src.services import SubscriptionService, subscription_ips
 
 from .common import fmt_bytes
 from .keyboards import server_manage_keyboard, user_manage_keyboard
@@ -130,6 +130,10 @@ async def render_user_details(tg_id: int) -> tuple[str, InlineKeyboardMarkup] | 
                 .scalars()
                 .all()
             )
+            if has_active_subscription:
+                nodes = {link.server_id for link in links if link.server and link.server.is_active}
+                ip_count = await subscription_ips.for_subscription(session, sub.id, nodes, now)
+                lines.append(ip_count.describe())
             lines.append("")
             lines.append(html.bold("Трафик"))
             if links:

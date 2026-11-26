@@ -1,10 +1,12 @@
+import asyncio
+import copy
 import json
 import os
 import tempfile
 import time
 from dataclasses import dataclass
 
-from . import cascade, connlimit, hysteria
+from . import cascade, connlimit, gemini_admin_proxy, gemini_policy, hysteria
 from .config import settings
 from .control_models import (
     AppliedState,
@@ -12,6 +14,8 @@ from .control_models import (
     DesiredCascadeService,
     DesiredClient,
     DesiredConnLimit,
+    DesiredGeminiAdminProxy,
+    DesiredGeminiPolicy,
     DesiredSnapshot,
 )
 from .xray import (
@@ -182,6 +186,60 @@ def _desired_parts(
     return clients, overrides, routes
 
 
+async def _install_gemini_config(
+    config: dict, original: dict, policy: dict | None, admin_users: list[str] | None = None,
+    admin_port: int | None = None,
+) -> None:
+    # Validate the entire candidate before changing the live file. Never expose
+    # config contents (keys, relay credentials) in control-plane errors.
+    fd, path = tempfile.mkstemp(prefix=".gemini-test-", suffix=".json", dir=os.path.dirname(settings.xray_config_path))
+    try:
+        with os.fdopen(fd, "w") as file:
+            json.dump(config, file)
+        process = await asyncio.create_subprocess_exec(
+            "xray", "run", "-test", "-config", path,
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        )
+        try:
+            code = await asyncio.wait_for(process.wait(), timeout=15)
+        except BaseException:
+            if process.returncode is None:
+                process.kill()
+            await process.wait()
+            raise
+        if code:
+            raise ReconcileError("Gemini candidate rejected by Xray")
+    finally:
+        os.unlink(path)
+    previous_policy = gemini_policy.load_policy()
+    previous_selection_exists = gemini_admin_proxy.USERS_PATH.exists()
+    previous_users, previous_port = gemini_admin_proxy.load_selection()
+    try:
+        if policy is not None:
+            _atomic_write_json(str(gemini_policy.POLICY_PATH), policy)
+        if admin_users is not None:
+            _atomic_write_json(str(gemini_admin_proxy.USERS_PATH), {"users": admin_users, "port": admin_port})
+        await save_xray_config(config)
+        reload_xray()
+        if not await wait_for_xray_ready():
+            raise ReconcileError("Gemini apply readiness failed")
+    except BaseException:
+        if admin_users is not None:
+            if previous_selection_exists:
+                _atomic_write_json(str(gemini_admin_proxy.USERS_PATH), {"users": previous_users, "port": previous_port})
+            else:
+                gemini_admin_proxy.USERS_PATH.unlink(missing_ok=True)
+        if previous_policy is None:
+            gemini_policy.POLICY_PATH.unlink(missing_ok=True)
+        else:
+            _atomic_write_json(str(gemini_policy.POLICY_PATH), previous_policy)
+        await save_xray_config(original)
+        reload_xray()
+        if not await wait_for_xray_ready():
+            raise ReconcileError("Gemini rollback readiness failed") from None
+        raise
+
+
 async def reconcile_snapshot(
     snapshot: DesiredSnapshot,
     *,
@@ -196,6 +254,25 @@ async def reconcile_snapshot(
 
     async with config_lock:
         config = await get_xray_config()
+        original = copy.deepcopy(config)
+        policies = [item.policy for item in snapshot.items if isinstance(item, DesiredGeminiPolicy)]
+        if len(policies) > 1:
+            raise ReconcileError("Duplicate Gemini policy")
+        admin_items = [item for item in snapshot.items if isinstance(item, DesiredGeminiAdminProxy)]
+        if len(admin_items) > 1:
+            raise ReconcileError("Duplicate admin Gemini proxy policy")
+        # Restrict to currently authorized, non-expired identities even when
+        # replaying a cached snapshot during a control-plane outage.
+        active_emails = {client.email for client in desired_clients}
+        admin_users = sorted(set(admin_items[0].users) & active_emails) if admin_items else []
+        admin_port = admin_items[0].port if admin_users else None
+        if policies:
+            gemini_policy.apply_policy(config, policies[0])
+        gemini_admin_proxy.apply(config, admin_users, admin_port)
+        gemini_changed = config != original
+        policy_changed = (gemini_changed
+                          or (bool(policies) and gemini_policy.load_policy() != policies[0])
+                          or gemini_admin_proxy.load_selection() != (admin_users, admin_port))
         desired_emails = {client.email for client in desired_clients}
         pending_revocations = load_pending_revocations()
         effective_pending = pending_revocations - desired_emails
@@ -203,7 +280,7 @@ async def reconcile_snapshot(
         additions: list[tuple[dict, dict]] = []
         removals: list[tuple[str, str]] = []
         removed_emails: set[str] = set()
-        config_changed = cascade_changed
+        config_changed = cascade_changed or gemini_changed
 
         for inbound in list_vless_inbounds(config):
             existing = list(inbound.setdefault("settings", {}).setdefault("clients", []))
@@ -241,6 +318,7 @@ async def reconcile_snapshot(
         )
         changed = (
             config_changed
+            or policy_changed
             or override_changed
             or state_changed
             or bool(effective_pending)
@@ -261,12 +339,15 @@ async def reconcile_snapshot(
         if pending_revocations != load_pending_revocations():
             save_pending_revocations(pending_revocations)
 
-        if config_changed:
+        if policy_changed:
+            await _install_gemini_config(config, original, policies[0] if policies else None, admin_users, admin_port)
+        elif config_changed:
             await save_xray_config(config)
+        if config_changed:
             hysteria.refresh_from_config(config)
 
         live_delta_size = len(removals) + len(additions)
-        use_live_api = not cascade_changed and live_delta_size <= max(0, settings.xray_live_delta_limit)
+        use_live_api = not policy_changed and not cascade_changed and live_delta_size <= max(0, settings.xray_live_delta_limit)
         api_ok = use_live_api
         if use_live_api:
             for tag, email in removals:
@@ -275,7 +356,7 @@ async def reconcile_snapshot(
             for inbound, record in additions:
                 if not await xray_api_add(inbound, record):
                     api_ok = False
-        if not api_ok:
+        if not api_ok and not policy_changed:
             reload_xray()
             if not await wait_for_xray_ready():
                 raise ReconcileError("live Xray reconciliation failed")

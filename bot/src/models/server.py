@@ -41,6 +41,11 @@ class Server(Base):
     control_last_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
     control_agent_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     control_capabilities: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # NULL leaves the node's existing env/custom relay policy untouched.
+    gemini_policy: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    gemini_policy_generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    gemini_preferences: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    gemini_admin_proxy: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     # Cascade routing is dormant by default. Existing nodes migrate to "both"
     # so direct locations remain byte-for-byte unchanged; a future Russian
     # entry is explicitly enrolled as "entry".

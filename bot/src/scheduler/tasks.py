@@ -22,6 +22,7 @@ from src.models import CdnEndpoint, Device, NodeTelemetry, Payment, Server, Subs
 from src.services import AgentClient, NodeControlService, cdn_service, confirm_platega_payment, t
 from src.services.backup_archive import BackupConfigurationError, encrypt_backup
 from src.services.platega_client import PlategaError, get_transaction_status
+from src.services.subscription_lifecycle import claim_expirations
 
 # A trailing "_cdn" marks the copy of the client on a node's CDN inbound: the
 # same subscriber, traffic that went through a CDN (see agent CDN_EMAIL_SUFFIX).
@@ -135,23 +136,16 @@ async def check_expired_subscriptions(bot: Bot):
     logger.info("Running task: check_expired_subscriptions")
     async with async_session_maker() as session:
         now = datetime.now(UTC).replace(tzinfo=None)
-        subscriptions = (
-            (
-                await session.execute(
-                    select(Subscription)
-                    .options(joinedload(Subscription.user))
-                    .where(
-                        Subscription.expires_at <= now,
-                        Subscription.is_active == True,
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        if not subscriptions:
+        subscription_ids = await claim_expirations(session, cutoff=now)
+        if not subscription_ids:
             return
-        subscription_ids = [subscription.id for subscription in subscriptions]
+        subscriptions = (
+            await session.scalars(
+                select(Subscription)
+                .options(joinedload(Subscription.user))
+                .where(Subscription.id.in_(subscription_ids))
+            )
+        ).all()
         device_rows = (
             await session.execute(
                 select(Device.subscription_id, Device.uuid).where(Device.subscription_id.in_(subscription_ids))
@@ -181,7 +175,6 @@ async def check_expired_subscriptions(bot: Bot):
 
         jobs: list[_ExpiredSubscriptionJob] = []
         for subscription in subscriptions:
-            subscription.is_active = False
             user = subscription.user
             jobs.append(
                 _ExpiredSubscriptionJob(
@@ -818,12 +811,16 @@ async def check_servers_health(bot: Bot):
             )
 
 
-async def check_cdn_endpoints(bot: Bot):
-    """Probe every enabled CDN resource end to end and record the result.
+CDN_FAILURE_CYCLES = 3
+CDN_RECOVERY_CYCLES = 2
 
-    A broken resource stops being advertised as a fallback (see
-    cdn_service.endpoints_by_server) and the admins hear about it once, on the
-    transition, and again when it recovers.
+
+async def check_cdn_endpoints(bot: Bot):
+    """Confirm CDN health across scheduled cycles, not closely spaced retries.
+
+    Diagnostic only: never remove paths from subscriptions. Persist the
+    streaks so restarts do not reset the confirmation window. Send one summary
+    per cycle and only pair recovery notices with an announced incident.
     """
     logger.info("Running task: check_cdn_endpoints")
     async with async_session_maker() as session:
@@ -840,7 +837,7 @@ async def check_cdn_endpoints(bot: Bot):
 
     semaphore = asyncio.Semaphore(8)
 
-    async def probe(endpoint: CdnEndpoint, server: Server) -> tuple[CdnEndpoint, Server, bool, str, str | None]:
+    async def probe(endpoint: CdnEndpoint, server: Server) -> tuple[CdnEndpoint, Server, bool | None, str, str | None]:
         async with semaphore:
             ok, detail = await cdn_service.probe_endpoint(server, endpoint)
             if not ok:
@@ -859,22 +856,69 @@ async def check_cdn_endpoints(bot: Bot):
 
     results = await asyncio.gather(*(probe(endpoint, server) for endpoint, server in targets))
     now = datetime.now(UTC).replace(tzinfo=None)
+    notices: list[str] = []
     async with async_session_maker() as session:
-        for endpoint, _server, ok, detail, pins in results:
-            values = {"last_check_ok": ok, "last_check_at": now, "last_check_detail": detail[:255]}
+        for endpoint, server, ok, detail, pins in results:
+            # Re-read after network I/O; don't overwrite a concurrent disable or
+            # endpoint edit with a result for the previous target.
+            current = await session.get(CdnEndpoint, endpoint.id)
+            target_fields = ("server_id", "host", "address", "sni", "pin_cert", "xhttp_extra", "enabled")
+            if (
+                current is None
+                or not current.enabled
+                or any(getattr(current, field) != getattr(endpoint, field) for field in target_fields)
+            ):
+                continue
+            # Older versions treated transport timeouts as confirmed incidents.
+            # Retire those unproven incidents without a misleading recovery DM.
+            if current.health_alerted and (
+                current.last_check_detail in {"TimeoutError", "ClientConnectorError", "ClientConnectorDNSError"}
+            ):
+                current.health_alerted = False
+                current.last_check_ok = None
+            failures = min((current.health_failures or 0) + 1, CDN_FAILURE_CYCLES) if ok is False else 0
+            successes = min((current.health_successes or 0) + 1, CDN_RECOVERY_CYCLES) if ok is True else 0
+            confirmed = current.last_check_ok
+            alerted = bool(current.health_alerted)
+            name = f"{server.name}: {endpoint.provider}, SNI {endpoint.tls_server_name} (путь {endpoint.id})"
+            if ok is False and failures >= CDN_FAILURE_CYCLES:
+                confirmed = False
+                if not alerted:
+                    notices.append(
+                        f"{name}\nПроверки с управляющего сервера не проходят "
+                        f"{CDN_FAILURE_CYCLES} цикла подряд: {detail}. "
+                        "Путь остаётся в подписках; доступность у пользователей не установлена."
+                    )
+                    alerted = True
+            elif ok is True:
+                # A stamped origin response confirms reachability immediately;
+                # don't invent another ten-minute recovery window.
+
+                confirmed = True
+                if alerted:
+                    notices.append(
+                        f"{name}\nПолучен ответ origin с управляющего сервера. "
+                        "Это время проверки, не измеренная длительность сбоя. Подписки не менялись."
+                    )
+                    alerted = False
+            current.last_check_ok = confirmed
+            current.last_check_at = now
+            current.last_check_detail = detail[:255]
+            current.health_failures = failures
+            current.health_successes = successes
+            current.health_alerted = alerted
             if pins is not None:
-                values["pinned_cert_sha256"] = pins
-            await session.execute(update(CdnEndpoint).where(CdnEndpoint.id == endpoint.id).values(**values))
+                current.pinned_cert_sha256 = pins
+            logger.info(
+                "CDN probe endpoint=%s ok=%s confirmed=%s failures=%s successes=%s detail=%s",
+                endpoint.id,
+                ok,
+                confirmed,
+                failures,
+                successes,
+                detail,
+            )
         await session.commit()
 
-    for endpoint, server, ok, detail, _pins in results:
-        if ok == endpoint.last_check_ok or (ok and endpoint.last_check_ok is None):
-            continue
-        name = f"{server.name} via {endpoint.provider} ({endpoint.host})"
-        if ok:
-            await _alert_admins(bot, f"CDN-путь снова работает: {name}")
-        else:
-            await _alert_admins(
-                bot,
-                f"CDN-путь НЕ работает: {name}\nПричина: {detail}\nОн убран из подписок, пока не восстановится.",
-            )
+    if notices:
+        await _alert_admins(bot, "CDN: изменения подтверждённого состояния\n\n" + "\n\n".join(notices))

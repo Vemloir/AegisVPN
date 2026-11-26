@@ -202,12 +202,13 @@ async def _me_payload(session: AsyncSession, user: User) -> dict:
         "subscription": None,
     }
     if sub is not None:
+        active = not sub.is_expired(now)
         payload["subscription"] = {
-            "is_active": not sub.is_expired(now),
+            "is_active": active,
             "is_lifetime": sub.is_lifetime,
             # None for a lifetime subscription: it has no end date.
             "expires_at": sub.expires_at.isoformat() if sub.expires_at else None,
-            "sub_url": SubscriptionService.build_subscription_url(sub.sub_token),
+            "sub_url": SubscriptionService.build_subscription_url(sub.sub_token) if active else None,
         }
     return payload
 

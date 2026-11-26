@@ -10,7 +10,7 @@ from aiogram.filters import Filter, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, TelegramObject
 
-from . import panel, plans, servers, users
+from . import gemini, panel, plans, servers, users
 from .common import fmt_bytes, is_admin
 from .states import AdminStates
 
@@ -43,6 +43,7 @@ router.callback_query.filter(_AdminOnly())
 router.include_router(_commands_leave_input)
 router.include_router(panel.router)
 router.include_router(servers.router)
+router.include_router(gemini.router)
 router.include_router(plans.router)
 router.include_router(users.router)
 

@@ -10,8 +10,9 @@ only those services break).
 Gemini routing is controlled separately by the agent's GEMINI_EGRESS setting.
 The standard node profile uses GEMINI_EGRESS=warp together with
 WARP_DOMAIN_STRATEGY=ForceIPv6, selecting IPv6 inside WARP rather than the
-host's native IPv6. This helper's base Microsoft rule does not replace that
-per-node Gemini policy.
+host's native IPv6. The agent resolves Microsoft destinations to IPv4 through
+a freedom/dialerProxy adapter over the same WARP peer, preserving Gemini's
+IPv6 policy. This helper's base rule is upgraded by that agent boot policy.
 
 The routing is scoped by SNI/hostname via a geosite category that ships in
 geosite.dat (community-maintained, so the domain list isn't hand-kept):

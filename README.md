@@ -121,9 +121,10 @@ This is what makes multi-server subscriptions possible:
   through a clean consumer IP without moving the rest of the node's traffic off
   its own IP; game traffic is explicitly kept off WARP. The standard node
   provisioning profile sets `GEMINI_EGRESS=warp` and
-  `WARP_DOMAIN_STRATEGY=ForceIPv6`, routing managed Gemini and Microsoft
-  domains through the same WARP session over IPv6. DNS permits AAAA lookups;
-  no native VPS IPv6 route is required. This is distinct from
+  `WARP_DOMAIN_STRATEGY=ForceIPv6`: Gemini uses WARP IPv6, while Microsoft
+  domains are resolved to IPv4 by a freedom adapter and passed to the same
+  WARP peer via `sockopt.dialerProxy`. No second WARP identity is created.
+  DNS permits AAAA lookups; no native VPS IPv6 route is required. This is distinct from
   `GEMINI_EGRESS=ipv6`, which uses the VPS's own IPv6 without WARP.
   Other egress/resolver modes remain explicit per-node choices. GitHub and
   its assets use the node's direct egress before the broad Microsoft rule:

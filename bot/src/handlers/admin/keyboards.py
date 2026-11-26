@@ -78,6 +78,7 @@ def server_manage_keyboard(server: Server) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=toggle_text, callback_data=f"admin_server_toggle:{server.id}")],
             [InlineKeyboardButton(text=hide_text, callback_data=f"admin_server_hide_toggle:{server.id}")],
             [InlineKeyboardButton(text=preview_text, callback_data=f"admin_server_preview_toggle:{server.id}")],
+            [InlineKeyboardButton(text="Доступ к Gemini", callback_data=f"gemini:open:{server.id}")],
             [
                 InlineKeyboardButton(
                     text="Разрешить пользователю", callback_data=f"admin_server_allow_start:{server.id}"

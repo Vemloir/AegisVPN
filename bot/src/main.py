@@ -23,6 +23,7 @@ from src.scheduler import setup_scheduler
 from src.services import SubscriptionService, confirm_platega_payment
 from src.services.agent_client import close_session as close_agent_session
 from src.services.platega_client import verify_callback_headers
+from src.services.subscription_import import prepare_subscription_import
 
 logger = setup_logger()
 bot_public_url: str | None = settings.bot_public_url.rstrip("/") if settings.bot_public_url else None
@@ -187,35 +188,26 @@ async def subscription_response(request: web.Request, profile: str) -> web.Respo
     wants_xray_json = client_wants_xray_json(ua)
 
     async with async_session_maker() as session:
-        sub = await SubscriptionService.get_subscription_by_token(session, sub_token)
-
-        device_uuid: str | None = None
-        if sub and ua:
-            device = await SubscriptionService.get_or_create_device(
-                session, sub, ua, client_ip, headers=request.headers
-            )
-            await session.commit()
-            if not device.is_suspended:
-                device_uuid = device.uuid
+        prepared = await prepare_subscription_import(session, sub_token, ua, client_ip, request.headers)
+        if prepared is None:
+            return web.Response(status=404, text="Subscription not found or inactive")
 
         if wants_xray_json:
-            # The builder may downgrade to a base64 link list when the sub
-            # contains a Hysteria2 location (xray-core can't run hysteria2://),
-            # so the actual response kind comes back with the body.
+            # The builder returns a link list for entries it cannot represent as JSON.
             kind, body = await SubscriptionService.build_xray_json_subscription(
-                session, sub_token, profile=profile, device_uuid=device_uuid
+                session, sub_token, profile=profile, device_uuid=prepared.device_uuid
             )
             wants_xray_json = kind == "json"
         else:
             body = await SubscriptionService.get_subscription_vless_links(
-                session, sub_token, profile=profile, device_uuid=device_uuid
+                session, sub_token, profile=profile, device_uuid=prepared.device_uuid
             )
 
-    if not sub or not body:
+    if not body:
         return web.Response(status=404, text="Subscription not found or inactive")
 
     response = web.Response(text=body, content_type="application/json" if wants_xray_json else "text/plain")
-    metadata_headers = subscription_metadata_headers(sub, profile)
+    metadata_headers = subscription_metadata_headers(prepared.subscription, profile)
     title = metadata_headers["Profile-Title"]
     response.headers["Content-Disposition"] = f'attachment; filename="{title}"'
     response.headers.update(metadata_headers)

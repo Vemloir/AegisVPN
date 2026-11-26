@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from typing import Literal
 
-from . import hysteria
+from . import hysteria, subscription_ips
 from .config import settings
 from .control_client import ControlClient
 from .control_models import DesiredSnapshot
@@ -131,11 +131,12 @@ async def _subscription_templates() -> list[dict]:
 
 
 async def _build_telemetry(result: ReconcileResult | None) -> dict:
-    online_xray, online_hy2, stats, hy2_stats = await asyncio.gather(
+    online_xray, online_hy2, stats, hy2_stats, ip_sample = await asyncio.gather(
         get_online_emails(),
         hysteria.online(),
         query_traffic_stats(),
         hysteria.traffic(),
+        subscription_ips.sample(),
     )
     online = set(online_xray)
     online.update(online_hy2)
@@ -148,6 +149,7 @@ async def _build_telemetry(result: ReconcileResult | None) -> dict:
         "applied_generation": state.generation,
         "applied_digest": state.digest,
         "online_emails": sorted(online),
+        **({"subscription_ips_v1": ip_sample} if ip_sample is not None else {}),
         "stats": stats,
         "subscription_templates": await _subscription_templates(),
         "reconciliation": asdict(result) if result is not None else None,

@@ -24,7 +24,7 @@ from collections import defaultdict
 from urllib.parse import quote, urlencode
 
 import aiohttp
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import CdnEndpoint, Server
@@ -88,11 +88,10 @@ async def endpoints_by_server(
 ) -> dict[int, list[CdnEndpoint]]:
     """Advertisable CDN resources for each CDN-capable server.
 
-    A resource the reachability check found broken is withheld: a dead
-    fallback is worse than none, because the client would switch to it at
-    exactly the moment the direct path is gone. Never-checked ones are kept,
-    except a pinned one, which cannot be described before its certificate is
-    known. Preview-only resources come back only with ``include_preview``.
+    Control-host probes are diagnostic only: they cannot determine reachability
+    from a subscriber's network. Keep every enabled path for client-side failover,
+    regardless of monitoring state. A pinned resource still requires a known
+    certificate. Preview-only resources require ``include_preview``.
     """
     eligible = {server.id for server in servers if serves_cdn(server)}
     if not eligible:
@@ -104,7 +103,6 @@ async def endpoints_by_server(
                 .where(
                     CdnEndpoint.server_id.in_(eligible),
                     CdnEndpoint.enabled == True,  # noqa: E712
-                    or_(CdnEndpoint.last_check_ok.is_(None), CdnEndpoint.last_check_ok == True),  # noqa: E712
                 )
                 .order_by(CdnEndpoint.position, CdnEndpoint.id)
             )
@@ -160,7 +158,7 @@ def merge_cert_pins(known: list[str], seen: str, *, keep: int = 4) -> str:
     return ",".join([seen, *(pin for pin in known if pin != seen)][:keep])
 
 
-async def probe_endpoint(server: Server, endpoint: CdnEndpoint, *, timeout: float = 10.0) -> tuple[bool, str]:
+async def probe_endpoint(server: Server, endpoint: CdnEndpoint, *, timeout: float = 10.0) -> tuple[bool | None, str]:
     """Does a request through this CDN resource reach the node's Xray?
 
     A request under the inbound's path always comes back stamped with padding
@@ -176,8 +174,32 @@ async def probe_endpoint(server: Server, endpoint: CdnEndpoint, *, timeout: floa
     url = f"https://{endpoint.connect_address}{server.cdn_path or '/'}?_={secrets.token_hex(4)}"
     headers = {"Host": endpoint.host, "Cache-Control": "no-cache", "User-Agent": "Mozilla/5.0"}
     padding_cookie = CDN_XHTTP_PROFILE["xPaddingKey"] + "="
+    # A control-host timeout is an incomplete measurement, not evidence that
+    # the CDN returned a bad response. Preserve stage/timing without logging
+    # the secret origin path, credentials, or response headers.
+    import time
+
+    started = time.monotonic()
+    stage = "connect"
+    trace = aiohttp.TraceConfig()
+
+    async def dns_start(*_args):
+        nonlocal stage
+        stage = "dns"
+
+    async def dns_end(*_args):
+        nonlocal stage
+        stage = "connect_tls"
+
+    async def sent(*_args):
+        nonlocal stage
+        stage = "response_headers"
+
+    trace.on_dns_resolvehost_start.append(dns_start)
+    trace.on_dns_resolvehost_end.append(dns_end)
+    trace.on_request_headers_sent.append(sent)
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as http:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout), trace_configs=[trace]) as http:
             async with http.get(
                 url,
                 headers=headers,
@@ -191,8 +213,10 @@ async def probe_endpoint(server: Server, endpoint: CdnEndpoint, *, timeout: floa
                 if "X-Padding" in response.headers or any(c.startswith(padding_cookie) for c in cookies):
                     return True, f"origin reached (HTTP {response.status})"
                 return False, f"HTTP {response.status} without the origin's marker"
-    except Exception as exc:  # noqa: BLE001 - any failure is a failed check
-        return False, type(exc).__name__
+    except (aiohttp.ClientConnectorCertificateError, aiohttp.ClientConnectorSSLError) as exc:
+        return False, f"TLS verification failed ({type(exc).__name__})"
+    except (TimeoutError, aiohttp.ClientError, OSError) as exc:
+        return None, f"inconclusive: {type(exc).__name__}; stage={stage}; elapsed={time.monotonic() - started:.2f}s"
 
 
 def _xhttp_settings(server: Server, endpoint: CdnEndpoint) -> dict:
@@ -280,8 +304,8 @@ def client_id_of(config: dict) -> str:
 def cdn_only(config: dict, cdn_outbound: dict, remarks: str) -> dict:
     """``config`` with its direct path replaced by one CDN resource.
 
-    The ``| WL`` preview entry: it behaves exactly like the CDN tier would
-    during an allowlist, without waiting for one.
+    A forced ``| WL`` entry: it uses only this CDN transport, independently
+    of the normal location's direct path and automatic fallback chain.
     """
     result = copy.deepcopy(config)
     proxy = copy.deepcopy(cdn_outbound)

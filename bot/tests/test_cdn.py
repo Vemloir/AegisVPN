@@ -156,38 +156,37 @@ async def test_location_gets_its_cdn_resources_as_a_fallback_tier(monkeypatch):
     assert any(inbound.get("tag") == "to-cdn-in" for inbound in cfg["inbounds"])
 
 
-async def test_preview_user_gets_a_cdn_only_wl_location(monkeypatch):
+async def test_preview_users_also_get_no_standalone_wl_entries(monkeypatch):
     monkeypatch.setattr(settings, "preview_tg_ids", [940001])
     token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[{**BEGET, "preview_only": True}])
     configs = await _json_configs(token)
-    wl = [cfg for cfg in configs if cfg["remarks"].endswith(" | WL")]
-    assert len(wl) == 1
-    direct = _by_host(configs, "203.0.113.30")
-    assert wl[0]["remarks"] == direct["remarks"] + " | WL"
-    proxy = wl[0]["outbounds"][0]
-    # Only the CDN: the edge is dialled, never the node itself.
-    assert proxy["tag"] == "proxy"
-    assert proxy["settings"]["vnext"][0]["address"] == "abc.begetcdn.cloud"
-    assert proxy["settings"]["vnext"][0]["users"][0]["id"] == UUID
-    assert proxy["streamSettings"]["xhttpSettings"]["sessionIDPlacement"] == "query"
-    assert not any(o["tag"].startswith("cdn-") for o in wl[0]["outbounds"])
-    assert "balancers" not in wl[0]["routing"]
+    assert len(configs) == 3  # auto-select plus the two normal locations
+    assert not any(" | WL" in cfg["remarks"] for cfg in configs)
+    assert all(not _cdn_paths(cfg) for cfg in configs)
 
 
-async def test_wl_location_is_only_for_preview_users(monkeypatch):
+async def test_preview_cdn_is_not_published_to_regular_users(monkeypatch):
     monkeypatch.setattr(settings, "preview_tg_ids", [123])
     token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[{**BEGET, "preview_only": True}])
     configs = await _json_configs(token)
-    assert not any(cfg["remarks"].endswith(" | WL") for cfg in configs)
+    assert not any(" | WL" in cfg["remarks"] for cfg in configs)
 
 
-async def test_resource_in_the_fallback_chain_gets_no_wl_entry(monkeypatch):
-    # Once a resource joins the chain the location itself exercises it; a WL
-    # entry of its own is only for a resource still on trial.
-    monkeypatch.setattr(settings, "preview_tg_ids", [940001])
+@pytest.mark.parametrize("preview_ids", [[], [940001]])
+async def test_public_resources_remain_fallback_only(monkeypatch, preview_ids):
+    monkeypatch.setattr(settings, "preview_tg_ids", preview_ids)
     token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[BEGET, {**AVITO, "preview_only": False}])
     configs = await _json_configs(token)
+    location = _by_host(configs, "203.0.113.30")
+    assert len(configs) == 3
     assert not any(" | WL" in cfg["remarks"] for cfg in configs)
+    paths = [out for out in location["outbounds"] if out["tag"] in _cdn_paths(location)]
+    for out, sni in zip(paths, ["abc.begetcdn.cloud", "12.img.avito.st"], strict=True):
+        assert out["settings"]["vnext"][0]["users"][0]["id"] == UUID
+        assert out["streamSettings"]["tlsSettings"]["serverName"] == sni
+    assert paths[1]["streamSettings"]["tlsSettings"]["pinnedPeerCertSha256"] == f"{PIN_A},{PIN_B}"
+    assert _cdn_paths(location) == ["cdn-1", "cdn-2"]
+    assert _cdn_paths(configs[0]) == ["cdn-1", "cdn-2"]
 
 
 async def test_location_without_cdn_is_unchanged(monkeypatch):
@@ -235,7 +234,6 @@ async def test_fronting_and_extra_are_carried_through(monkeypatch):
 @pytest.mark.parametrize(
     ("node_overrides", "endpoint_overrides"),
     [
-        ({}, {"last_check_ok": False}),  # known broken
         ({}, {"enabled": False}),
         ({"control_capabilities": {"features": ["cascade-v2"]}}, {}),  # agent lacks the inbound
         ({"cdn_port": None}, {}),
@@ -252,15 +250,9 @@ async def test_unusable_cdn_paths_are_not_advertised(monkeypatch, node_overrides
         assert not any(outbound["tag"].startswith("cdn-") for outbound in cfg["outbounds"])
 
 
-async def test_link_subscription_lists_cdn_paths_after_their_location(monkeypatch):
-    token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[BEGET])
-    async with async_session_maker() as session:
-        body = await SubscriptionService.get_subscription_vless_links(session, token)
-    links = base64.b64decode(body).decode().splitlines()
-    assert len(links) == 3
-    direct_index = next(i for i, link in enumerate(links) if "@203.0.113.30:" in link)
-    cdn_link = links[direct_index + 1]
-    parts = urlsplit(cdn_link)
+def test_cdn_link_builder_preserves_transport_settings():
+    endpoint = CdnEndpoint(**BEGET)
+    parts = urlsplit(cdn_service.build_link(_cdn_node(), endpoint, UUID, "Test | WL Beget"))
     query = dict(parse_qsl(parts.query))
     assert parts.username == UUID
     assert parts.hostname == "abc.begetcdn.cloud"
@@ -271,7 +263,7 @@ async def test_link_subscription_lists_cdn_paths_after_their_location(monkeypatc
     assert query["mode"] == "packet-up"
     # A link has no fields for the placements: they travel in "extra".
     assert json.loads(query["extra"]) == cdn_service.CDN_XHTTP_PROFILE
-    assert unquote(parts.fragment).endswith("· CDN")
+    assert unquote(parts.fragment).endswith(" | WL Beget")
 
 
 PIN_A = "a1" * 32
@@ -286,7 +278,7 @@ AVITO = {
 }
 
 
-async def test_preview_only_resource_is_a_wl_entry_and_never_a_fallback(monkeypatch):
+async def test_preview_only_resource_is_neither_standalone_nor_fallback(monkeypatch):
     monkeypatch.setattr(settings, "preview_tg_ids", [940001])
     token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[BEGET, AVITO])
     configs = await _json_configs(token)
@@ -294,12 +286,8 @@ async def test_preview_only_resource_is_a_wl_entry_and_never_a_fallback(monkeypa
     location = _by_host(configs, "203.0.113.30")
     assert _cdn_paths(location) == ["cdn-1"]
     assert _cdn_paths(configs[0]) == ["cdn-1"]
-    # Only the resource on trial gets an entry; the plain one is in the chain.
-    wl = [cfg for cfg in configs if " | WL" in cfg["remarks"]]
-    assert [cfg["remarks"] for cfg in wl] == [f"{location['remarks']} | WL"]
-    tls = wl[0]["outbounds"][0]["streamSettings"]["tlsSettings"]
-    assert tls["serverName"] == "12.img.avito.st"
-    assert tls["pinnedPeerCertSha256"] == f"{PIN_A},{PIN_B}"
+    assert len(configs) == 3
+    assert not any(" | WL" in cfg["remarks"] for cfg in configs)
 
 
 async def test_cdn_paths_form_a_checked_chain_in_order(monkeypatch):
@@ -363,11 +351,22 @@ async def test_pinned_resource_waits_for_its_first_certificate(monkeypatch):
         assert " | WL" not in cfg["remarks"]
 
 
-async def test_pinned_link_carries_the_pins(monkeypatch):
-    token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[{**AVITO, "preview_only": False}])
+@pytest.mark.parametrize("preview_ids", [[], [940001]])
+async def test_link_subscription_omits_all_standalone_cdn_entries(monkeypatch, preview_ids):
+    monkeypatch.setattr(settings, "preview_tg_ids", preview_ids)
+    token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[BEGET, {**AVITO, "preview_only": False}])
     async with async_session_maker() as session:
         body = await SubscriptionService.get_subscription_vless_links(session, token)
-    cdn_link = next(link for link in base64.b64decode(body).decode().splitlines() if "abc.begetcdn.cloud" in link)
+    links = base64.b64decode(body).decode().splitlines()
+    assert len(links) == 2
+    assert not any(" | WL" in unquote(urlsplit(link).fragment) for link in links)
+    assert {urlsplit(link).hostname for link in links} == {"203.0.113.30", "203.0.113.40"}
+    assert all(urlsplit(link).username == UUID for link in links)
+
+
+def test_pinned_link_builder_carries_the_pins():
+    endpoint = CdnEndpoint(**AVITO)
+    cdn_link = cdn_service.build_link(_cdn_node(), endpoint, UUID, "Test")
     query = dict(parse_qsl(urlsplit(cdn_link).query))
     assert query["sni"] == "12.img.avito.st"
     assert query["pcs"] == f"{PIN_A},{PIN_B}"
@@ -397,12 +396,19 @@ def test_client_and_node_share_the_cdn_xhttp_profile():
 # --- reachability check ---------------------------------------------------------
 
 
-async def test_check_records_results_and_alerts_on_transitions(monkeypatch):
-    await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[BEGET])
-    outcomes = iter([(False, "HTTP 504 without the origin's marker")] * 2 + [(True, "origin reached (HTTP 400)")])
+@pytest.mark.parametrize("initial", [None, True])
+async def test_cdn_confirmation_and_recovery_are_persistent_and_grouped(monkeypatch, initial):
+    await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[
+        {**BEGET, "last_check_ok": initial},
+        {**BEGET, "sni": "12.img.avito.st", "last_check_ok": initial},
+    ])
+    ok = False
+    calls = 0
 
     async def fake_probe(server, endpoint):
-        return next(outcomes)
+        nonlocal calls
+        calls += 1
+        return ok, "origin reached (HTTP 400)" if ok else "HTTP 504 without the origin's marker"
 
     alerts: list[str] = []
 
@@ -416,17 +422,93 @@ async def test_check_records_results_and_alerts_on_transitions(monkeypatch):
     monkeypatch.setattr(tasks, "_alert_admins", fake_alert)
     monkeypatch.setattr(tasks.asyncio, "sleep", no_sleep)
 
+    # Both attempts in one scheduled run count as ONE failed cycle.
+    for expected in (1, 2):
+        await tasks.check_cdn_endpoints(bot=None)
+        async with async_session_maker() as session:
+            endpoint = await session.get(CdnEndpoint, 1)
+            assert endpoint.last_check_ok is initial
+            assert endpoint.health_failures == expected
+            assert endpoint.last_check_detail == "HTTP 504 without the origin's marker"
+        assert not alerts
+    assert calls == 8
+    assert _cdn_paths(_by_host(await _json_configs("tok-cdn"), "203.0.113.30")) == ["cdn-1", "cdn-2"]
     await tasks.check_cdn_endpoints(bot=None)
     async with async_session_maker() as session:
         endpoint = await session.get(CdnEndpoint, 1)
-        assert endpoint.last_check_ok is False
-        assert "504" in endpoint.last_check_detail
-    assert len(alerts) == 1 and "НЕ работает" in alerts[0]
+        assert endpoint.last_check_ok is False and endpoint.health_alerted
+        assert endpoint.health_failures == 3
+    assert len(alerts) == 1
+    assert "abc.begetcdn.cloud" in alerts[0] and "12.img.avito.st" in alerts[0]
+    assert _cdn_paths(_by_host(await _json_configs("tok-cdn"), "203.0.113.30")) == ["cdn-1", "cdn-2"]
+    assert "остаётся в подписках" in alerts[0]
+    await tasks.check_cdn_endpoints(bot=None)
+    assert len(alerts) == 1  # no repeated outage notification
 
+    ok = True
+    await tasks.check_cdn_endpoints(bot=None)
+    async with async_session_maker() as session:
+        endpoint = await session.get(CdnEndpoint, 1)
+        assert endpoint.last_check_ok is True and not endpoint.health_alerted
+        assert endpoint.health_failures == 0 and endpoint.health_successes == 1
+    assert len(alerts) == 2 and "Подписки не менялись" in alerts[1]
+    assert "abc.begetcdn.cloud" in alerts[1] and "12.img.avito.st" in alerts[1]
+    await tasks.check_cdn_endpoints(bot=None)
+    assert len(alerts) == 2
+
+
+async def test_cdn_alternating_timeouts_never_alert_or_remove_fallback(monkeypatch):
+    await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[{**BEGET, "last_check_ok": True}])
+    ok = False
+
+    async def fake_probe(server, endpoint):
+        return ok, "origin reached" if ok else "inconclusive: TimeoutError; stage=response_headers; elapsed=10.0s"
+
+    async def no_sleep(_seconds):
+        return None
+
+    async def unexpected_alert(bot, text):
+        pytest.fail("Transient failures must not alert")
+
+    monkeypatch.setattr(cdn_service, "probe_endpoint", fake_probe)
+    monkeypatch.setattr(tasks, "_alert_admins", unexpected_alert)
+    monkeypatch.setattr(tasks.asyncio, "sleep", no_sleep)
+    for ok in [None] * 6 + [True, None] * 3:
+        await tasks.check_cdn_endpoints(bot=None)
+        async with async_session_maker() as session:
+            endpoint = await session.get(CdnEndpoint, 1)
+            assert endpoint.last_check_ok is True
+            assert endpoint.health_failures == 0
+            assert endpoint.health_successes == (1 if ok else 0)
+
+
+async def test_cdn_legacy_down_state_recovers_without_unpaired_notice(monkeypatch):
+    await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[{**BEGET, "last_check_ok": False, "health_alerted": True, "last_check_detail": "TimeoutError"}])
+
+    async def fake_probe(server, endpoint):
+        return True, "origin reached"
+
+    async def unexpected_alert(bot, text):
+        pytest.fail("Do not announce recovery without a confirmed incident")
+
+    monkeypatch.setattr(cdn_service, "probe_endpoint", fake_probe)
+    monkeypatch.setattr(tasks, "_alert_admins", unexpected_alert)
+    await tasks.check_cdn_endpoints(bot=None)
     await tasks.check_cdn_endpoints(bot=None)
     async with async_session_maker() as session:
         assert (await session.get(CdnEndpoint, 1)).last_check_ok is True
-    assert len(alerts) == 2 and "снова работает" in alerts[1]
+
+
+@pytest.mark.parametrize("health", [None, True, False])
+async def test_monitoring_state_never_removes_enabled_cdn_paths(monkeypatch, health):
+    token = await _seed(monkeypatch, cdn_server=_cdn_node(), endpoints=[
+        {**BEGET, "last_check_ok": health},
+        {**AVITO, "preview_only": False, "last_check_ok": health},
+    ])
+    configs = await _json_configs(token)
+    assert _cdn_paths(_by_host(configs, "203.0.113.30")) == ["cdn-1", "cdn-2"]
+    assert _cdn_paths(configs[0]) == ["cdn-1", "cdn-2"]
+    assert not any(" | WL" in cfg["remarks"] for cfg in configs)
 
 
 async def test_check_learns_the_certificate_of_a_pinned_resource(monkeypatch):
